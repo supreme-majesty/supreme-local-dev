@@ -7,11 +7,11 @@ import (
 type EventType string
 
 const (
-	ProjectParked   EventType = "ProjectParked"
+	ProjectParked    EventType = "ProjectParked"
 	Projectforgotten EventType = "ProjectForgotten"
-	ServiceStarted  EventType = "ServiceStarted"
-	ServiceStopped  EventType = "ServiceStopped"
-	ConfigChanged   EventType = "ConfigChanged"
+	ServiceStarted   EventType = "ServiceStarted"
+	ServiceStopped   EventType = "ServiceStopped"
+	ConfigChanged    EventType = "ConfigChanged"
 )
 
 type Event struct {
@@ -41,10 +41,10 @@ func (b *Bus) Subscribe(topic EventType, handler Handler) {
 func (b *Bus) Publish(event Event) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	
+
 	if handlers, ok := b.handlers[event.Type]; ok {
 		for _, h := range handlers {
-			// Run handlers synchronously for now to ensure consistency, 
+			// Run handlers synchronously for now to ensure consistency,
 			// but could be goroutines in the future.
 			h(event)
 		}
