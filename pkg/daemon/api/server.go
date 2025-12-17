@@ -30,6 +30,9 @@ func (s *Server) Start() error {
 	http.HandleFunc("/api/sites", s.handleSites)
 	http.HandleFunc("/api/ignore", s.handleIgnore)
 	http.HandleFunc("/api/unignore", s.handleUnignore)
+	http.HandleFunc("/api/plugins", s.handlePlugins)
+	http.HandleFunc("/api/plugins/install", s.handlePluginInstall)
+	http.HandleFunc("/api/plugins/toggle", s.handlePluginToggle)
 
 	// Serve GUI static files
 	guiFS, _ := assets.GetGuiFS()
@@ -237,5 +240,91 @@ func (s *Server) handleUnignore(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
 		return
 	}
+	jsonResponse(w, SuccessResponse{Success: true}, 200)
+}
+
+// Plugins
+
+func (s *Server) handlePlugins(w http.ResponseWriter, r *http.Request) {
+	d, _ := daemon.GetClient()
+
+	// Convert map to slice for simpler JSON
+	plugins := d.PluginManager.GetAll()
+
+	// Create a response struct that maps Plugin interface to JSON fields
+	type PluginResponse struct {
+		ID          string `json:"id"`
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Version     string `json:"version"`
+		Status      string `json:"status"`
+		Installed   bool   `json:"installed"`
+	}
+
+	var response []PluginResponse
+	for _, p := range plugins {
+		response = append(response, PluginResponse{
+			ID:          p.ID(),
+			Name:        p.Name(),
+			Description: p.Description(),
+			Version:     p.Version(),
+			Status:      string(p.Status()),
+			Installed:   p.IsInstalled(),
+		})
+	}
+
+	jsonResponse(w, response, 200)
+}
+
+func (s *Server) handlePluginInstall(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		return
+	}
+
+	var req struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
+		return
+	}
+
+	d, _ := daemon.GetClient()
+	p, ok := d.PluginManager.Get(req.ID)
+	if !ok {
+		jsonResponse(w, ErrorResponse{Error: "Plugin not found"}, 404)
+		return
+	}
+
+	if err := p.Install(); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+
+	jsonResponse(w, SuccessResponse{Success: true}, 200)
+}
+
+func (s *Server) handlePluginToggle(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		return
+	}
+
+	var req struct {
+		ID      string `json:"id"`
+		Enabled bool   `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
+		return
+	}
+
+	d, _ := daemon.GetClient()
+
+	// Use SetEnabled which handles start/stop and persistence
+	if err := d.PluginManager.SetEnabled(req.ID, req.Enabled); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+
 	jsonResponse(w, SuccessResponse{Success: true}, 200)
 }

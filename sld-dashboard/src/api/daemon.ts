@@ -46,6 +46,15 @@ export interface HealthCheck {
   fixable?: boolean;
 }
 
+export interface Plugin {
+  id: string;
+  name: string;
+  description: string;
+  version: string;
+  installed: boolean;
+  status: "running" | "stopped" | "installing" | "not_installed";
+}
+
 // API Client
 class DaemonApi {
   private async request<T>(
@@ -106,18 +115,41 @@ class DaemonApi {
     });
   }
 
-  async ignore(path: string): Promise<void> {
-    return this.request("/ignore", {
+  async ignore(path: string): Promise<boolean> {
+    const res = await this.request<ApiResponse>("/ignore", {
       method: "POST",
       body: JSON.stringify({ path }),
     });
+    return res.success;
   }
 
-  async unignore(path: string): Promise<void> {
-    return this.request("/unignore", {
+  async unignore(path: string): Promise<boolean> {
+    const res = await this.request<ApiResponse>("/unignore", {
       method: "POST",
       body: JSON.stringify({ path }),
     });
+    return res.success;
+  }
+
+  async getPlugins(): Promise<Plugin[]> {
+    const res = await this.request<Plugin[]>("/plugins");
+    return res || [];
+  }
+
+  async installPlugin(id: string): Promise<boolean> {
+    const res = await this.request<ApiResponse>("/plugins/install", {
+      method: "POST",
+      body: JSON.stringify({ id }),
+    });
+    return res.success;
+  }
+
+  async togglePlugin(id: string, enabled: boolean): Promise<boolean> {
+    const res = await this.request<ApiResponse>("/plugins/toggle", {
+      method: "POST",
+      body: JSON.stringify({ id, enabled }),
+    });
+    return res.success;
   }
 
   // PHP Management

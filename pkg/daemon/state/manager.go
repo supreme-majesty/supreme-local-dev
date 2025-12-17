@@ -10,15 +10,16 @@ import (
 // State represents the persistent configuration of the SLD environment.
 // State represents the persistent configuration of the SLD environment.
 type State struct {
-	TLD          string            `json:"tld"`
-	Paths        []string          `json:"paths"`        // Parked paths
-	Links        map[string]string `json:"links"`        // Linked projects (siteName -> path)
-	Services     map[string]string `json:"services"`     // Service status/config
-	Certificates []string          `json:"certificates"` // Secured domains
-	PHPVersion   string            `json:"php_version"`  // Default PHP version
-	Secure       bool              `json:"secure"`       // Is global HTTPS enabled?
-	Port         string            `json:"port"`         // Main HTTP Port (default 80)
-	Ignored      []string          `json:"ignored"`      // Ignored project paths
+	TLD            string            `json:"tld"`
+	Paths          []string          `json:"paths"`           // Parked paths
+	Links          map[string]string `json:"links"`           // Linked projects (siteName -> path)
+	Services       map[string]string `json:"services"`        // Service status/config
+	Certificates   []string          `json:"certificates"`    // Secured domains
+	PHPVersion     string            `json:"php_version"`     // Default PHP version
+	Secure         bool              `json:"secure"`          // Is global HTTPS enabled?
+	Port           string            `json:"port"`            // Main HTTP Port (default 80)
+	Ignored        []string          `json:"ignored"`         // Ignored project paths
+	EnabledPlugins []string          `json:"enabled_plugins"` // Plugins to auto-start
 }
 
 type Manager struct {
@@ -40,12 +41,13 @@ func NewManager() (*Manager, error) {
 	return &Manager{
 		filePath: filepath.Join(configDir, "state.json"),
 		Data: &State{
-			TLD:      "test",
-			Paths:    []string{},
-			Links:    make(map[string]string),
-			Services: make(map[string]string),
-			Port:     "80", // Default port
-			Ignored:  []string{},
+			TLD:            "test",
+			Paths:          []string{},
+			Links:          make(map[string]string),
+			Services:       make(map[string]string),
+			Port:           "80", // Default port
+			Ignored:        []string{},
+			EnabledPlugins: []string{},
 		},
 	}, nil
 }
@@ -78,6 +80,9 @@ func (m *Manager) Load() error {
 	}
 	if m.Data.Ignored == nil {
 		m.Data.Ignored = []string{}
+	}
+	if m.Data.EnabledPlugins == nil {
+		m.Data.EnabledPlugins = []string{}
 	}
 
 	return nil
@@ -169,4 +174,50 @@ func (m *Manager) RemoveIgnore(path string) {
 	}
 	m.Data.Ignored = newPaths
 	m.Save()
+}
+
+// Plugin Management
+
+func (m *Manager) SetPluginEnabled(id string, enabled bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if enabled {
+		// Add if not already present
+		for _, p := range m.Data.EnabledPlugins {
+			if p == id {
+				return
+			}
+		}
+		m.Data.EnabledPlugins = append(m.Data.EnabledPlugins, id)
+	} else {
+		// Remove from list
+		newPlugins := []string{}
+		for _, p := range m.Data.EnabledPlugins {
+			if p != id {
+				newPlugins = append(newPlugins, p)
+			}
+		}
+		m.Data.EnabledPlugins = newPlugins
+	}
+	m.Save()
+}
+
+func (m *Manager) IsPluginEnabled(id string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, p := range m.Data.EnabledPlugins {
+		if p == id {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Manager) GetEnabledPlugins() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	return m.Data.EnabledPlugins
 }

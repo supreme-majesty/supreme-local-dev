@@ -1,9 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   api,
-  type Project,
   type SLDState,
+  type Project,
   type ServiceStatus,
+  type Plugin,
 } from "@/api/daemon";
 import { useAppStore } from "@/stores/useAppStore";
 
@@ -13,6 +14,7 @@ export const queryKeys = {
   sites: ["sites"],
   services: ["services"],
   health: ["health"],
+  plugins: ["plugins"],
 };
 
 // Queries
@@ -42,6 +44,14 @@ export function useHealthChecks() {
     queryKey: queryKeys.health,
     queryFn: () => api.runDoctor(),
     enabled: false, // Don't run automatically, wait for manual trigger
+  });
+}
+
+export function usePlugins() {
+  return useQuery<Plugin[]>({
+    queryKey: queryKeys.plugins,
+    queryFn: () => api.getPlugins(),
+    refetchInterval: 3000, // frequent polling for status changes
   });
 }
 
@@ -219,6 +229,47 @@ export function useSwitchPHPMutation() {
       addToast({
         type: "error",
         title: "Failed to switch PHP",
+        description: err.message,
+      });
+    },
+  });
+}
+
+export function useInstallPluginMutation() {
+  const queryClient = useQueryClient();
+  const addToast = useAppStore((s) => s.addToast);
+
+  return useMutation({
+    mutationFn: (id: string) => api.installPlugin(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.plugins });
+      addToast({ type: "success", title: "Plugin installed successfully" });
+    },
+    onError: (err: Error) => {
+      addToast({
+        type: "error",
+        title: "Failed to install plugin",
+        description: err.message,
+      });
+    },
+  });
+}
+
+export function useTogglePluginMutation() {
+  const queryClient = useQueryClient();
+  const addToast = useAppStore((s) => s.addToast);
+
+  return useMutation({
+    mutationFn: (args: { id: string; enabled: boolean }) =>
+      api.togglePlugin(args.id, args.enabled),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.plugins });
+      // Don't toast on every toggle, maybe? Or concise one.
+    },
+    onError: (err: Error) => {
+      addToast({
+        type: "error",
+        title: "Failed to toggle plugin",
         description: err.message,
       });
     },

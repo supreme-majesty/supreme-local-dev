@@ -5,13 +5,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
 
-	"github.com/supreme-local-dev/pkg/plugins"
+	"github.com/supreme-majesty/supreme-local-dev/pkg/plugins"
 )
 
 type RedisPlugin struct {
 	dataDir string
-	process *os.Process
 }
 
 func NewRedisPlugin(dataDir string) *RedisPlugin {
@@ -25,19 +27,43 @@ func (p *RedisPlugin) Name() string        { return "Redis" }
 func (p *RedisPlugin) Description() string { return "In-memory data store" }
 func (p *RedisPlugin) Version() string     { return "7.2.4" }
 
+func (p *RedisPlugin) pidFile() string {
+	return filepath.Join(p.dataDir, "redis.pid")
+}
+
 func (p *RedisPlugin) Status() plugins.Status {
-	if p.process != nil {
-		// simple check if process is still alive
-		if err := p.process.Signal(os.Signal(0)); err == nil {
-			return plugins.StatusRunning
-		}
-		p.process = nil
+	pidData, err := os.ReadFile(p.pidFile())
+	if err != nil {
+		return plugins.StatusStopped
 	}
-	return plugins.StatusStopped
+
+	pid, err := strconv.Atoi(strings.TrimSpace(string(pidData)))
+	if err != nil {
+		return plugins.StatusStopped
+	}
+
+	// Check if process exists
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return plugins.StatusStopped
+	}
+
+	// Signal 0 checks if process exists without killing it
+	if err := process.Signal(syscall.Signal(0)); err != nil {
+		// Process doesn't exist, clean up stale PID file
+		os.Remove(p.pidFile())
+		return plugins.StatusStopped
+	}
+
+	return plugins.StatusRunning
 }
 
 func (p *RedisPlugin) IsInstalled() bool {
-	// check if binary exists
+	// Check if system redis-server is available
+	if _, err := exec.LookPath("redis-server"); err == nil {
+		return true
+	}
+	// Or check our data directory for a downloaded binary
 	binPath := filepath.Join(p.dataDir, "redis-server")
 	if _, err := os.Stat(binPath); err == nil {
 		return true
@@ -46,22 +72,24 @@ func (p *RedisPlugin) IsInstalled() bool {
 }
 
 func (p *RedisPlugin) Install() error {
-	// Mock install for now - in real world would download binary
-	// For this Phase 2 MVP, let's assume system redis or just simulate
 	if err := os.MkdirAll(p.dataDir, 0755); err != nil {
 		return err
 	}
-	// Create a dummy file to mark as installed
-	f, err := os.Create(filepath.Join(p.dataDir, "redis-server"))
+
+	// For MVP, we rely on system redis-server
+	// Check if already available
+	if _, err := exec.LookPath("redis-server"); err == nil {
+		return nil // System redis available
+	}
+
+	// Create a marker file to indicate "installed" state
+	f, err := os.Create(filepath.Join(p.dataDir, ".installed"))
 	if err != nil {
 		return err
 	}
 	f.Close()
 
-	// Make executable
-	os.Chmod(filepath.Join(p.dataDir, "redis-server"), 0755)
-
-	return nil
+	return fmt.Errorf("redis-server not found. Please install: sudo apt install redis-server")
 }
 
 func (p *RedisPlugin) Start() error {
@@ -69,19 +97,45 @@ func (p *RedisPlugin) Start() error {
 		return fmt.Errorf("redis is not installed")
 	}
 
-	// Real implementation would exec the binary
-	// here we just pretend
-	cmd := exec.Command("sleep", "3600")
-	if err := cmd.Start(); err != nil {
-		return err
+	if p.Status() == plugins.StatusRunning {
+		return nil // Already running
 	}
-	p.process = cmd.Process
+
+	// Ensure data directory exists
+	os.MkdirAll(p.dataDir, 0755)
+
+	// Start redis-server in background
+	cmd := exec.Command("redis-server", "--daemonize", "yes", "--pidfile", p.pidFile(), "--dir", p.dataDir)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to start redis: %w", err)
+	}
+
 	return nil
 }
 
 func (p *RedisPlugin) Stop() error {
-	if p.process != nil {
-		return p.process.Kill()
+	pidData, err := os.ReadFile(p.pidFile())
+	if err != nil {
+		return nil // Not running
 	}
+
+	pid, err := strconv.Atoi(strings.TrimSpace(string(pidData)))
+	if err != nil {
+		os.Remove(p.pidFile())
+		return nil
+	}
+
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		os.Remove(p.pidFile())
+		return nil
+	}
+
+	if err := process.Signal(syscall.SIGTERM); err != nil {
+		// Force kill if SIGTERM fails
+		process.Kill()
+	}
+
+	os.Remove(p.pidFile())
 	return nil
 }

@@ -16,12 +16,15 @@ import (
 	"github.com/supreme-majesty/supreme-local-dev/pkg/assets"
 	"github.com/supreme-majesty/supreme-local-dev/pkg/daemon/state"
 	"github.com/supreme-majesty/supreme-local-dev/pkg/events"
+	"github.com/supreme-majesty/supreme-local-dev/pkg/plugins"
+	"github.com/supreme-majesty/supreme-local-dev/pkg/services"
 )
 
 type Daemon struct {
-	State   *state.Manager
-	Events  *events.Bus
-	Adapter adapters.SystemAdapter
+	State         *state.Manager
+	Events        *events.Bus
+	Adapter       adapters.SystemAdapter
+	PluginManager *plugins.Manager
 }
 
 var instance *Daemon
@@ -45,7 +48,18 @@ func Initialize() (*Daemon, error) {
 	// 2. Initialize Event Bus
 	eventBus := events.NewBus()
 
-	// 3. Detect OS and select Adapter
+	// 3. Initialize Plugin Manager
+	// We use /var/lib/sld/plugins for shared plugin data/binaries
+	pluginManager := plugins.NewManager("/var/lib/sld/plugins", stateManager)
+
+	// Register default plugins
+	pluginManager.Register(services.NewRedisPlugin(pluginManager.DataDir))
+	pluginManager.Register(services.NewMailHogPlugin(pluginManager.DataDir))
+
+	// Auto-start enabled plugins from persisted state
+	pluginManager.StartEnabled()
+
+	// 4. Detect OS and select Adapter
 	var adapter adapters.SystemAdapter
 	switch runtime.GOOS {
 	case "linux":
@@ -57,9 +71,10 @@ func Initialize() (*Daemon, error) {
 	}
 
 	instance = &Daemon{
-		State:   stateManager,
-		Events:  eventBus,
-		Adapter: adapter,
+		State:         stateManager,
+		Events:        eventBus,
+		Adapter:       adapter,
+		PluginManager: pluginManager,
 	}
 
 	return instance, nil

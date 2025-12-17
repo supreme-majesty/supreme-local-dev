@@ -1,19 +1,24 @@
 package plugins
 
 import (
+	"log"
 	"sync"
+
+	"github.com/supreme-majesty/supreme-local-dev/pkg/daemon/state"
 )
 
 type Manager struct {
-	plugins map[string]Plugin
-	mu      sync.RWMutex
-	DataDir string
+	plugins      map[string]Plugin
+	mu           sync.RWMutex
+	DataDir      string
+	StateManager *state.Manager
 }
 
-func NewManager(dataDir string) *Manager {
+func NewManager(dataDir string, stateManager *state.Manager) *Manager {
 	return &Manager{
-		plugins: make(map[string]Plugin),
-		DataDir: dataDir,
+		plugins:      make(map[string]Plugin),
+		DataDir:      dataDir,
+		StateManager: stateManager,
 	}
 }
 
@@ -41,16 +46,49 @@ func (m *Manager) GetAll() []Plugin {
 	return list
 }
 
-func (m *Manager) StartAll() {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+// SetEnabled persists the enabled state and starts/stops the plugin
+func (m *Manager) SetEnabled(id string, enabled bool) error {
+	p, ok := m.Get(id)
+	if !ok {
+		return nil
+	}
 
-	for _, p := range m.plugins {
+	var err error
+	if enabled {
 		if p.IsInstalled() && p.Status() != StatusRunning {
-			// In a real implementation, we might respect a "enabled" flag
-			// For now, if it's installed, we don't auto-start unless explicitly told?
-			// Actually Phase 2 plan says "Start/Stop/Restart".
-			// Use a persistence mechanism later to know what to auto-start.
+			err = p.Start()
+		}
+	} else {
+		if p.Status() == StatusRunning {
+			err = p.Stop()
+		}
+	}
+
+	if err == nil && m.StateManager != nil {
+		m.StateManager.SetPluginEnabled(id, enabled)
+	}
+
+	return err
+}
+
+// StartEnabled starts all plugins that were marked as enabled in state
+func (m *Manager) StartEnabled() {
+	if m.StateManager == nil {
+		return
+	}
+
+	enabledList := m.StateManager.GetEnabledPlugins()
+	for _, id := range enabledList {
+		p, ok := m.Get(id)
+		if !ok {
+			continue
+		}
+		if p.IsInstalled() && p.Status() != StatusRunning {
+			if err := p.Start(); err != nil {
+				log.Printf("Failed to auto-start plugin %s: %v", id, err)
+			} else {
+				log.Printf("Auto-started plugin: %s", id)
+			}
 		}
 	}
 }
