@@ -4,6 +4,7 @@ import { useAppStore } from "@/stores/useAppStore";
 import { useTheme } from "@/hooks/useTheme";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { useServices, useRestartMutation } from "@/hooks/use-daemon";
+import { Link } from "react-router-dom";
 
 export function Topbar() {
   const { sidebarCollapsed } = useAppStore();
@@ -96,8 +97,8 @@ export function Topbar() {
         </button>
 
         {/* Settings */}
-        <a
-          href="/settings"
+        <Link
+          to="/settings"
           className={cn(
             "p-2 rounded-lg",
             "text-[var(--muted-foreground)] hover:text-[var(--foreground)]",
@@ -106,7 +107,7 @@ export function Topbar() {
           title="Settings"
         >
           <Settings size={20} />
-        </a>
+        </Link>
       </div>
     </header>
   );
