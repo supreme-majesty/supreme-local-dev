@@ -2,42 +2,39 @@ import { useState } from "react";
 import {
   Server,
   FolderPlus,
-  Globe,
   RefreshCw,
   Lock,
   Terminal,
   Cpu,
   HardDrive,
-  Network,
 } from "lucide-react";
-import { useSldState, useParkMutation } from "@/hooks/use-daemon";
+import {
+  useSldState,
+  useParkMutation,
+  useSecureMutation,
+  useRestartMutation,
+  useSites,
+  usePlugins,
+} from "@/hooks/use-daemon";
 import { useToast } from "@/hooks/useToast";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { ServiceCard } from "@/components/dashboard/ServiceCard";
 import { QuickActionCard } from "@/components/dashboard/QuickActionCard";
-import { SystemInfoCard } from "@/components/dashboard/SystemInfoCard";
 import { Modal } from "@/components/ui/Modal";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 
-// Mock services hook for now until backend supports it fully or we derive it
 import { useServices } from "@/hooks/use-daemon";
 
 export default function Dashboard() {
   const { data: state, isLoading: isStateLoading } = useSldState();
   const { data: services = [], isLoading: isServicesLoading } = useServices();
+  const { data: sites = [] } = useSites();
+  const { data: plugins = [] } = usePlugins();
+
   const parkMutation = useParkMutation();
-  // We need to implement useRestartMutation and useSecureMutation in use-daemon or use api.restart/secure directly wrapped in mutation
-  // For now let's assume we add them or use generic mutation
-
-  // Actually, let's implement the missing mutations in use-daemon.ts if they aren't there.
-  // checking use-daemon.ts I only added park, link, ignore, forget, unlink.
-  // I need to add restart and secure.
-
-  // For this step I will mock them or use generic approach, but better to use what I have.
-  // Let's use `api` directly for things I haven't hooked up yet or add hooks.
-  // Wait, I can't restart/secure if I don't have hooks.
-  // Let's stick to what's available or simple.
+  const secureMutation = useSecureMutation();
+  const restartMutation = useRestartMutation();
 
   const { toast } = useToast();
 
@@ -61,23 +58,17 @@ export default function Dashboard() {
     });
   };
 
-  const handleEnableHttps = async () => {
-    // Todo: Implement secure mutation
-    // api.secure()
-    toast({
-      title: "Info",
-      description: "HTTPS setup not yet hooked up to React Query",
-    });
+  const handleEnableHttps = () => {
+    secureMutation.mutate();
   };
 
-  const handleRestartServices = async () => {
-    // Todo: Implement restart mutation
-    // api.restart()
-    toast({
-      title: "Info",
-      description: "Restart not yet hooked up to React Query",
-    });
+  const handleRestartServices = () => {
+    restartMutation.mutate();
   };
+
+  // Stats
+  const activePlugins = plugins.filter((p) => p.status === "running").length;
+  const totalProjects = sites.length;
 
   const isLoading = isStateLoading || isServicesLoading;
 
@@ -97,6 +88,59 @@ export default function Dashboard() {
         <p className="text-[var(--muted-foreground)]">
           Manage your local development environment
         </p>
+      </div>
+
+      {/* Quick Stats */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <div className="flex items-center gap-3 p-4 rounded-xl bg-gradient-to-br from-blue-500/10 to-indigo-500/10 border border-blue-500/20">
+          <div className="p-2 rounded-lg bg-blue-500/20 text-blue-400">
+            <FolderPlus size={20} />
+          </div>
+          <div>
+            <p className="text-2xl font-bold text-[var(--foreground)]">
+              {totalProjects}
+            </p>
+            <p className="text-xs text-[var(--muted-foreground)]">Projects</p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3 p-4 rounded-xl bg-gradient-to-br from-green-500/10 to-emerald-500/10 border border-green-500/20">
+          <div className="p-2 rounded-lg bg-green-500/20 text-green-400">
+            <Cpu size={20} />
+          </div>
+          <div>
+            <p className="text-2xl font-bold text-[var(--foreground)]">
+              {activePlugins}
+            </p>
+            <p className="text-xs text-[var(--muted-foreground)]">
+              Active Plugins
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3 p-4 rounded-xl bg-gradient-to-br from-purple-500/10 to-pink-500/10 border border-purple-500/20">
+          <div className="p-2 rounded-lg bg-purple-500/20 text-purple-400">
+            <Lock size={20} />
+          </div>
+          <div>
+            <p className="text-2xl font-bold text-[var(--foreground)]">
+              {state?.secure ? "On" : "Off"}
+            </p>
+            <p className="text-xs text-[var(--muted-foreground)]">HTTPS</p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3 p-4 rounded-xl bg-gradient-to-br from-orange-500/10 to-amber-500/10 border border-orange-500/20">
+          <div className="p-2 rounded-lg bg-orange-500/20 text-orange-400">
+            <Terminal size={20} />
+          </div>
+          <div>
+            <p className="text-2xl font-bold text-[var(--foreground)]">
+              PHP {state?.php_version || "?"}
+            </p>
+            <p className="text-xs text-[var(--muted-foreground)]">Version</p>
+          </div>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -151,37 +195,6 @@ export default function Dashboard() {
           </div>
         </Card>
       </div>
-
-      {/* System Info */}
-      <Card>
-        <CardHeader
-          title="System Information"
-          description="Current environment details"
-          icon={<Cpu size={20} />}
-        />
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <SystemInfoCard
-            icon={<Terminal size={20} />}
-            label="PHP Version"
-            value={state?.php_version || "N/A"}
-          />
-          <SystemInfoCard
-            icon={<Globe size={20} />}
-            label="TLD Domain"
-            value={`.${state?.tld || "test"}`}
-          />
-          <SystemInfoCard
-            icon={<Lock size={20} />}
-            label="HTTPS"
-            value={state?.secure ? "Enabled" : "Disabled"}
-          />
-          <SystemInfoCard
-            icon={<Network size={20} />}
-            label="HTTP Port"
-            value={state?.port || "80"}
-          />
-        </div>
-      </Card>
 
       {/* Parked Paths Overview */}
       <Card>
