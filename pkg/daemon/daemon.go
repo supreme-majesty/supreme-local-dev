@@ -311,12 +311,35 @@ func (d *Daemon) Secure() error {
 	// Ensure exists
 	os.MkdirAll(filepath.Join(certBase, ".sld", "certs"), 0755)
 
-	if err := d.Adapter.GenerateCert(certBase); err != nil {
+	// Collect domains from state
+	domains := []string{}
+	// Linked sites
+	for name := range d.State.Data.Links {
+		domains = append(domains, name+".test")
+	}
+	// Parked sites (scan directories)
+	for _, p := range d.State.Data.Paths {
+		entries, err := os.ReadDir(p)
+		if err == nil {
+			for _, entry := range entries {
+				if entry.IsDir() {
+					domains = append(domains, entry.Name()+".test")
+				}
+			}
+		}
+	}
+
+	if err := d.Adapter.GenerateCert(certBase, domains); err != nil {
 		return fmt.Errorf("failed to generate certs: %w", err)
 	}
 
 	d.State.Data.Secure = true
 	d.State.Save()
+
+	// Trust certificates in Snap browsers etc
+	if err := d.Adapter.InstallCertificates(); err != nil {
+		fmt.Printf("Warning: Failed to install certificates to browsers: %v\n", err)
+	}
 
 	fmt.Println("Updating Nginx configuration...")
 	if err := d.refreshNginxConfig(); err != nil {

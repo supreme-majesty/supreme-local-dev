@@ -164,15 +164,27 @@ if (file_exists($indexPath)) {
 
     // Serve static files if requested
     $uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
-    if ($uri !== '/' && file_exists("$publicPath$uri") && !is_dir("$publicPath$uri")) {
-        return false; // Let PHP built-in serve it? No, we are in FPM.
-        // In FPM we can't "return false". We must serve it.
-        // Actually, Nginx config should handle static files if possible.
-        // But our generic rule sends everything to router.php.
-        // We will just readfile() it with correct mime type for now.
-        $mime = mime_content_type("$publicPath$uri");
+    $targetFile = "$publicPath$uri";
+
+    if ($uri !== '/' && file_exists($targetFile) && !is_dir($targetFile)) {
+        $ext = pathinfo($targetFile, PATHINFO_EXTENSION);
+        $mime = '';
+        
+        switch ($ext) {
+            case 'css': $mime = 'text/css'; break;
+            case 'js':  $mime = 'application/javascript'; break;
+            case 'svg': $mime = 'image/svg+xml'; break;
+            case 'png': $mime = 'image/png'; break;
+            case 'jpg': 
+            case 'jpeg': $mime = 'image/jpeg'; break;
+            case 'gif': $mime = 'image/gif'; break;
+            case 'webp': $mime = 'image/webp'; break;
+            case 'ico': $mime = 'image/x-icon'; break;
+            default: $mime = mime_content_type($targetFile);
+        }
+        
         header("Content-Type: $mime");
-        readfile("$publicPath$uri");
+        readfile($targetFile);
         exit;
     }
 

@@ -59,11 +59,32 @@ func (l *LinuxAdapter) InstallDependencies() error {
 		}
 
 		// Configure dnsmasq for .test domain
-		dnsConf := "address=/.test/127.0.0.1"
+		// strict-order: query strict order (not needed if only one upstream)
+		// bind-interfaces: listen only on specified address (crucial for systemd-resolved coexistence)
+		// listen-address: 127.0.0.1 (avoid binding specific interface or 0.0.0.0)
+		// resolv-file: usage of real upstream to avoid loop with systemd-resolved stub
+		dnsConf := `address=/.test/127.0.0.1
+bind-interfaces
+listen-address=127.0.0.1
+resolv-file=/run/systemd/resolve/resolv.conf
+`
 		tmpFile := "/tmp/sld-dnsmasq.conf"
 		os.WriteFile(tmpFile, []byte(dnsConf), 0644)
 		exec.Command("sudo", "mv", tmpFile, "/etc/dnsmasq.d/sld.conf").Run()
 		exec.Command("sudo", "systemctl", "restart", "dnsmasq").Run()
+
+		// Configure systemd-resolved to route .test to 127.0.0.1
+		// We use a drop-in file
+		resolvedConf := `[Resolve]
+DNS=127.0.0.1
+Domains=~test
+`
+		tmpResolved := "/tmp/sld-resolved.conf"
+		os.WriteFile(tmpResolved, []byte(resolvedConf), 0644)
+
+		exec.Command("sudo", "mkdir", "-p", "/etc/systemd/resolved.conf.d").Run()
+		exec.Command("sudo", "mv", tmpResolved, "/etc/systemd/resolved.conf.d/sld.conf").Run()
+		exec.Command("sudo", "systemctl", "restart", "systemd-resolved").Run()
 
 		return nil
 	}
@@ -71,7 +92,49 @@ func (l *LinuxAdapter) InstallDependencies() error {
 }
 
 func (l *LinuxAdapter) InstallCertificates() error {
-	// Placeholder for mkcert
+	// 1. Get mkcert Root CA path
+	out, err := exec.Command("mkcert", "-CAROOT").Output()
+	if err != nil {
+		return fmt.Errorf("failed to get mkcert CA path: %w", err)
+	}
+	caRoot := strings.TrimSpace(string(out))
+	caFile := filepath.Join(caRoot, "rootCA.pem")
+
+	// 2. Define search paths
+	home, _ := os.UserHomeDir()
+	if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" {
+		home = filepath.Join("/home", sudoUser)
+	}
+
+	searchPaths := []string{
+		filepath.Join(home, ".pki"),
+		filepath.Join(home, ".mozilla"),
+		filepath.Join(home, "snap"),
+	}
+
+	fmt.Println("Scanning for browser databases to trust...")
+
+	// 3. Walk and find cert9.db
+	for _, root := range searchPaths {
+		filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return nil // skip errors
+			}
+			if info.Name() == "cert9.db" {
+				dbDir := filepath.Dir(path)
+				fmt.Printf("Trusting CA in %s\n", dbDir)
+
+				// certutil -d sql:DIR -A -t "C,," -n "supremelocaldev" -i CAFILE
+				// We must use "sql:" prefix
+				cmd := exec.Command("certutil", "-d", "sql:"+dbDir, "-A", "-t", "C,,", "-n", "supremelocaldev", "-i", caFile)
+				// Certutil might fail if DB is locked or read-only, we try best effort
+				if out, err := cmd.CombinedOutput(); err != nil {
+					fmt.Printf("Warning: Failed to trust in %s: %v (%s)\n", dbDir, err, string(out))
+				}
+			}
+			return nil
+		})
+	}
 	return nil
 }
 
@@ -212,7 +275,7 @@ func (l *LinuxAdapter) InstallMkcert() error {
 	return cmd.Run()
 }
 
-func (l *LinuxAdapter) GenerateCert(homeDir string) error {
+func (l *LinuxAdapter) GenerateCert(homeDir string, domains []string) error {
 	// 1. Install CA
 	installCmd := exec.Command("mkcert", "-install")
 	installCmd.Stdout = os.Stdout
@@ -221,11 +284,17 @@ func (l *LinuxAdapter) GenerateCert(homeDir string) error {
 		return fmt.Errorf("failed to install local CA: %w", err)
 	}
 
-	// 2. Generate certs for *.test
+	// 2. Generate certs for *.test and provided domains
 	certPath := filepath.Join(homeDir, ".sld", "certs", "current.pem")
 	keyPath := filepath.Join(homeDir, ".sld", "certs", "current-key.pem")
 
-	genCmd := exec.Command("mkcert", "-cert-file", certPath, "-key-file", keyPath, "*.test", "test.test", "localhost", "127.0.0.1", "::1")
+	// Base domains
+	args := []string{"-cert-file", certPath, "-key-file", keyPath, "*.test", "test.test", "localhost", "127.0.0.1", "::1"}
+
+	// Append custom domains
+	args = append(args, domains...)
+
+	genCmd := exec.Command("mkcert", args...)
 	genCmd.Stdout = os.Stdout
 	genCmd.Stderr = os.Stderr
 	return genCmd.Run()

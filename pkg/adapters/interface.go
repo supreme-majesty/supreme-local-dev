@@ -12,7 +12,7 @@ type SystemAdapter interface {
 	InstallDependencies() error
 	InstallCertificates() error
 	InstallMkcert() error
-	GenerateCert(homeDir string) error
+	GenerateCert(homeDir string, domains []string) error
 	InstallBinary() error
 
 	// Configuration
