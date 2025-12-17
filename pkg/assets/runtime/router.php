@@ -40,6 +40,30 @@ $links = $state['links'] ?? [];
 
 $projectPath = null;
 
+// Check for phpmyadmin subdomain
+if ($domain === 'phpmyadmin') {
+     $possiblePaths = [
+        '/usr/share/phpmyadmin',
+        '/opt/lampp/phpmyadmin',
+    ];
+
+    foreach ($possiblePaths as $p) {
+        if (is_dir($p)) {
+            $projectPath = $p;
+            break;
+        }
+    }
+    
+    if (!$projectPath) {
+        http_response_code(404);
+        echo "<h1>phpMyAdmin Not Found</h1>";
+        echo "<p>Checked paths:</p><ul>";
+        foreach ($possiblePaths as $p) echo "<li>$p</li>";
+        echo "</ul>";
+        exit;
+    }
+}
+
 // 2. Handle Localhost & Tools
 if ($domain === 'localhost') {
     $uri = $_SERVER['REQUEST_URI'];
@@ -64,6 +88,21 @@ if ($domain === 'localhost') {
             // We need to serve this directory.
             $projectPath = $toolPath;
             // Adjust URI to be relative if needed, but for now let's just treat it as a project
+             // For localhost/phpmyadmin, we might need to strip the prefix for some router logic if we were doing internal routing,
+            // but since we just set projectPath, the static file handler below needs to know the true URI relative to document root.
+            // But wait, if we visit localhost/phpmyadmin/foo.css, the URI is /phpmyadmin/foo.css
+            // But the file is at $toolPath/foo.css.
+            // So we need to strip /phpmyadmin from the URI for file lookups further down?
+            // Actually, the current router logic uses $publicPath . $uri
+            // If projectPath is /opt/lampp/phpmyadmin, publicPath becomes that.
+            // URI is /phpmyadmin/style.css.
+            // File check: /opt/lampp/phpmyadmin/phpmyadmin/style.css -> FAIL.
+            
+            // We need to rewrite $_SERVER['REQUEST_URI'] or handle legacy localhost tool path stripping.
+            // Simplest way: if we are here, we are committed to this tool.
+            // Let's strip the prefix from URI for subsequent logic.
+             $_SERVER['REQUEST_URI'] = substr($uri, strlen('/phpmyadmin'));
+             if ($_SERVER['REQUEST_URI'] == '') $_SERVER['REQUEST_URI'] = '/';
         } else {
             http_response_code(404);
             echo "PHPMyAdmin not found. Checked: " . implode(", ", $possiblePaths);
