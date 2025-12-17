@@ -1,0 +1,181 @@
+/**
+ * SLD Daemon API Client
+ * Communicates with the Go daemon running on port 2025
+ */
+
+const API_BASE = "/api";
+
+// Types matching Go daemon state
+export interface SLDState {
+  tld: string;
+  paths: string[];
+  links: Record<string, string>;
+  services: Record<string, string>;
+  certificates: string[];
+  php_version: string;
+  secure: boolean;
+  port: string;
+}
+
+export interface ApiResponse<T = void> {
+  success: boolean;
+  message?: string;
+  data?: T;
+  error?: string;
+}
+
+export interface ServiceStatus {
+  name: string;
+  running: boolean;
+  version?: string;
+}
+
+export interface Project {
+  name: string;
+  path: string;
+  domain: string;
+  phpVersion?: string;
+  secure: boolean;
+  type: "parked" | "linked";
+}
+
+export interface HealthCheck {
+  name: string;
+  status: "pass" | "fail" | "warn";
+  message: string;
+  fixable?: boolean;
+}
+
+// API Client
+class DaemonApi {
+  private async request<T>(
+    endpoint: string,
+    options?: RequestInit
+  ): Promise<T> {
+    const response = await fetch(`${API_BASE}${endpoint}`, {
+      headers: {
+        "Content-Type": "application/json",
+      },
+      ...options,
+    });
+
+    if (!response.ok) {
+      const error = await response
+        .json()
+        .catch(() => ({ error: "Unknown error" }));
+      throw new Error(error.error || `Request failed: ${response.statusText}`);
+    }
+
+    return response.json();
+  }
+
+  // State
+  async getState(): Promise<SLDState> {
+    return this.request<SLDState>("/state");
+  }
+
+  // Project Management
+  async park(path: string): Promise<ApiResponse> {
+    return this.request<ApiResponse>("/park", {
+      method: "POST",
+      body: JSON.stringify({ path }),
+    });
+  }
+
+  async forget(path: string): Promise<ApiResponse> {
+    return this.request<ApiResponse>("/forget", {
+      method: "POST",
+      body: JSON.stringify({ path }),
+    });
+  }
+
+  async link(name: string, path: string): Promise<ApiResponse> {
+    return this.request<ApiResponse>("/link", {
+      method: "POST",
+      body: JSON.stringify({ name, path }),
+    });
+  }
+
+  async unlink(name: string): Promise<ApiResponse> {
+    return this.request<ApiResponse>("/unlink", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    });
+  }
+
+  // PHP Management
+  async switchPHP(version: string): Promise<ApiResponse> {
+    return this.request<ApiResponse>("/php", {
+      method: "POST",
+      body: JSON.stringify({ version }),
+    });
+  }
+
+  // SSL/HTTPS
+  async secure(): Promise<ApiResponse> {
+    return this.request<ApiResponse>("/secure", {
+      method: "POST",
+    });
+  }
+
+  // Service Management (to be implemented in daemon)
+  async getServiceStatus(): Promise<ServiceStatus[]> {
+    try {
+      const state = await this.getState();
+      // Parse from state.services or mock for now
+      return [
+        { name: "Nginx", running: true, version: "1.24.0" },
+        { name: "PHP-FPM", running: true, version: state.php_version || "8.2" },
+        { name: "DNSMasq", running: true },
+      ];
+    } catch {
+      return [
+        { name: "Nginx", running: false },
+        { name: "PHP-FPM", running: false },
+        { name: "DNSMasq", running: false },
+      ];
+    }
+  }
+
+  async restart(): Promise<ApiResponse> {
+    return this.request<ApiResponse>("/restart", {
+      method: "POST",
+    });
+  }
+
+  // Doctor/Diagnostics (to be implemented in daemon)
+  async runDoctor(): Promise<HealthCheck[]> {
+    // Mock for now - will be implemented in daemon
+    return [
+      {
+        name: "Nginx Configuration",
+        status: "pass",
+        message: "Valid configuration",
+      },
+      {
+        name: "PHP-FPM Socket",
+        status: "pass",
+        message: "Socket active and responding",
+      },
+      {
+        name: "DNS Resolution",
+        status: "pass",
+        message: "Resolving .test domains correctly",
+      },
+      {
+        name: "SSL Certificates",
+        status: "pass",
+        message: "mkcert CA installed",
+      },
+      { name: "Port 80", status: "pass", message: "No conflicts detected" },
+      { name: "Port 443", status: "pass", message: "No conflicts detected" },
+    ];
+  }
+
+  // Helper to transform state into projects list
+  async getProjects(): Promise<Project[]> {
+    return this.request<Project[]>("/sites");
+  }
+}
+
+export const api = new DaemonApi();

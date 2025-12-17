@@ -103,6 +103,9 @@ func init() {
 	rootCmd.AddCommand(phpCmd)
 	rootCmd.AddCommand(daemonCmd)
 	rootCmd.AddCommand(guiCmd)
+	rootCmd.AddCommand(dashboardCmd)
+
+	dashboardCmd.AddCommand(dashboardStartCmd)
 
 	// Phase 1 Additional Commands
 	rootCmd.AddCommand(unparkCmd)
@@ -240,11 +243,16 @@ var daemonCmd = &cobra.Command{
 	},
 }
 
-var guiCmd = &cobra.Command{
-	Use:   "gui",
+var dashboardCmd = &cobra.Command{
+	Use:   "dashboard",
+	Short: "Manage the SLD Dashboard",
+}
+
+var dashboardStartCmd = &cobra.Command{
+	Use:   "start",
 	Short: "Open the SLD Dashboard in your browser",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		url := "http://localhost:2025"
+		url := "http://sld.test"
 		fmt.Printf("Opening %s...\n", url)
 
 		// Linux xdg-open
@@ -252,6 +260,14 @@ var guiCmd = &cobra.Command{
 		// TODO: Support Mac open, Windows start
 
 		return nil
+	},
+}
+
+var guiCmd = &cobra.Command{
+	Use:   "gui",
+	Short: "Open the SLD Dashboard in your browser (Deprecated: use 'dashboard start')",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return dashboardStartCmd.RunE(cmd, args)
 	},
 }
 

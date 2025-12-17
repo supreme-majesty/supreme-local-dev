@@ -296,6 +296,51 @@ func (d *Daemon) Unlink(name string) error {
 	return nil
 }
 
+// GetSites returns a list of all available sites (parked + linked)
+func (d *Daemon) GetSites() ([]Site, error) {
+	var sites []Site
+	tld := d.State.Data.TLD
+	if tld == "" {
+		tld = "test"
+	}
+
+	// 1. Scan Parked Paths
+	for _, path := range d.State.Data.Paths {
+		entries, err := os.ReadDir(path)
+		if err != nil {
+			// Log error but continue? Or skip
+			continue
+		}
+		for _, entry := range entries {
+			if entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") {
+				name := entry.Name()
+				sites = append(sites, Site{
+					Name:       name,
+					Path:       filepath.Join(path, name),
+					Domain:     name + "." + tld,
+					PHPVersion: d.State.Data.PHPVersion,
+					Secure:     d.State.Data.Secure,
+					Type:       "parked",
+				})
+			}
+		}
+	}
+
+	// 2. Add Linked Sites
+	for name, path := range d.State.Data.Links {
+		sites = append(sites, Site{
+			Name:       name,
+			Path:       path,
+			Domain:     name + "." + tld,
+			PHPVersion: d.State.Data.PHPVersion,
+			Secure:     d.State.Data.Secure,
+			Type:       "linked",
+		})
+	}
+
+	return sites, nil
+}
+
 // HTTPS
 
 func (d *Daemon) Secure() error {
@@ -353,7 +398,7 @@ func (d *Daemon) Secure() error {
 
 func (d *Daemon) Unsecure() error {
 	fmt.Println("Disabling HTTPS...")
-	
+
 	d.State.Data.Secure = false
 	d.State.Save()
 
@@ -388,7 +433,7 @@ func (d *Daemon) Restart() error {
 	} else {
 		fmt.Println("PHP restarted.")
 	}
-	
+
 	// Dnsmasq might be separate, but let's try
 	if err := d.Adapter.RestartService("dnsmasq"); err != nil {
 		// Log but don't fail, dnsmasq might be managed differently on some OS
@@ -404,7 +449,7 @@ func (d *Daemon) Restart() error {
 
 func (d *Daemon) Doctor() error {
 	fmt.Println("Running diagnostic checks... 🩺")
-	
+
 	// 1. Check Services
 	services := []string{"nginx", "dnsmasq"}
 	allGood := true
@@ -455,14 +500,14 @@ func (d *Daemon) Doctor() error {
 func (d *Daemon) GetLogPaths() map[string]string {
 	// Ideally adapter gives these paths as they vary by OS.
 	// For now, assuming standard Linux/Nginx locations or getting from config.
-    // TODO: move to Adapter.GetLogPaths()
-	
+	// TODO: move to Adapter.GetLogPaths()
+
 	logs := make(map[string]string)
 	logs["nginx-error"] = "/var/log/nginx/error.log"
 	logs["nginx-access"] = "/var/log/nginx/access.log"
 	// PHP logs vary
 	logs["php-fpm"] = "/var/log/php-fpm.log" // Generic fallback
-	
+
 	return logs
 }
 
