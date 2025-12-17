@@ -103,6 +103,123 @@ func init() {
 	rootCmd.AddCommand(phpCmd)
 	rootCmd.AddCommand(daemonCmd)
 	rootCmd.AddCommand(guiCmd)
+
+	// Phase 1 Additional Commands
+	rootCmd.AddCommand(unparkCmd)
+	rootCmd.AddCommand(unsecureCmd)
+	rootCmd.AddCommand(restartCmd)
+	rootCmd.AddCommand(logsCmd)
+	rootCmd.AddCommand(doctorCmd)
+	rootCmd.AddCommand(pluginCmd)
+
+	pluginCmd.AddCommand(pluginInstallCmd)
+	pluginCmd.AddCommand(pluginEnableCmd)
+}
+
+// --- Commands ---
+
+var unparkCmd = &cobra.Command{
+	Use:   "unpark [path]",
+	Short: "Remove a directory from parked paths (alias for forget)",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		// Re-use forget logic
+		return forgetCmd.RunE(cmd, args)
+	},
+}
+
+var unsecureCmd = &cobra.Command{
+	Use:   "unsecure",
+	Short: "Disable HTTPS and revert to HTTP",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		d, err := daemon.GetClient()
+		if err != nil {
+			return err
+		}
+		return d.Unsecure()
+	},
+}
+
+var restartCmd = &cobra.Command{
+	Use:   "restart",
+	Short: "Restart Nginx, PHP, and Dnsmasq services",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		d, err := daemon.GetClient()
+		if err != nil {
+			return err
+		}
+		return d.Restart()
+	},
+}
+
+var doctorCmd = &cobra.Command{
+	Use:   "doctor",
+	Short: "Check system health and status",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		d, err := daemon.GetClient()
+		if err != nil {
+			return err
+		}
+		return d.Doctor()
+	},
+}
+
+var logsCmd = &cobra.Command{
+	Use:   "logs [service]",
+	Short: "View logs for a service (nginx, php)",
+	Long:  `Available services: nginx-error, nginx-access, php-fpm`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		d, err := daemon.GetClient()
+		if err != nil {
+			return err
+		}
+
+		key := "nginx-error"
+		if len(args) > 0 {
+			key = args[0]
+		}
+
+		paths := d.GetLogPaths()
+		logPath, ok := paths[key]
+		if !ok {
+			return fmt.Errorf("unknown log service: %s. Available: nginx-error, nginx-access, php-fpm", key)
+		}
+
+		fmt.Printf("Tailing log: %s\n", logPath)
+		// Simple tail implementation
+		cmdTail := exec.Command("tail", "-f", logPath)
+		cmdTail.Stdout = os.Stdout
+		cmdTail.Stderr = os.Stderr
+		return cmdTail.Run()
+	},
+}
+
+var pluginCmd = &cobra.Command{
+	Use:   "plugin",
+	Short: "Manage plugins",
+}
+
+var pluginInstallCmd = &cobra.Command{
+	Use:   "install [name]",
+	Short: "Install a plugin (stub)",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 {
+			return fmt.Errorf("plugin name required")
+		}
+		fmt.Printf("Installing plugin %s... (Not implemented in Phase 1)\n", args[0])
+		return nil
+	},
+}
+
+var pluginEnableCmd = &cobra.Command{
+	Use:   "enable [name]",
+	Short: "Enable a plugin (stub)",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 {
+			return fmt.Errorf("plugin name required")
+		}
+		fmt.Printf("Enabling plugin %s... (Not implemented in Phase 1)\n", args[0])
+		return nil
+	},
 }
 
 // --- Commands ---

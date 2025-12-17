@@ -351,9 +351,119 @@ func (d *Daemon) Secure() error {
 	return nil
 }
 
+func (d *Daemon) Unsecure() error {
+	fmt.Println("Disabling HTTPS...")
+	
+	d.State.Data.Secure = false
+	d.State.Save()
+
+	fmt.Println("Updating Nginx configuration...")
+	if err := d.refreshNginxConfig(); err != nil {
+		return err
+	}
+
+	// We don't uninstall mkcert, just switch config.
+	fmt.Println("HTTPS Disabled. Switched back to HTTP. 🔓")
+	return nil
+}
+
 // Uninstall removes SLD from the system
 func (d *Daemon) Uninstall() error {
 	return d.Adapter.Uninstall()
+}
+
+// Service Management
+
+func (d *Daemon) Restart() error {
+	fmt.Println("Restarting services...")
+
+	if err := d.Adapter.RestartService("nginx"); err != nil {
+		fmt.Printf("Warning: Failed to restart Nginx: %v\n", err)
+	} else {
+		fmt.Println("Nginx restarted.")
+	}
+
+	if err := d.Adapter.RestartPHP(); err != nil {
+		fmt.Printf("Warning: Failed to restart PHP: %v\n", err)
+	} else {
+		fmt.Println("PHP restarted.")
+	}
+	
+	// Dnsmasq might be separate, but let's try
+	if err := d.Adapter.RestartService("dnsmasq"); err != nil {
+		// Log but don't fail, dnsmasq might be managed differently on some OS
+		fmt.Printf("Warning: Failed to restart dnsmasq: %v\n", err)
+	} else {
+		fmt.Println("Dnsmasq restarted.")
+	}
+
+	return nil
+}
+
+// Diagnostics
+
+func (d *Daemon) Doctor() error {
+	fmt.Println("Running diagnostic checks... 🩺")
+	
+	// 1. Check Services
+	services := []string{"nginx", "dnsmasq"}
+	allGood := true
+
+	for _, s := range services {
+		running, err := d.Adapter.IsServiceRunning(s)
+		if err != nil {
+			fmt.Printf("❌ %s check failed: %v\n", s, err)
+			allGood = false
+		} else if !running {
+			fmt.Printf("❌ %s is NOT running.\n", s)
+			allGood = false
+		} else {
+			fmt.Printf("✅ %s is running.\n", s)
+		}
+	}
+
+	// 2. Check PHP
+	phpV := d.Adapter.GetPHPVersion()
+	if phpV == "" {
+		fmt.Println("❌ No PHP version detected.")
+		allGood = false
+	} else {
+		fmt.Printf("✅ PHP version: %s\n", phpV)
+		// Check socket
+		_, err := d.Adapter.CheckPHPSocket(phpV)
+		if err != nil {
+			fmt.Printf("❌ PHP socket not found: %v\n", err)
+			allGood = false
+		} else {
+			fmt.Println("✅ PHP socket found.")
+		}
+	}
+
+	// 3. Check Permissions
+	// TODO: Add permission checks
+
+	if allGood {
+		fmt.Println("\nEverything looks good! 🎉")
+	} else {
+		fmt.Println("\nSome issues were found. Please check logs.")
+	}
+
+	return nil
+}
+
+// Logs returns map of log names to paths
+func (d *Daemon) GetLogPaths() map[string]string {
+	// Ideally adapter gives these paths as they vary by OS.
+	// For now, assuming standard Linux/Nginx locations or getting from config.
+    // TODO: move to Adapter.GetLogPaths()
+	
+	logs := make(map[string]string)
+	logs["nginx-error"] = "/var/log/nginx/error.log"
+	logs["nginx-access"] = "/var/log/nginx/access.log"
+	// PHP logs vary
+	logs["php-fpm"] = "/var/log/php-fpm.log" // Generic fallback
+	
+	return logs
 }
 
 // Multi-PHP
