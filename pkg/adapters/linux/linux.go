@@ -314,12 +314,52 @@ func (l *LinuxAdapter) InstallBinary() error {
 	// Copy binary
 	fmt.Printf("Installing binary to %s...\n", dest)
 	cmd := exec.Command("sudo", "cp", exe, dest)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
 	if err := cmd.Run(); err != nil {
 		return err
 	}
 
 	// Ensure executable
 	return exec.Command("sudo", "chmod", "+x", dest).Run()
+}
+
+func (l *LinuxAdapter) Uninstall() error {
+	fmt.Println("Removing configuration files...")
+
+	files := []string{
+		"/usr/local/bin/sld",
+		"/etc/dnsmasq.d/sld.conf",
+		"/etc/systemd/resolved.conf.d/sld.conf",
+		"/etc/nginx/sites-enabled/sld.conf",
+		"/etc/nginx/sites-enabled/sld-ssl.conf",
+	}
+
+	for _, f := range files {
+		if _, err := os.Stat(f); err == nil {
+			fmt.Printf("Removing %s...\n", f)
+			exec.Command("sudo", "rm", f).Run()
+		}
+	}
+
+	fmt.Println("Removing data directories...")
+	exec.Command("sudo", "rm", "-rf", "/var/lib/sld").Run()
+
+	// Remove user config
+	home, _ := os.UserHomeDir()
+	if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" {
+		home = filepath.Join("/home", sudoUser)
+	}
+	exec.Command("rm", "-rf", filepath.Join(home, ".sld")).Run()
+
+	fmt.Println("Restarting services to apply changes...")
+	exec.Command("sudo", "systemctl", "restart", "dnsmasq").Run()
+	exec.Command("sudo", "systemctl", "restart", "systemd-resolved").Run()
+	exec.Command("sudo", "systemctl", "restart", "nginx").Run()
+
+	return nil
 }
 
 func (l *LinuxAdapter) CheckPHPSocket(version string) (string, error) {

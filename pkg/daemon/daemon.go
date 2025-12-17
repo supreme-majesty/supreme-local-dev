@@ -350,6 +350,11 @@ func (d *Daemon) Secure() error {
 	return nil
 }
 
+// Uninstall removes SLD from the system
+func (d *Daemon) Uninstall() error {
+	return d.Adapter.Uninstall()
+}
+
 // Multi-PHP
 
 func (d *Daemon) SwitchPHP(version string) error {

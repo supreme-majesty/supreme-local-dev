@@ -15,6 +15,7 @@ func (m *MacOSAdapter) InstallCertificates() error                          { re
 func (m *MacOSAdapter) InstallMkcert() error                                { return nil }
 func (m *MacOSAdapter) GenerateCert(homeDir string, domains []string) error { return nil }
 func (m *MacOSAdapter) InstallBinary() error                                { return nil }
+func (m *MacOSAdapter) Uninstall() error                                    { return nil }
 func (m *MacOSAdapter) WriteNginxConfig(config string) error                { return nil }
 func (m *MacOSAdapter) GetNginxConfigPath() string                          { return "" }
 func (m *MacOSAdapter) GetPHPVersion() string                               { return "" }

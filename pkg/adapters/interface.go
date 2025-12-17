@@ -14,6 +14,7 @@ type SystemAdapter interface {
 	InstallMkcert() error
 	GenerateCert(homeDir string, domains []string) error
 	InstallBinary() error
+	Uninstall() error
 
 	// Configuration
 	WriteNginxConfig(config string) error

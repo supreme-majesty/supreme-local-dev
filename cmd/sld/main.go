@@ -22,7 +22,7 @@ var installCmd = &cobra.Command{
 	Short: "Install SLD dependencies and core services",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		fmt.Println("Installing Supreme Local Dev...")
-		
+
 		d, err := daemon.GetClient()
 		if err != nil {
 			return err
@@ -33,6 +33,26 @@ var installCmd = &cobra.Command{
 		}
 
 		fmt.Println("Supreme Local Dev installed successfully! 🚀")
+		return nil
+	},
+}
+
+var uninstallCmd = &cobra.Command{
+	Use:   "uninstall",
+	Short: "Remove SLD and all its configurations",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		fmt.Println("Uninstalling Supreme Local Dev...")
+
+		d, err := daemon.GetClient()
+		if err != nil {
+			return err
+		}
+
+		if err := d.Uninstall(); err != nil {
+			return fmt.Errorf("uninstall failed: %w", err)
+		}
+
+		fmt.Println("Supreme Local Dev uninstalled successfully. 👋")
 		return nil
 	},
 }
@@ -52,10 +72,10 @@ var statusCmd = &cobra.Command{
 		if err == nil && running {
 			status = "RUNNING"
 		}
-		
+
 		fmt.Printf("Nginx: %s\n", status)
 		fmt.Printf("PHP:   %s\n", d.Adapter.GetPHPVersion())
-		
+
 		return nil
 	},
 }
@@ -69,8 +89,9 @@ func main() {
 
 func init() {
 	rootCmd.AddCommand(installCmd)
+	rootCmd.AddCommand(uninstallCmd)
 	rootCmd.AddCommand(statusCmd)
-	
+
 	// Project Management Commands
 	rootCmd.AddCommand(parkCmd)
 	rootCmd.AddCommand(forgetCmd)
@@ -92,8 +113,10 @@ var daemonCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Ensure core is installed/ready?
 		_, err := daemon.GetClient()
-		if err != nil { return err }
-		
+		if err != nil {
+			return err
+		}
+
 		// Start Server
 		srv := api.NewServer(2025)
 		return srv.Start()
@@ -106,11 +129,11 @@ var guiCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		url := "http://localhost:2025"
 		fmt.Printf("Opening %s...\n", url)
-		
+
 		// Linux xdg-open
 		exec.Command("xdg-open", url).Start()
 		// TODO: Support Mac open, Windows start
-		
+
 		return nil
 	},
 }
@@ -123,10 +146,12 @@ var phpCmd = &cobra.Command{
 			return fmt.Errorf("please specify a PHP version (e.g. 8.2)")
 		}
 		version := args[0]
-		
+
 		d, err := daemon.GetClient()
-		if err != nil { return err }
-		
+		if err != nil {
+			return err
+		}
+
 		return d.SwitchPHP(version)
 	},
 }
@@ -136,8 +161,10 @@ var secureCmd = &cobra.Command{
 	Short: "Enable HTTPS (installs mkcert and updates config)",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		d, err := daemon.GetClient()
-		if err != nil { return err }
-		
+		if err != nil {
+			return err
+		}
+
 		return d.Secure()
 	},
 }
@@ -150,10 +177,12 @@ var parkCmd = &cobra.Command{
 		if len(args) > 0 {
 			path = args[0]
 		}
-		
+
 		d, err := daemon.GetClient()
-		if err != nil { return err }
-		
+		if err != nil {
+			return err
+		}
+
 		if err := d.Park(path); err != nil {
 			return err
 		}
@@ -170,10 +199,12 @@ var forgetCmd = &cobra.Command{
 		if len(args) > 0 {
 			path = args[0]
 		}
-		
+
 		d, err := daemon.GetClient()
-		if err != nil { return err }
-		
+		if err != nil {
+			return err
+		}
+
 		if err := d.Forget(path); err != nil {
 			return err
 		}
@@ -187,8 +218,10 @@ var pathsCmd = &cobra.Command{
 	Short: "List all parked directories",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		d, err := daemon.GetClient()
-		if err != nil { return err }
-		
+		if err != nil {
+			return err
+		}
+
 		fmt.Println("Parked Paths:")
 		for _, p := range d.State.Data.Paths {
 			fmt.Printf(" - %s\n", p)
@@ -203,16 +236,18 @@ var linkCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		path, _ := os.Getwd()
 		name := ""
-		
+
 		if len(args) > 0 {
 			name = args[0]
 		} else {
 			name = filepath.Base(path)
 		}
-		
+
 		d, err := daemon.GetClient()
-		if err != nil { return err }
-		
+		if err != nil {
+			return err
+		}
+
 		if err := d.Link(name, path); err != nil {
 			return err
 		}
@@ -232,10 +267,12 @@ var unlinkCmd = &cobra.Command{
 			cwd, _ := os.Getwd()
 			name = filepath.Base(cwd)
 		}
-		
+
 		d, err := daemon.GetClient()
-		if err != nil { return err }
-		
+		if err != nil {
+			return err
+		}
+
 		if err := d.Unlink(name); err != nil {
 			return err
 		}
@@ -249,8 +286,10 @@ var linksCmd = &cobra.Command{
 	Short: "List all linked sites",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		d, err := daemon.GetClient()
-		if err != nil { return err }
-		
+		if err != nil {
+			return err
+		}
+
 		fmt.Println("Linked Sites:")
 		for name, path := range d.State.Data.Links {
 			fmt.Printf(" - %s -> %s\n", name, path)
