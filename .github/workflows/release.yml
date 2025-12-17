@@ -1,0 +1,186 @@
+name: Release Pipeline
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: "write"
+
+jobs:
+  validate:
+    uses: ./.github/workflows/ci.yml
+    secrets: inherit
+
+  build-daemon:
+    name: Build Daemon (${{ matrix.os }})
+    needs: validate
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            output_name: sld-linux-amd64
+          - os: macos-latest
+            goos: darwin
+            goarch: amd64
+            output_name: sld-darwin-amd64
+          - os: windows-latest
+            goos: windows
+            goarch: amd64
+            output_name: sld-windows-amd64.exe
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Build Binary
+        working-directory: cmd/sld
+        run: |
+          go build -ldflags "-X main.Version=${{ github.ref_name }}" -o ../../bin/${{ matrix.output_name }} .
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: daemon-${{ matrix.goos }}
+          path: bin/${{ matrix.output_name }}
+
+  package-daemon-linux:
+    name: Package Daemon (Linux .deb)
+    needs: build-daemon
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Linux Binary
+        uses: actions/download-artifact@v4
+        with:
+          name: daemon-linux
+          path: bin
+
+      - name: Install FPM
+        run: sudo apt-get install -y ruby ruby-dev rubygems build-essential && sudo gem install --no-document fpm
+
+      - name: Create Deb
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          chmod +x bin/sld-linux-amd64
+          # Assuming scripts/packaging exists via repo checkout
+          fpm -s dir -t deb \
+            -n supreme-local-dev \
+            -v $VERSION \
+            -a amd64 \
+            --description "Supreme Local Dev Daemon" \
+            --url "https://github.com/supreme-majesty/supreme-local-dev" \
+            --maintainer "Supreme <dev@supreme.local>" \
+            --prefix /usr/bin \
+            bin/sld-linux-amd64=/usr/bin/sld
+
+      - name: Upload Deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: sld-deb
+          path: "*.deb"
+
+  build-ui:
+    name: Build UI (Tauri)
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: "macos-latest"
+            args: "--target universal-apple-darwin"
+          - platform: "ubuntu-22.04"
+            args: ""
+          - platform: "windows-latest"
+            args: ""
+    runs-on: ${{ matrix.platform }}
+    defaults:
+      run:
+        working-directory: sld-dashboard
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+          cache: "npm"
+          cache-dependency-path: sld-dashboard/package-lock.json
+
+      - name: Install Rust (Stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # Those targets are typically added automatically by tauri-action but explicit is safe
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Install dependencies (Ubuntu only)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.0-dev build-essential curl wget file libssl-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - name: Install Frontend Dependencies
+        run: npm ci
+
+      - name: Build Tauri App
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Signing secrets placeholders
+          # APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          # APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          # APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+        with:
+          projectPath: sld-dashboard
+          tagName: ${{ github.ref_name }}
+          releaseName: "Supreme Local Dev ${{ github.ref_name }}"
+          releaseBody: "See the assets to download this version and install."
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
+
+  publish-release:
+    name: Publish Release
+    needs: [build-daemon, package-daemon-linux, build-ui]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Daemon Assets
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "daemon-*"
+          path: assets/daemon
+          merge-multiple: true
+
+      - name: Download Deb Assets
+        uses: actions/download-artifact@v4
+        with:
+          name: sld-deb
+          path: assets/deb
+
+      # Tauri action uploads its own assets to the release draft automatically.
+      # We just need to upload the extra daemon binaries and .deb packages to the SAME release.
+      # However, getting the release ID from matrix jobs is tricky.
+      # Strategy: Use a generic GH Release action to upload extra assets to the tag.
+
+      - name: Upload Daemon & Deb to Release
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            assets/daemon/*
+            assets/deb/*.deb
