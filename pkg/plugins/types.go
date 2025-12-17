@@ -1,0 +1,40 @@
+package plugins
+
+type Status string
+
+const (
+	StatusRunning    Status = "running"
+	StatusStopped    Status = "stopped"
+	StatusError      Status = "error"
+	StatusInstalling Status = "installing"
+)
+
+// Plugin defines the interface that all services/plugins must implement
+type Plugin interface {
+	// ID returns the unique identifier (e.g., "redis", "mailhog")
+	ID() string
+
+	// Name returns the display name
+	Name() string
+
+	// Description returns what the plugin does
+	Description() string
+
+	// Version returns the current installed version
+	Version() string
+
+	// Status returns the current running state
+	Status() Status
+
+	// Install downloads and sets up the plugin
+	Install() error
+
+	// Start launches the plugin process
+	Start() error
+
+	// Stop terminates the plugin process
+	Stop() error
+
+	// IsInstalled checks if the binary/resources exist
+	IsInstalled() bool
+}

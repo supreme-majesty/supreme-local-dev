@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { Puzzle, Settings, Power, Download, ExternalLink } from "lucide-react";
-import { Card, CardHeader } from "@/components/ui/Card";
+import { Switch } from "@/components/ui/Switch";
+import { Puzzle, Settings, Download, ExternalLink } from "lucide-react";
+import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/utils";
 
@@ -87,22 +88,11 @@ function PluginCard({
             </p>
           </div>
         </div>
-        <button
-          onClick={handleToggle}
-          disabled={loading}
-          className={cn(
-            "relative w-12 h-6 rounded-full transition-colors duration-200",
-            plugin.enabled ? "bg-[var(--primary)]" : "bg-[var(--muted)]"
-          )}
-        >
-          <span
-            className={cn(
-              "absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform duration-200",
-              plugin.enabled ? "translate-x-7" : "translate-x-1",
-              loading && "animate-pulse"
-            )}
-          />
-        </button>
+        <Switch
+          checked={plugin.enabled}
+          onCheckedChange={handleToggle}
+          loading={loading}
+        />
       </div>
       <p className="text-sm text-[var(--muted-foreground)] mb-4">
         {plugin.description}
@@ -142,12 +132,12 @@ export default function Plugins() {
   const [plugins, setPlugins] = useState(mockPlugins);
 
   const handleToggle = (id: string) => {
-    setPlugins((prev) =>
-      prev.map((p) => (p.id === id ? { ...p, enabled: !p.enabled } : p))
+    setPlugins((prev: Plugin[]) =>
+      prev.map((p: Plugin) => (p.id === id ? { ...p, enabled: !p.enabled } : p))
     );
   };
 
-  const enabledCount = plugins.filter((p) => p.enabled).length;
+  const enabledCount = plugins.filter((p: Plugin) => p.enabled).length;
 
   return (
     <div className="space-y-6 animate-fade-in">

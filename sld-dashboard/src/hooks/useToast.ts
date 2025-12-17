@@ -2,11 +2,30 @@ import { useAppStore } from "@/stores/useAppStore";
 
 type ToastType = "success" | "error" | "info" | "warning";
 
+interface ToastOptions {
+  title: string;
+  description?: string;
+  variant?: "default" | "destructive" | "success";
+}
+
 export function useToast() {
   const { toasts, addToast, removeToast } = useAppStore();
 
-  const toast = (type: ToastType, title: string, description?: string) => {
-    addToast({ type, title, description });
+  const toast = (
+    args: ToastOptions | ToastType,
+    title?: string,
+    description?: string
+  ) => {
+    if (typeof args === "string") {
+      addToast({ type: args, title: title!, description });
+    } else {
+      // Map variant to type
+      let type: ToastType = "info";
+      if (args.variant === "destructive") type = "error";
+      if (args.variant === "success") type = "success";
+
+      addToast({ type, title: args.title, description: args.description });
+    }
   };
 
   return {

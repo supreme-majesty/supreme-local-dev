@@ -52,7 +52,10 @@ class DaemonApi {
     endpoint: string,
     options?: RequestInit
   ): Promise<T> {
-    const response = await fetch(`${API_BASE}${endpoint}`, {
+    const url = `${API_BASE}${endpoint}${
+      endpoint.includes("?") ? "&" : "?"
+    }t=${Date.now()}`;
+    const response = await fetch(url, {
       headers: {
         "Content-Type": "application/json",
       },
@@ -96,10 +99,24 @@ class DaemonApi {
     });
   }
 
-  async unlink(name: string): Promise<ApiResponse> {
-    return this.request<ApiResponse>("/unlink", {
+  async unlink(name: string): Promise<void> {
+    return this.request("/unlink", {
       method: "POST",
       body: JSON.stringify({ name }),
+    });
+  }
+
+  async ignore(path: string): Promise<void> {
+    return this.request("/ignore", {
+      method: "POST",
+      body: JSON.stringify({ path }),
+    });
+  }
+
+  async unignore(path: string): Promise<void> {
+    return this.request("/unignore", {
+      method: "POST",
+      body: JSON.stringify({ path }),
     });
   }
 
@@ -174,7 +191,8 @@ class DaemonApi {
 
   // Helper to transform state into projects list
   async getProjects(): Promise<Project[]> {
-    return this.request<Project[]>("/sites");
+    const projects = await this.request<Project[]>("/sites");
+    return projects || [];
   }
 }
 

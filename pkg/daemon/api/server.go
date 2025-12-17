@@ -28,6 +28,8 @@ func (s *Server) Start() error {
 	http.HandleFunc("/api/secure", s.handleSecure)
 	http.HandleFunc("/api/restart", s.handleRestart)
 	http.HandleFunc("/api/sites", s.handleSites)
+	http.HandleFunc("/api/ignore", s.handleIgnore)
+	http.HandleFunc("/api/unignore", s.handleUnignore)
 
 	// Serve GUI static files
 	guiFS, _ := assets.GetGuiFS()
@@ -50,6 +52,7 @@ type SuccessResponse struct {
 func jsonResponse(w http.ResponseWriter, data interface{}, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*") // For dev
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(data)
 }
@@ -197,4 +200,42 @@ func (s *Server) handleSites(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, sites, 200)
+}
+
+func (s *Server) handleIgnore(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		return
+	}
+	var req struct {
+		Path string `json:"path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
+		return
+	}
+	d, _ := daemon.GetClient()
+	if err := d.Ignore(req.Path); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+	jsonResponse(w, SuccessResponse{Success: true}, 200)
+}
+
+func (s *Server) handleUnignore(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		return
+	}
+	var req struct {
+		Path string `json:"path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
+		return
+	}
+	d, _ := daemon.GetClient()
+	if err := d.Unignore(req.Path); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+	jsonResponse(w, SuccessResponse{Success: true}, 200)
 }

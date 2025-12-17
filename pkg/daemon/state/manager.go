@@ -8,6 +8,7 @@ import (
 )
 
 // State represents the persistent configuration of the SLD environment.
+// State represents the persistent configuration of the SLD environment.
 type State struct {
 	TLD          string            `json:"tld"`
 	Paths        []string          `json:"paths"`        // Parked paths
@@ -17,6 +18,7 @@ type State struct {
 	PHPVersion   string            `json:"php_version"`  // Default PHP version
 	Secure       bool              `json:"secure"`       // Is global HTTPS enabled?
 	Port         string            `json:"port"`         // Main HTTP Port (default 80)
+	Ignored      []string          `json:"ignored"`      // Ignored project paths
 }
 
 type Manager struct {
@@ -43,6 +45,7 @@ func NewManager() (*Manager, error) {
 			Links:    make(map[string]string),
 			Services: make(map[string]string),
 			Port:     "80", // Default port
+			Ignored:  []string{},
 		},
 	}, nil
 }
@@ -67,6 +70,14 @@ func (m *Manager) Load() error {
 	// Ensure default port if missing (e.g. old state file)
 	if m.Data.Port == "" {
 		m.Data.Port = "80"
+	}
+
+	// Ensure Initialized slices
+	if m.Data.Paths == nil {
+		m.Data.Paths = []string{}
+	}
+	if m.Data.Ignored == nil {
+		m.Data.Ignored = []string{}
 	}
 
 	return nil
@@ -130,5 +141,32 @@ func (m *Manager) RemoveLink(name string) {
 	defer m.mu.Unlock()
 
 	delete(m.Data.Links, name)
+	m.Save()
+}
+
+func (m *Manager) AddIgnore(path string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, p := range m.Data.Ignored {
+		if p == path {
+			return
+		}
+	}
+	m.Data.Ignored = append(m.Data.Ignored, path)
+	m.Save()
+}
+
+func (m *Manager) RemoveIgnore(path string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	newPaths := []string{}
+	for _, p := range m.Data.Ignored {
+		if p != path {
+			newPaths = append(newPaths, p)
+		}
+	}
+	m.Data.Ignored = newPaths
 	m.Save()
 }

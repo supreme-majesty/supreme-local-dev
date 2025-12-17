@@ -9,11 +9,17 @@ import {
 } from "lucide-react";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
-import { useAppStore } from "@/stores/useAppStore";
+import { useSites, useSldState, useSecureMutation } from "@/hooks/use-daemon";
 import { cn } from "@/lib/utils";
 
 export default function Domains() {
-  const { projects, state, enableSecure } = useAppStore();
+  const { data: projects = [] } = useSites();
+  const { data: state } = useSldState();
+  const secureMutation = useSecureMutation();
+
+  const enableSecure = () => {
+    secureMutation.mutate();
+  };
 
   const domains = useMemo(() => {
     return projects.map((project) => ({

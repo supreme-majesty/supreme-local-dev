@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import {
   Stethoscope,
   CheckCircle,
@@ -10,23 +10,17 @@ import {
 } from "lucide-react";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
-import { useAppStore } from "@/stores/useAppStore";
+import { useHealthChecks } from "@/hooks/use-daemon";
 import { cn } from "@/lib/utils";
 
 export default function Doctor() {
-  const { healthChecks, runDoctor } = useAppStore();
-  const [loading, setLoading] = useState(false);
+  const { data: healthChecks = [], refetch, isFetching } = useHealthChecks();
   const [logs, setLogs] = useState<string[]>([]);
 
-  useEffect(() => {
-    runDoctor();
-  }, [runDoctor]);
-
   const handleRunDoctor = async () => {
-    setLoading(true);
     setLogs(["[info] Running diagnostics..."]);
 
-    await runDoctor();
+    await refetch();
 
     // Simulate log output
     setLogs((prev) => [
@@ -38,8 +32,6 @@ export default function Doctor() {
       "[ok] Scanning for port conflicts...",
       "[info] All checks completed!",
     ]);
-
-    setLoading(false);
   };
 
   const passCount = healthChecks.filter((c) => c.status === "pass").length;
@@ -68,7 +60,11 @@ export default function Doctor() {
             System health checks and diagnostics
           </p>
         </div>
-        <Button variant="primary" onClick={handleRunDoctor} loading={loading}>
+        <Button
+          variant="primary"
+          onClick={handleRunDoctor}
+          loading={isFetching}
+        >
           <RefreshCw size={16} />
           Run Diagnostics
         </Button>

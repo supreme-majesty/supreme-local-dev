@@ -298,10 +298,20 @@ func (d *Daemon) Unlink(name string) error {
 
 // GetSites returns a list of all available sites (parked + linked)
 func (d *Daemon) GetSites() ([]Site, error) {
-	var sites []Site
+	sites := []Site{}
 	tld := d.State.Data.TLD
 	if tld == "" {
 		tld = "test"
+	}
+
+	// Helper to check if ignored
+	isIgnored := func(path string) bool {
+		for _, ignored := range d.State.Data.Ignored {
+			if ignored == path {
+				return true
+			}
+		}
+		return false
 	}
 
 	// 1. Scan Parked Paths
@@ -314,9 +324,15 @@ func (d *Daemon) GetSites() ([]Site, error) {
 		for _, entry := range entries {
 			if entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") {
 				name := entry.Name()
+				fullPath := filepath.Join(path, name)
+
+				if isIgnored(fullPath) {
+					continue
+				}
+
 				sites = append(sites, Site{
 					Name:       name,
-					Path:       filepath.Join(path, name),
+					Path:       fullPath,
 					Domain:     name + "." + tld,
 					PHPVersion: d.State.Data.PHPVersion,
 					Secure:     d.State.Data.Secure,
@@ -339,6 +355,18 @@ func (d *Daemon) GetSites() ([]Site, error) {
 	}
 
 	return sites, nil
+}
+
+func (d *Daemon) Ignore(path string) error {
+	d.State.AddIgnore(path)
+	fmt.Printf("Ignored path: %s\n", path)
+	return nil
+}
+
+func (d *Daemon) Unignore(path string) error {
+	d.State.RemoveIgnore(path)
+	fmt.Printf("Unignored path: %s\n", path)
+	return nil
 }
 
 // HTTPS

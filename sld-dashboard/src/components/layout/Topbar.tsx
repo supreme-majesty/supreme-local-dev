@@ -3,14 +3,21 @@ import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/useAppStore";
 import { useTheme } from "@/hooks/useTheme";
 import { StatusBadge } from "@/components/common/StatusBadge";
+import { useServices, useRestartMutation } from "@/hooks/use-daemon";
 
 export function Topbar() {
-  const { services, restartServices, sidebarCollapsed } = useAppStore();
-  const { theme, toggleTheme, isDark } = useTheme();
+  const { sidebarCollapsed } = useAppStore();
+  const { data: services = [], isLoading: isServicesLoading } = useServices();
+  const restartMutation = useRestartMutation();
+  const { toggleTheme, isDark } = useTheme();
 
   // Check if all services are running
   const allRunning = services.length > 0 && services.every((s) => s.running);
-  const isLoading = services.length === 0;
+  const isLoading = isServicesLoading;
+
+  const handleRestart = () => {
+    restartMutation.mutate();
+  };
 
   return (
     <header
@@ -42,16 +49,22 @@ export function Topbar() {
       <div className="flex items-center gap-2">
         {/* Restart Button */}
         <button
-          onClick={restartServices}
+          onClick={handleRestart}
+          disabled={restartMutation.isPending}
           className={cn(
             "flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium",
             "bg-[var(--secondary)] text-[var(--secondary-foreground)]",
             "hover:bg-[var(--card-hover)] transition-colors duration-200",
-            "active:scale-95"
+            "active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
           )}
         >
-          <RefreshCw size={16} />
-          <span className="hidden sm:inline">Restart</span>
+          <RefreshCw
+            size={16}
+            className={cn(restartMutation.isPending && "animate-spin")}
+          />
+          <span className="hidden sm:inline">
+            {restartMutation.isPending ? "Restarting..." : "Restart"}
+          </span>
         </button>
 
         {/* Theme Toggle */}

@@ -7,23 +7,31 @@ import Plugins from "@/pages/Plugins";
 import Settings from "@/pages/Settings";
 import Doctor from "@/pages/Doctor";
 
+import { ErrorBoundary } from "@/components/common/ErrorBoundary";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { queryClient } from "@/lib/react-query";
+
 function App() {
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route element={<AppShell />}>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/projects" element={<Projects />} />
-          <Route path="/domains" element={<Domains />} />
-          <Route path="/plugins" element={<Plugins />} />
-          <Route path="/settings" element={<Settings />} />
-          <Route path="/doctor" element={<Doctor />} />
+    <QueryClientProvider client={queryClient}>
+      <ErrorBoundary>
+        <BrowserRouter>
+          <Routes>
+            <Route element={<AppShell />}>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/projects" element={<Projects />} />
+              <Route path="/domains" element={<Domains />} />
+              <Route path="/plugins" element={<Plugins />} />
+              <Route path="/settings" element={<Settings />} />
+              <Route path="/doctor" element={<Doctor />} />
 
-          {/* Fallback */}
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Route>
-      </Routes>
-    </BrowserRouter>
+              {/* Fallback */}
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Route>
+          </Routes>
+        </BrowserRouter>
+      </ErrorBoundary>
+    </QueryClientProvider>
   );
 }
 

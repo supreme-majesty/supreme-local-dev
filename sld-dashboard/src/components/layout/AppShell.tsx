@@ -1,4 +1,3 @@
-import { useEffect } from "react";
 import { Outlet } from "react-router-dom";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
@@ -7,22 +6,14 @@ import { useAppStore } from "@/stores/useAppStore";
 import { cn } from "@/lib/utils";
 
 export function AppShell() {
-  const { sidebarCollapsed, fetchState, fetchServices, fetchProjects } =
-    useAppStore();
+  const { sidebarCollapsed } = useAppStore();
+  // React Query handles data fetching automatically via hooks in child components
+  // We can add global polling here if needed, but per-component useQuery is better
 
-  // Fetch initial data
-  useEffect(() => {
-    fetchState();
-    fetchServices();
-    fetchProjects();
-
-    // Poll for updates every 10 seconds
-    const interval = setInterval(() => {
-      fetchServices();
-    }, 10000);
-
-    return () => clearInterval(interval);
-  }, [fetchState, fetchServices, fetchProjects]);
+  // Example: Pre-fetch critical data if we want global availability immediately
+  // useSldState();
+  // useSites();
+  // useServices();
 
   return (
     <div className="min-h-screen bg-[var(--background)]">

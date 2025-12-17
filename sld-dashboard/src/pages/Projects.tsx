@@ -1,226 +1,240 @@
 import { useState, useMemo } from "react";
 import {
-  FolderOpen,
   Search,
+  FolderGit2,
   ExternalLink,
-  Lock,
-  LockOpen,
-  MoreVertical,
   Trash2,
-  FolderPlus,
-  Link,
+  Globe,
+  ShieldCheck,
+  ShieldAlert,
+  FolderOpen,
 } from "lucide-react";
-import { Card, CardHeader } from "@/components/ui/Card";
-import { Button } from "@/components/ui/Button";
-import { useAppStore } from "@/stores/useAppStore";
-import { cn } from "@/lib/utils";
+import { type Project } from "@/api/daemon";
+import {
+  useSites,
+  useIgnoreMutation,
+  useUnlinkMutation,
+} from "@/hooks/use-daemon";
+import { Modal } from "@/components/ui/Modal";
 
 export default function Projects() {
-  const { projects, state, forgetPath, unlinkProject } = useAppStore();
+  const { data: projects = [], isLoading } = useSites();
+  const ignoreMutation = useIgnoreMutation();
+  const unlinkMutation = useUnlinkMutation();
+
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "parked" | "linked">("all");
+  const [projectToRemove, setProjectToRemove] = useState<Project | null>(null);
 
   const filteredProjects = useMemo(() => {
     return projects.filter((project) => {
-      const matchesSearch =
-        project.name.toLowerCase().includes(search.toLowerCase()) ||
-        project.path.toLowerCase().includes(search.toLowerCase());
+      const matchesSearch = project.name
+        .toLowerCase()
+        .includes(search.toLowerCase());
       const matchesFilter = filter === "all" || project.type === filter;
       return matchesSearch && matchesFilter;
     });
   }, [projects, search, filter]);
 
-  const handleOpenUrl = (domain: string, secure: boolean) => {
-    const protocol = secure ? "https" : "http";
-    window.open(`${protocol}://${domain}`, "_blank");
+  const handleRemoveClick = (project: Project) => {
+    setProjectToRemove(project);
   };
 
-  const handleRemoveProject = async (project: (typeof projects)[0]) => {
-    if (!confirm(`Remove ${project.name}?`)) return;
+  const confirmRemove = async () => {
+    if (!projectToRemove) return;
 
-    if (project.type === "linked") {
-      await unlinkProject(project.name);
+    if (projectToRemove.type === "linked") {
+      unlinkMutation.mutate(projectToRemove.name);
     } else {
-      await forgetPath(project.path);
+      // For parked projects, we now "ignore" them instead of unparking the parent
+      ignoreMutation.mutate(projectToRemove.path);
     }
+
+    setProjectToRemove(null);
   };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[var(--primary)] text-[var(--primary)]"></div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 animate-fade-in">
-      {/* Page Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold gradient-text">Projects</h1>
-          <p className="text-[var(--muted-foreground)]">
+          <h1 className="text-2xl font-bold bg-gradient-to-r from-[var(--primary)] to-purple-400 bg-clip-text text-transparent">
+            Projects
+          </h1>
+          <p className="text-[var(--muted-foreground)] text-sm">
             {projects.length} projects registered
           </p>
         </div>
-        <div className="flex gap-2">
-          <Button variant="secondary">
-            <FolderPlus size={16} />
-            Park Folder
-          </Button>
-          <Button variant="primary">
-            <Link size={16} />
-            Link Project
-          </Button>
+      </div>
+
+      {/* Search and Filter */}
+      <div className="flex flex-col sm:flex-row gap-4">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)] w-4 h-4" />
+          <input
+            type="text"
+            placeholder="Search projects..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full pl-10 pr-4 py-2 rounded-lg bg-[var(--card)] border border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--primary)] focus:border-transparent transition-all"
+          />
+        </div>
+        <div className="flex bg-[var(--card)] rounded-lg p-1 border border-[var(--border)]">
+          {(["all", "parked", "linked"] as const).map((f) => (
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${
+                filter === f
+                  ? "bg-[var(--primary)] text-white shadow-sm"
+                  : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              }`}
+            >
+              {f.charAt(0).toUpperCase() + f.slice(1)}
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* Filters */}
-      <Card hover={false}>
-        <div className="flex flex-col sm:flex-row gap-4">
-          {/* Search */}
-          <div className="relative flex-1">
-            <Search
-              size={18}
-              className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]"
-            />
-            <input
-              type="text"
-              placeholder="Search projects..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className={cn(
-                "w-full pl-10 pr-4 py-2 rounded-lg",
-                "bg-[var(--input)] border border-[var(--border)]",
-                "text-[var(--foreground)] placeholder-[var(--muted-foreground)]",
-                "focus:outline-none focus:border-[var(--ring)]",
-                "transition-colors duration-200"
-              )}
-            />
-          </div>
+      {/* Projects Grid */}
+      {filteredProjects.length === 0 ? (
+        <div className="flex flex-col items-center justify-center h-64 border-2 border-dashed border-[var(--border)] rounded-xl bg-[var(--card)]/50">
+          <FolderOpen className="w-12 h-12 text-[var(--muted-foreground)] mb-4 opacity-50" />
+          <p className="text-[var(--muted-foreground)] font-medium">
+            No projects found
+          </p>
+          <p className="text-sm text-[var(--muted-foreground)]/80">
+            Park a folder or link a project to get started
+          </p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+          {filteredProjects.map((project) => (
+            <div
+              key={project.path}
+              className="group relative bg-[var(--card)] rounded-xl p-5 border border-[var(--border)] hover:border-[var(--primary)]/50 transition-all hover:shadow-[0_4px_20px_-10px_rgba(0,0,0,0.3)] hover:-translate-y-1"
+            >
+              <div className="flex items-start justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <div
+                    className={`p-2.5 rounded-lg ${
+                      project.type === "parked"
+                        ? "bg-blue-500/10 text-blue-500"
+                        : "bg-purple-500/10 text-purple-500"
+                    }`}
+                  >
+                    <FolderGit2 size={20} />
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-lg leading-none mb-1.5">
+                      {project.name}
+                    </h3>
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-[var(--muted)] text-[var(--muted-foreground)] font-medium">
+                      {project.type}
+                    </span>
+                  </div>
+                </div>
+                <button
+                  onClick={() => handleRemoveClick(project)}
+                  className="p-2 text-[var(--muted-foreground)] hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100"
+                  title="Remove Project"
+                >
+                  <Trash2 size={16} />
+                </button>
+              </div>
 
-          {/* Filter Tabs */}
-          <div className="flex gap-1 p-1 bg-[var(--muted)]/30 rounded-lg">
-            {(["all", "parked", "linked"] as const).map((f) => (
-              <button
-                key={f}
-                onClick={() => setFilter(f)}
-                className={cn(
-                  "px-4 py-1.5 text-sm font-medium rounded-md transition-all duration-200",
-                  filter === f
-                    ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
-                    : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-                )}
+              <div className="space-y-3 mb-5">
+                <div className="flex items-center text-sm text-[var(--muted-foreground)] bg-[var(--background)]/50 p-2 rounded-md truncate">
+                  <code className="text-xs font-mono truncate select-all">
+                    {project.path}
+                  </code>
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <div className="flex items-center gap-2 text-[var(--muted-foreground)]">
+                    <span className="font-mono text-xs bg-[var(--muted)] px-1.5 py-0.5 rounded text-[var(--foreground)]">
+                      PHP {project.phpVersion}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    {project.secure ? (
+                      <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded-full uppercase tracking-wider">
+                        <ShieldCheck size={10} /> Secure
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-1 text-[10px] font-bold text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded-full uppercase tracking-wider">
+                        <ShieldAlert size={10} /> Unsecure
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <a
+                href={`http://${project.domain}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center justify-center gap-2 w-full py-2.5 bg-[var(--primary)]/10 text-[var(--primary)] hover:bg-[var(--primary)] hover:text-white rounded-lg font-medium transition-all group-hover:shadow-md"
               >
-                {f.charAt(0).toUpperCase() + f.slice(1)}
-              </button>
-            ))}
+                <Globe size={16} />
+                Visit {project.domain}
+                <ExternalLink size={14} className="opacity-50" />
+              </a>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <Modal
+        isOpen={!!projectToRemove}
+        onClose={() => setProjectToRemove(null)}
+        title="Remove Project"
+        footer={
+          <div className="flex justify-end gap-3">
+            <button
+              onClick={() => setProjectToRemove(null)}
+              className="px-4 py-2 rounded-lg text-sm font-medium hover:bg-[var(--muted)] transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={confirmRemove}
+              className="px-4 py-2 rounded-lg bg-red-500 hover:bg-red-600 text-white text-sm font-medium transition-colors shadow-lg shadow-red-500/20"
+            >
+              Remove
+            </button>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          <div className="p-4 bg-red-500/10 rounded-xl flex gap-3 text-red-500 items-start">
+            <ShieldAlert className="shrink-0 mt-0.5" />
+            <div className="text-sm">
+              <p className="font-semibold mb-1">
+                Remove "{projectToRemove?.name}"?
+              </p>
+              {projectToRemove?.type === "parked" ? (
+                <p className="opacity-90">
+                  This will <strong>hide</strong> the project from the
+                  dashboard. The folder and files on your disk will{" "}
+                  <strong>NOT</strong> be deleted.
+                </p>
+              ) : (
+                <p className="opacity-90">
+                  This will unlink the project. The folder and files on your
+                  disk will <strong>NOT</strong> be deleted.
+                </p>
+              )}
+            </div>
           </div>
         </div>
-      </Card>
-
-      {/* Projects Table */}
-      <Card hover={false}>
-        {filteredProjects.length > 0 ? (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-[var(--border)]">
-                  <th className="text-left p-3 text-sm font-medium text-[var(--muted-foreground)]">
-                    Name
-                  </th>
-                  <th className="text-left p-3 text-sm font-medium text-[var(--muted-foreground)]">
-                    Domain
-                  </th>
-                  <th className="text-left p-3 text-sm font-medium text-[var(--muted-foreground)]">
-                    Type
-                  </th>
-                  <th className="text-left p-3 text-sm font-medium text-[var(--muted-foreground)]">
-                    HTTPS
-                  </th>
-                  <th className="text-right p-3 text-sm font-medium text-[var(--muted-foreground)]">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredProjects.map((project) => (
-                  <tr
-                    key={project.name + project.path}
-                    className="border-b border-[var(--border)] last:border-0 hover:bg-[var(--muted)]/20 transition-colors"
-                  >
-                    <td className="p-3">
-                      <div className="flex items-center gap-3">
-                        <FolderOpen
-                          size={18}
-                          className="text-[var(--muted-foreground)]"
-                        />
-                        <div>
-                          <p className="font-medium text-[var(--foreground)]">
-                            {project.name}
-                          </p>
-                          <p className="text-xs text-[var(--muted-foreground)] font-mono truncate max-w-[200px]">
-                            {project.path}
-                          </p>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="p-3">
-                      <code className="text-sm font-mono text-[var(--primary)]">
-                        {project.domain}
-                      </code>
-                    </td>
-                    <td className="p-3">
-                      <span
-                        className={cn(
-                          "text-xs font-medium px-2 py-1 rounded",
-                          project.type === "linked"
-                            ? "bg-blue-500/10 text-blue-400"
-                            : "bg-indigo-500/10 text-indigo-400"
-                        )}
-                      >
-                        {project.type}
-                      </span>
-                    </td>
-                    <td className="p-3">
-                      {project.secure ? (
-                        <Lock size={16} className="text-green-400" />
-                      ) : (
-                        <LockOpen
-                          size={16}
-                          className="text-[var(--muted-foreground)]"
-                        />
-                      )}
-                    </td>
-                    <td className="p-3">
-                      <div className="flex items-center justify-end gap-2">
-                        <button
-                          onClick={() =>
-                            handleOpenUrl(project.domain, project.secure)
-                          }
-                          className="p-2 rounded-lg hover:bg-[var(--card-hover)] transition-colors text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-                          title="Open in browser"
-                        >
-                          <ExternalLink size={16} />
-                        </button>
-                        <button
-                          onClick={() => handleRemoveProject(project)}
-                          className="p-2 rounded-lg hover:bg-red-500/10 transition-colors text-[var(--muted-foreground)] hover:text-red-400"
-                          title="Remove"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <div className="text-center py-12 text-[var(--muted-foreground)]">
-            <FolderOpen size={48} className="mx-auto mb-4 opacity-50" />
-            <p className="text-lg font-medium">No projects found</p>
-            <p className="text-sm">
-              {search
-                ? "Try a different search term"
-                : "Park a folder or link a project to get started"}
-            </p>
-          </div>
-        )}
-      </Card>
+      </Modal>
     </div>
   );
 }
