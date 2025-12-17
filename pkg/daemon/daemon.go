@@ -306,10 +306,11 @@ func (d *Daemon) Secure() error {
 
 	fmt.Println("Generating wildcard certificate for *.test...")
 
-	// Use global base directory. LinuxAdapter appends .sld/certs
-	certBase := "/var/lib"
-	// Ensure exists
-	os.MkdirAll(filepath.Join(certBase, ".sld", "certs"), 0755)
+	// Use global base directory.
+	// Adapter handles system paths internally now.
+	// certBase := "/var/lib/sld"
+
+	// Collect domains from state
 
 	// Collect domains from state
 	domains := []string{}
@@ -329,7 +330,7 @@ func (d *Daemon) Secure() error {
 		}
 	}
 
-	if err := d.Adapter.GenerateCert(certBase, domains); err != nil {
+	if err := d.Adapter.GenerateCert("", domains); err != nil {
 		return fmt.Errorf("failed to generate certs: %w", err)
 	}
 

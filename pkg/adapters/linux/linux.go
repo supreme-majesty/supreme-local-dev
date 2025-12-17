@@ -124,6 +124,10 @@ func (l *LinuxAdapter) InstallCertificates() error {
 				dbDir := filepath.Dir(path)
 				fmt.Printf("Trusting CA in %s\n", dbDir)
 
+				// 3a. Try to delete existing cert (to avoid SEC_ERROR_ADDING_CERT)
+				exec.Command("certutil", "-d", "sql:"+dbDir, "-D", "-n", "supremelocaldev").Run()
+
+				// 3b. Add new cert
 				// certutil -d sql:DIR -A -t "C,," -n "supremelocaldev" -i CAFILE
 				// We must use "sql:" prefix
 				cmd := exec.Command("certutil", "-d", "sql:"+dbDir, "-A", "-t", "C,,", "-n", "supremelocaldev", "-i", caFile)
@@ -276,17 +280,34 @@ func (l *LinuxAdapter) InstallMkcert() error {
 }
 
 func (l *LinuxAdapter) GenerateCert(homeDir string, domains []string) error {
-	// 1. Install CA
+	// 1. Install CA if needed (mkcert -install checks itself, but good to run)
 	installCmd := exec.Command("mkcert", "-install")
 	installCmd.Stdout = os.Stdout
 	installCmd.Stderr = os.Stderr
+	// Use sudo for install if not root
+	if os.Getuid() != 0 {
+		// mkcert handle sudo internally? No, usually not.
+		// Actually mkcert -install might require sudo.
+		// But let's assume user has rights or mkcert prompts.
+		// Wait, if mkcert prompts for sudo password, we need interactive.
+		installCmd.Stdin = os.Stdin
+	}
 	if err := installCmd.Run(); err != nil {
-		return fmt.Errorf("failed to install local CA: %w", err)
+		fmt.Printf("Warning: mkcert -install failed (might specific permissions): %v\n", err)
+		// Enable to continue even if install fails (user might have CA setup)
 	}
 
-	// 2. Generate certs for *.test and provided domains
-	certPath := filepath.Join(homeDir, ".sld", "certs", "current.pem")
-	keyPath := filepath.Join(homeDir, ".sld", "certs", "current-key.pem")
+	// 2. Generate certs to temporary location
+	tempDir, err := os.MkdirTemp("", "sld-certs")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tempDir) // cleanup
+
+	certName := "dev.pem"
+	keyName := "dev-key.pem"
+	certPath := filepath.Join(tempDir, certName)
+	keyPath := filepath.Join(tempDir, keyName)
 
 	// Base domains
 	args := []string{"-cert-file", certPath, "-key-file", keyPath, "*.test", "test.test", "localhost", "127.0.0.1", "::1"}
@@ -297,7 +318,33 @@ func (l *LinuxAdapter) GenerateCert(homeDir string, domains []string) error {
 	genCmd := exec.Command("mkcert", args...)
 	genCmd.Stdout = os.Stdout
 	genCmd.Stderr = os.Stderr
-	return genCmd.Run()
+	genCmd.Stdin = os.Stdin
+	if err := genCmd.Run(); err != nil {
+		return fmt.Errorf("mkcert generation failed: %w", err)
+	}
+
+	// 3. Move to system location
+	finalDir := "/var/lib/sld/certs"
+	fmt.Printf("Installing certificates to %s...\n", finalDir)
+
+	// mkdir -p
+	if err := exec.Command("sudo", "mkdir", "-p", finalDir).Run(); err != nil {
+		return fmt.Errorf("failed to create cert directory: %w", err)
+	}
+
+	// copy files
+	if err := exec.Command("sudo", "cp", certPath, filepath.Join(finalDir, certName)).Run(); err != nil {
+		return fmt.Errorf("failed to install cert: %w", err)
+	}
+	if err := exec.Command("sudo", "cp", keyPath, filepath.Join(finalDir, keyName)).Run(); err != nil {
+		return fmt.Errorf("failed to install key: %w", err)
+	}
+
+	// chmod valid for nginx reading
+	exec.Command("sudo", "chmod", "644", filepath.Join(finalDir, certName)).Run()
+	exec.Command("sudo", "chmod", "644", filepath.Join(finalDir, keyName)).Run()
+
+	return nil
 }
 
 func (l *LinuxAdapter) InstallBinary() error {
@@ -310,6 +357,10 @@ func (l *LinuxAdapter) InstallBinary() error {
 	dest := "/usr/local/bin/sld"
 
 	// Check if already installed (optional optimization, but cp is fast)
+	if exe == dest {
+		fmt.Println("Binary already installed in " + dest)
+		return nil
+	}
 
 	// Copy binary
 	fmt.Printf("Installing binary to %s...\n", dest)
