@@ -35,15 +35,37 @@ export function Sidebar() {
       )}
     >
       {/* Logo */}
-      <div className="flex items-center gap-3 h-[var(--topbar-height)] px-4 border-b border-[var(--border)]">
-        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center flex-shrink-0">
-          <span className="text-white font-bold text-sm">S</span>
-        </div>
-        {!sidebarCollapsed && (
-          <span className="font-semibold text-sm truncate animate-fade-in">
-            Supreme Local Dev
-          </span>
+      <div
+        className={cn(
+          "flex items-center h-[var(--topbar-height)] px-4 border-b border-[var(--border)]",
+          sidebarCollapsed ? "justify-center" : "justify-between"
         )}
+      >
+        {!sidebarCollapsed && (
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center flex-shrink-0">
+              <span className="text-white font-bold text-sm">S</span>
+            </div>
+            <span className="font-semibold text-sm truncate animate-fade-in">
+              Supreme Local Dev
+            </span>
+          </div>
+        )}
+
+        <button
+          onClick={toggleSidebar}
+          className={cn(
+            "p-2 rounded-lg text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--card-hover)] transition-colors",
+            sidebarCollapsed && "w-10 h-10 flex items-center justify-center"
+          )}
+          title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+        >
+          {sidebarCollapsed ? (
+            <ChevronRight size={20} />
+          ) : (
+            <ChevronLeft size={20} />
+          )}
+        </button>
       </div>
 
       {/* Navigation */}
@@ -79,24 +101,23 @@ export function Sidebar() {
         </ul>
       </nav>
 
-      {/* Collapse Toggle */}
-      <div className="p-2 border-t border-[var(--border)]">
-        <button
-          onClick={toggleSidebar}
+      {/* Footer */}
+      <div className="p-4 border-t border-[var(--border)]">
+        <div
           className={cn(
-            "w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg",
-            "text-[var(--muted-foreground)] hover:text-[var(--foreground)]",
-            "hover:bg-[var(--card-hover)] transition-colors duration-200"
+            "flex flex-col gap-0.5",
+            sidebarCollapsed ? "items-center" : "items-start"
           )}
-          title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
         >
-          {sidebarCollapsed ? (
-            <ChevronRight size={20} />
-          ) : (
-            <ChevronLeft size={20} />
+          {!sidebarCollapsed && (
+            <span className="text-xs font-medium text-[var(--foreground)] truncate w-full">
+              Supreme Local Dev
+            </span>
           )}
-          {!sidebarCollapsed && <span className="text-sm">Collapse</span>}
-        </button>
+          <span className="text-[10px] text-[var(--muted-foreground)] whitespace-nowrap">
+            {sidebarCollapsed ? "v1.0" : "© 2025 • v1.0.0"}
+          </span>
+        </div>
       </div>
     </aside>
   );
