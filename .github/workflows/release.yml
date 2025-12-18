@@ -189,6 +189,8 @@ jobs:
   build-ui:
     name: Build UI (Tauri)
     needs: validate
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
