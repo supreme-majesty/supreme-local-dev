@@ -76,7 +76,7 @@ function DatabaseNode({
 
   const handleClick = () => {
     onSelectDb();
-    setExpanded(true);
+    setExpanded(!expanded);
   };
 
   return (
