@@ -1,0 +1,110 @@
+package api
+
+import (
+	"fmt"
+	"net/http"
+	"sync"
+
+	"github.com/gorilla/websocket"
+	"github.com/supreme-majesty/supreme-local-dev/pkg/daemon"
+	"github.com/supreme-majesty/supreme-local-dev/pkg/events"
+)
+
+var upgrader = websocket.Upgrader{
+	ReadBufferSize:  1024,
+	WriteBufferSize: 1024,
+	CheckOrigin: func(r *http.Request) bool {
+		return true // In dev, allow all. In prod, we can restrict to sld.test
+	},
+}
+
+type Hub struct {
+	clients    map[*websocket.Conn]bool
+	broadcast  chan interface{}
+	register   chan *websocket.Conn
+	unregister chan *websocket.Conn
+	mutex      sync.Mutex
+}
+
+func NewHub() *Hub {
+	return &Hub{
+		clients:    make(map[*websocket.Conn]bool),
+		broadcast:  make(chan interface{}),
+		register:   make(chan *websocket.Conn),
+		unregister: make(chan *websocket.Conn),
+	}
+}
+
+func (h *Hub) Run() {
+	for {
+		select {
+		case client := <-h.register:
+			h.mutex.Lock()
+			h.clients[client] = true
+			h.mutex.Unlock()
+			fmt.Println("WS: Client connected")
+
+		case client := <-h.unregister:
+			h.mutex.Lock()
+			if _, ok := h.clients[client]; ok {
+				delete(h.clients, client)
+				client.Close()
+			}
+			h.mutex.Unlock()
+			fmt.Println("WS: Client disconnected")
+
+		case message := <-h.broadcast:
+			h.mutex.Lock()
+			for client := range h.clients {
+				err := client.WriteJSON(message)
+				if err != nil {
+					fmt.Printf("WS: Write error: %v\n", err)
+					client.Close()
+					delete(h.clients, client)
+				}
+			}
+			h.mutex.Unlock()
+		}
+	}
+}
+
+func (s *Server) handleWebSocket(hub *Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			fmt.Printf("WS: Upgrade error: %v\n", err)
+			return
+		}
+
+		hub.register <- conn
+
+		// Listen for close
+		go func() {
+			defer func() {
+				hub.unregister <- conn
+			}()
+			for {
+				_, _, err := conn.ReadMessage()
+				if err != nil {
+					break
+				}
+			}
+		}()
+	}
+}
+
+// SetupXRayBridge connects the EventBus to the WebSocket Hub
+func SetupXRayBridge(hub *Hub) {
+	d, err := daemon.GetClient()
+	if err != nil {
+		fmt.Printf("XRayBridge: Failed to get daemon client: %v\n", err)
+		return
+	}
+
+	d.Events.Subscribe(events.XRayLog, func(e events.Event) {
+		hub.broadcast <- map[string]interface{}{
+			"type": "xray:log",
+			"data": e.Payload,
+		}
+	})
+}

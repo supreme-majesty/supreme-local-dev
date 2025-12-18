@@ -6,8 +6,10 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/spf13/cobra"
 	"github.com/supreme-majesty/supreme-local-dev/pkg/daemon"
@@ -332,6 +334,21 @@ var daemonCmd = &cobra.Command{
 
 		// Start Server
 		srv := api.NewServer(2025)
+
+		// Handle shutdown
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+		go func() {
+			<-sigChan
+			fmt.Println("\nShutting down daemon... 🛑")
+			d, _ := daemon.GetClient()
+			if d.XRayService != nil {
+				d.XRayService.Stop()
+			}
+			os.Exit(0)
+		}()
+
 		return srv.Start()
 	},
 }

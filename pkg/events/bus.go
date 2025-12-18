@@ -12,6 +12,7 @@ const (
 	ServiceStarted   EventType = "ServiceStarted"
 	ServiceStopped   EventType = "ServiceStopped"
 	ConfigChanged    EventType = "ConfigChanged"
+	XRayLog          EventType = "xray:log"
 )
 
 type Event struct {

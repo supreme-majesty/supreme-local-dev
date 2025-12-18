@@ -40,6 +40,12 @@ func (s *Server) Start() error {
 	http.HandleFunc("/api/share/stop", s.handleShareStop)
 	http.HandleFunc("/api/share/status", s.handleShareStatus)
 
+	// Initialize WebSocket Hub
+	hub := NewHub()
+	go hub.Run()
+	SetupXRayBridge(hub)
+	http.HandleFunc("/api/ws", s.handleWebSocket(hub))
+
 	// Serve GUI static files
 	guiFS, _ := assets.GetGuiFS()
 	fileServer := http.FileServer(guiFS)

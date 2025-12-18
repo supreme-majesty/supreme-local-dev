@@ -27,6 +27,7 @@ type Daemon struct {
 	Adapter       adapters.SystemAdapter
 	PluginManager *plugins.Manager
 	TunnelManager *services.TunnelManager
+	XRayService   *services.XRayService
 }
 
 var instance *Daemon
@@ -54,6 +55,10 @@ func Initialize() (*Daemon, error) {
 	// We use /var/lib/sld/plugins for shared plugin data/binaries
 	pluginManager := plugins.NewManager("/var/lib/sld/plugins", stateManager)
 	tunnelManager := services.NewTunnelManager("/var/lib/sld")
+	xrayService := services.NewXRayService(eventBus)
+
+	// Start X-Ray immediately
+	go xrayService.Start()
 
 	// Register default plugins
 	pluginManager.Register(services.NewRedisPlugin(pluginManager.DataDir))
@@ -79,6 +84,7 @@ func Initialize() (*Daemon, error) {
 		Adapter:       adapter,
 		PluginManager: pluginManager,
 		TunnelManager: tunnelManager,
+		XRayService:   xrayService,
 	}
 
 	return instance, nil
