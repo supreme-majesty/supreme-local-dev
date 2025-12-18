@@ -15,6 +15,8 @@ import {
   Camera,
   RotateCcw,
   Columns,
+  Search,
+  Zap,
 } from "lucide-react";
 import { formatBytes, formatDate, cn } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
@@ -352,6 +354,14 @@ export default function Database() {
                   <Code2 size={14} /> SQL
                 </Button>
                 <Button
+                  variant={activeTab === "search" ? "primary" : "ghost"}
+                  size="sm"
+                  onClick={() => setActiveTab("search")}
+                  className="gap-2 rounded-b-none border-b-2 border-transparent data-[variant=primary]:border-[var(--primary)]"
+                >
+                  <Search size={14} /> Search
+                </Button>
+                <Button
                   variant={activeTab === "insert" ? "primary" : "ghost"}
                   size="sm"
                   onClick={() => setActiveTab("insert")}
@@ -360,12 +370,36 @@ export default function Database() {
                   <Plus size={14} /> Insert
                 </Button>
                 <Button
+                  variant={activeTab === "export" ? "primary" : "ghost"}
+                  size="sm"
+                  onClick={() => setActiveTab("export")}
+                  className="gap-2 rounded-b-none border-b-2 border-transparent data-[variant=primary]:border-[var(--primary)]"
+                >
+                  <FileUp size={14} /> Export
+                </Button>
+                <Button
+                  variant={activeTab === "import" ? "primary" : "ghost"}
+                  size="sm"
+                  onClick={() => setActiveTab("import")}
+                  className="gap-2 rounded-b-none border-b-2 border-transparent data-[variant=primary]:border-[var(--primary)]"
+                >
+                  <FileDown size={14} /> Import
+                </Button>
+                <Button
                   variant={activeTab === "operations" ? "primary" : "ghost"}
                   size="sm"
                   onClick={() => setActiveTab("operations")}
                   className="gap-2 rounded-b-none border-b-2 border-transparent data-[variant=primary]:border-[var(--primary)]"
                 >
                   <Settings size={14} /> Operations
+                </Button>
+                <Button
+                  variant={activeTab === "triggers" ? "primary" : "ghost"}
+                  size="sm"
+                  onClick={() => setActiveTab("triggers")}
+                  className="gap-2 rounded-b-none border-b-2 border-transparent data-[variant=primary]:border-[var(--primary)]"
+                >
+                  <Zap size={14} /> Triggers
                 </Button>
               </>
             ) : selectedDB ? (
@@ -520,40 +554,50 @@ export default function Database() {
                             ))}
                           </tr>
                         ))}
-                        {tableData.rows.length === 0 && (
+                        {(tableData.rows || []).length === 0 && (
                           <tr>
                             <td
-                              colSpan={tableData.columns.length + 1}
-                              className="text-center py-8 text-[var(--muted-foreground)]"
+                              colSpan={(tableData.columns || []).length + 1}
+                              className="px-4 py-8 text-center text-[var(--muted-foreground)] italic"
                             >
-                              No rows found
+                              No data found
                             </td>
                           </tr>
                         )}
+
+                        {/* Pagination / Status */}
+                        <tr>
+                          <td
+                            colSpan={(tableData.columns || []).length + 1}
+                            className="px-4 py-2 text-xs text-[var(--muted-foreground)] border-t border-[var(--border)]"
+                          >
+                            <div className="flex justify-between items-center">
+                              <span>
+                                Showing {(tableData.rows || []).length} rows
+                              </span>
+                              <div className="flex gap-2">
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
+                                  disabled={page <= 1}
+                                  onClick={() => setPage((p) => p - 1)}
+                                >
+                                  Previous
+                                </Button>
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
+                                  disabled={page >= tableData.total_pages}
+                                  onClick={() => setPage((p) => p + 1)}
+                                >
+                                  Next
+                                </Button>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
                       </tbody>
                     </table>
-                  </div>
-                  {/* Pagination */}
-                  <div className="px-4 py-3 border-t border-[var(--border)] flex items-center justify-between text-xs text-[var(--muted-foreground)]">
-                    <span>Showing {tableData.rows.length} rows</span>
-                    <div className="flex gap-2">
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        disabled={page <= 1}
-                        onClick={() => setPage((p) => p - 1)}
-                      >
-                        Previous
-                      </Button>
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        disabled={page >= tableData.total_pages}
-                        onClick={() => setPage((p) => p + 1)}
-                      >
-                        Next
-                      </Button>
-                    </div>
                   </div>
                 </div>
               ) : (
@@ -923,10 +967,20 @@ export default function Database() {
           )}
 
           {/* Placeholders */}
-          {["export"].includes(activeTab) && (
+          {[
+            "export",
+            "import",
+            "search",
+            "insert",
+            "operations",
+            "triggers",
+          ].includes(activeTab) && (
             <div className="flex flex-col items-center justify-center h-full text-[var(--muted-foreground)] opacity-50">
               <HardDrive size={48} className="mb-4" />
-              <p>Feature coming soon...</p>
+              <p className="text-lg font-medium capitalize">
+                {activeTab} Feature
+              </p>
+              <p className="text-sm">Coming soon...</p>
             </div>
           )}
         </div>

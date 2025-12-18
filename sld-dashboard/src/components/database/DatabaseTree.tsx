@@ -8,10 +8,12 @@ import {
   RefreshCw,
   MoreVertical,
   Plus,
+  Search,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDatabases, useTables } from "@/hooks/use-database";
 import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
 
 interface DatabaseTreeProps {
   selectedDb: string | null;
@@ -67,6 +69,7 @@ function DatabaseNode({
   onSelectDb,
   onSelectTable,
   onCreateTable,
+  filter,
 }: {
   name: string;
   isSelected: boolean;
@@ -74,9 +77,22 @@ function DatabaseNode({
   onSelectDb: () => void;
   onSelectTable: (table: string) => void;
   onCreateTable: () => void;
+  filter: string;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const { data: tables = [], isLoading } = useTables(expanded ? name : null);
+  const { data: tables = [], isLoading } = useTables(
+    expanded || filter ? name : null
+  ); // Auto-fetch if filtering
+
+  // Auto-expand if filter is active and matches tables (or if simpler, just always if filtered)
+
+  // Actually, we want to expand if we have a filter to show matching tables.
+  // But we also need to respect user toggle?
+  // Standard tree filter behavior: if filter matches children, expand.
+
+  const filteredTables = (tables || []).filter((t) =>
+    t.name.toLowerCase().includes(filter.toLowerCase())
+  );
 
   const toggle = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -90,6 +106,10 @@ function DatabaseNode({
     onSelectDb();
     setExpanded(!expanded);
   };
+
+  // If effective expansion state depends on filter
+  const isExpanded =
+    expanded || (filter.length > 0 && filteredTables.length > 0);
 
   return (
     <div>
@@ -106,7 +126,7 @@ function DatabaseNode({
           onClick={toggle}
           className="p-0.5 rounded hover:bg-[var(--muted)]/80"
         >
-          {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </button>
         <DatabaseIcon size={14} className="text-blue-400" />
         <span className="flex-1 truncate font-medium">{name}</span>
@@ -118,17 +138,19 @@ function DatabaseNode({
         )}
       </div>
 
-      {expanded && (
+      {isExpanded && (
         <div className="border-l border-[var(--border)] ml-5 my-1">
-          {/* New Table Action */}
-          <TableNode
-            tableName="New"
-            isSelected={false} // "New" is an action, typically not a persistent selection state unless we track "creating"
-            onSelect={onCreateTable}
-            isMainAction
-          />
+          {/* New Table Action - Only show if NO filter or if "new" matches filter (optional) */}
+          {!filter && (
+            <TableNode
+              tableName="New"
+              isSelected={false}
+              onSelect={onCreateTable}
+              isMainAction
+            />
+          )}
 
-          {(tables || []).map((t) => (
+          {filteredTables.map((t) => (
             <TableNode
               key={t.name}
               tableName={t.name}
@@ -136,9 +158,9 @@ function DatabaseNode({
               onSelect={() => onSelectTable(t.name)}
             />
           ))}
-          {(tables || []).length === 0 && !isLoading && (
+          {filteredTables.length === 0 && !isLoading && (
             <div className="px-6 py-2 text-xs text-[var(--muted-foreground)] italic">
-              No tables
+              {filter ? "No matching tables" : "No tables"}
             </div>
           )}
         </div>
@@ -155,27 +177,54 @@ export function DatabaseTree({
   onCreateTable,
 }: DatabaseTreeProps) {
   const { data: databases = [], isLoading, refetch } = useDatabases();
+  const [searchTerm, setSearchTerm] = useState("");
+
+  const filteredDatabases = (databases || []).filter(
+    (db) => db.name.toLowerCase().includes(searchTerm.toLowerCase())
+    // Note: We might want to also include DBs that have matching tables,
+    // but we can't efficiently know that without fetching all tables.
+    // For now, strict DB name match OR just rely on the user opening the DB
+    // where they expect matches?
+    // Actually, common pattern is: show DB if name matches.
+    // If name doesn't match, we hide it.
+    // BUT what if a user searches for a table name? They expect parent DB to show.
+    // That requires fetching tables. Let's stick to DB name filtering + Table name filtering within filtered DBs for now to avoid n+1 fetch storm.
+  );
 
   return (
     <div className="flex flex-col h-full bg-[var(--card)] border-r border-[var(--border)]">
       {/* Header */}
-      <div className="p-3 border-b border-[var(--border)] flex items-center justify-between bg-[var(--muted)]/20">
-        <div className="flex items-center gap-2 text-sm font-semibold">
-          <Server size={16} className="text-purple-400" />
-          <span>Localhost</span>
+      <div className="p-3 border-b border-[var(--border)] flex flex-col gap-2 bg-[var(--muted)]/20">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 text-sm font-semibold">
+            <Server size={16} className="text-purple-400" />
+            <span>Localhost</span>
+          </div>
+          <div className="flex gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 w-6 p-0"
+              onClick={() => refetch()}
+            >
+              <RefreshCw size={12} />
+            </Button>
+            <Button variant="ghost" size="sm" className="h-6 w-6 p-0">
+              <MoreVertical size={12} />
+            </Button>
+          </div>
         </div>
-        <div className="flex gap-1">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-6 w-6 p-0"
-            onClick={() => refetch()}
-          >
-            <RefreshCw size={12} />
-          </Button>
-          <Button variant="ghost" size="sm" className="h-6 w-6 p-0">
-            <MoreVertical size={12} />
-          </Button>
+        <div className="relative">
+          <Search
+            size={12}
+            className="absolute left-2 top-2.5 text-[var(--muted-foreground)]"
+          />
+          <Input
+            placeholder="Search..."
+            className="h-8 pl-8 bg-[var(--background)]"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
         </div>
       </div>
 
@@ -187,7 +236,7 @@ export function DatabaseTree({
           </div>
         )}
 
-        {(databases || []).map((db) => (
+        {filteredDatabases.map((db) => (
           <DatabaseNode
             key={db.name}
             name={db.name}
@@ -196,6 +245,7 @@ export function DatabaseTree({
             onSelectDb={() => onSelectDb(db.name)}
             onSelectTable={(table) => onSelectTable(db.name, table)}
             onCreateTable={() => onCreateTable(db.name)}
+            filter={searchTerm}
           />
         ))}
       </div>
