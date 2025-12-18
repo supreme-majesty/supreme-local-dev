@@ -6,7 +6,13 @@ import {
   Palette,
   Save,
 } from "lucide-react";
-import { Card, CardHeader } from "@/components/ui/Card";
+import {
+  Card,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+  CardContent,
+} from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { useAppStore } from "@/stores/useAppStore";
 import { useSldState, useSwitchPHPMutation } from "@/hooks/use-daemon";
@@ -27,8 +33,18 @@ function SettingsSection({
 }) {
   return (
     <Card>
-      <CardHeader title={title} description={description} icon={icon} />
-      <div className="space-y-4">{children}</div>
+      <CardHeader>
+        <div className="flex items-center gap-3">
+          <div className="p-2 rounded-lg bg-[var(--primary)]/10 text-[var(--primary)]">
+            {icon}
+          </div>
+          <div>
+            <CardTitle className="text-lg">{title}</CardTitle>
+            <CardDescription>{description}</CardDescription>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4 pt-0">{children}</CardContent>
     </Card>
   );
 }

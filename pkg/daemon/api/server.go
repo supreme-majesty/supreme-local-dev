@@ -49,6 +49,7 @@ func (s *Server) Start() error {
 	http.HandleFunc("/api/db/schema", s.handleDBSchema)
 	http.HandleFunc("/api/db/snapshots", s.handleDBSnapshots)
 	http.HandleFunc("/api/db/snapshots/restore", s.handleDBRestore)
+	http.HandleFunc("/api/db/query", s.handleDBQuery)
 
 	// Initialize WebSocket Hub
 	hub := NewHub()
@@ -662,4 +663,28 @@ func (s *Server) handleDBRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, SuccessResponse{Success: true, Message: "Database restored successfully"}, 200)
+}
+
+func (s *Server) handleDBQuery(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		return
+	}
+
+	var req struct {
+		Database string `json:"database"`
+		Query    string `json:"query"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
+		return
+	}
+
+	d, _ := daemon.GetClient()
+	result, err := d.DatabaseService.ExecuteQuery(req.Database, req.Query)
+	if err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+
+	jsonResponse(w, result, 200)
 }

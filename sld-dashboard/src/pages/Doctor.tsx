@@ -8,7 +8,13 @@ import {
   Wrench,
   Terminal,
 } from "lucide-react";
-import { Card, CardHeader } from "@/components/ui/Card";
+import {
+  Card,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+  CardContent,
+} from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { useHealthChecks } from "@/hooks/use-daemon";
 import { cn } from "@/lib/utils";
@@ -114,78 +120,92 @@ export default function Doctor() {
       </div>
 
       {/* Health Checks */}
-      <Card hover={false}>
-        <CardHeader
-          title="Health Checks"
-          description="Detailed system diagnostics"
-          icon={<Stethoscope size={20} />}
-        />
-        <div className="space-y-3">
-          {healthChecks.map((check, index) => (
-            <div
-              key={index}
-              className={cn(
-                "flex items-center justify-between p-4 rounded-lg border",
-                statusBg[check.status]
-              )}
-            >
-              <div className="flex items-center gap-3">
-                {statusIcon[check.status]}
-                <div>
-                  <p className="font-medium text-[var(--foreground)]">
-                    {check.name}
-                  </p>
-                  <p className="text-sm text-[var(--muted-foreground)]">
-                    {check.message}
-                  </p>
-                </div>
-              </div>
-              {check.fixable && check.status === "fail" && (
-                <Button variant="secondary" size="sm">
-                  <Wrench size={14} />
-                  Fix
-                </Button>
-              )}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>Health Checks</CardTitle>
+              <CardDescription>Detailed system diagnostics</CardDescription>
             </div>
-          ))}
-        </div>
+            <Stethoscope className="h-4 w-4 text-[var(--muted-foreground)]" />
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-3">
+            {healthChecks.map((check, index) => (
+              <div
+                key={index}
+                className={cn(
+                  "flex items-center justify-between p-4 rounded-lg border",
+                  statusBg[check.status]
+                )}
+              >
+                <div className="flex items-center gap-3">
+                  {statusIcon[check.status]}
+                  <div>
+                    <p className="font-medium text-[var(--foreground)]">
+                      {check.name}
+                    </p>
+                    <p className="text-sm text-[var(--muted-foreground)]">
+                      {check.message}
+                    </p>
+                  </div>
+                </div>
+                {check.fixable && check.status === "fail" && (
+                  <Button variant="secondary" size="sm">
+                    <Wrench size={14} />
+                    Fix
+                  </Button>
+                )}
+              </div>
+            ))}
+          </div>
+        </CardContent>
       </Card>
 
       {/* Log Viewer */}
-      <Card hover={false}>
-        <CardHeader
-          title="Diagnostic Log"
-          description="Real-time output from diagnostics"
-          icon={<Terminal size={20} />}
-        />
-        <div
-          className={cn(
-            "h-48 overflow-y-auto rounded-lg p-4",
-            "bg-[#0d1117] border border-[var(--border)]",
-            "font-mono text-sm"
-          )}
-        >
-          {logs.length > 0 ? (
-            logs.map((log, index) => (
-              <div key={index} className="py-0.5">
-                <span
-                  className={cn(
-                    log.includes("[ok]") && "text-green-400",
-                    log.includes("[error]") && "text-red-400",
-                    log.includes("[warn]") && "text-amber-400",
-                    log.includes("[info]") && "text-blue-400"
-                  )}
-                >
-                  {log}
-                </span>
-              </div>
-            ))
-          ) : (
-            <p className="text-[var(--muted-foreground)]">
-              Click "Run Diagnostics" to see output...
-            </p>
-          )}
-        </div>
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>Diagnostic Log</CardTitle>
+              <CardDescription>
+                Real-time output from diagnostics
+              </CardDescription>
+            </div>
+            <Terminal className="h-4 w-4 text-[var(--muted-foreground)]" />
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div
+            className={cn(
+              "h-48 overflow-y-auto rounded-lg p-4",
+              "bg-[#0d1117] border border-[var(--border)]",
+              "font-mono text-sm"
+            )}
+          >
+            {logs.length > 0 ? (
+              logs.map((log, index) => (
+                <div key={index} className="py-0.5">
+                  <span
+                    className={cn(
+                      log.includes("[ok]") && "text-green-400",
+                      log.includes("[error]") && "text-red-400",
+                      log.includes("[warn]") && "text-amber-400",
+                      log.includes("[info]") && "text-blue-400"
+                    )}
+                  >
+                    {log}
+                  </span>
+                </div>
+              ))
+            ) : (
+              <p className="text-[var(--muted-foreground)]">
+                Click "Run Diagnostics" to see output...
+              </p>
+            )}
+          </div>
+        </CardContent>
       </Card>
     </div>
   );

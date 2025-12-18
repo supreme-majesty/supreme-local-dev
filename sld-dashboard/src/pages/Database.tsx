@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Database as DatabaseIcon,
@@ -11,24 +11,24 @@ import {
   HardDrive,
   Clock,
   AlertCircle,
-  CheckCircle,
   Loader2,
+  Search,
+  Code2,
+  ChevronRight,
+  ChevronDown,
 } from "lucide-react";
-import { Card } from "@/components/ui/Card";
+import { formatBytes, formatDate, cn } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
-import { cn } from "@/lib/utils";
-import { useAppStore } from "@/stores/useAppStore";
+import { Input } from "@/components/ui/Input";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
+import { Badge } from "@/components/ui/Badge";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/Tabs";
+import { SQLConsole } from "@/components/database/SQLConsole";
 
 // Types
-interface DatabaseInfo {
-  name: string;
-  tables: number;
-}
-
 interface TableInfo {
   name: string;
-  rows: number;
-  size: string;
+  row_count: number;
   engine: string;
 }
 
@@ -37,682 +37,601 @@ interface ColumnInfo {
   type: string;
   nullable: boolean;
   key: string;
-  default: string | null;
-  extra: string;
+  default: string;
 }
 
 interface TableData {
-  columns: string[];
-  rows: (string | number | null)[][];
+  columns: ColumnInfo[];
+  rows: Record<string, any>[];
   total: number;
-  limit: number;
-  offset: number;
+  page: number;
+  per_page: number;
+  total_pages: number;
 }
 
 interface Snapshot {
   id: string;
-  name: string;
   database: string;
+  filename: string;
   size: number;
   created_at: string;
-  path: string;
 }
 
-interface DBStatus {
-  connected: boolean;
-  host: string;
-  port: string;
-  user: string;
-  version?: string;
-  error?: string;
-}
-
-// API functions
-const API_BASE = "/api";
-
-async function fetchDBStatus(): Promise<DBStatus> {
-  const res = await fetch(`${API_BASE}/db/status`);
-  return res.json();
-}
-
-async function fetchDatabases(): Promise<DatabaseInfo[]> {
-  const res = await fetch(`${API_BASE}/db/databases`);
-  return res.json();
-}
-
-async function fetchTables(db: string): Promise<TableInfo[]> {
-  const res = await fetch(`${API_BASE}/db/tables?db=${db}`);
-  return res.json();
-}
-
-async function fetchTableData(
-  db: string,
-  table: string,
-  limit = 50,
-  offset = 0
-): Promise<TableData> {
-  const res = await fetch(
-    `${API_BASE}/db/table?db=${db}&table=${table}&limit=${limit}&offset=${offset}`
-  );
-  return res.json();
-}
-
-async function fetchSchema(db: string, table: string): Promise<ColumnInfo[]> {
-  const res = await fetch(`${API_BASE}/db/schema?db=${db}&table=${table}`);
-  return res.json();
-}
-
-async function fetchSnapshots(db?: string): Promise<Snapshot[]> {
-  const url = db
-    ? `${API_BASE}/db/snapshots?db=${db}`
-    : `${API_BASE}/db/snapshots`;
-  const res = await fetch(url);
-  return res.json();
-}
-
-async function createSnapshot(
-  database: string,
-  name: string
-): Promise<Snapshot> {
-  const res = await fetch(`${API_BASE}/db/snapshots`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ database, name }),
-  });
-  return res.json();
-}
-
-async function restoreSnapshot(database: string, path: string): Promise<void> {
-  await fetch(`${API_BASE}/db/snapshots/restore`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ database, path }),
-  });
-}
-
-async function deleteSnapshot(id: string): Promise<void> {
-  await fetch(`${API_BASE}/db/snapshots`, {
-    method: "DELETE",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id }),
-  });
-}
-
-// Status Badge Component
-function StatusBadge({
-  connected,
-  version,
-}: {
-  connected: boolean;
-  version?: string;
-}) {
-  return (
-    <div
-      className={cn(
-        "flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium",
-        connected
-          ? "bg-green-500/10 text-green-400 border border-green-500/20"
-          : "bg-red-500/10 text-red-400 border border-red-500/20"
-      )}
-    >
-      {connected ? <CheckCircle size={14} /> : <AlertCircle size={14} />}
-      {connected ? `MySQL ${version || ""}` : "Disconnected"}
-    </div>
-  );
-}
-
-// Database Selector
-function DatabaseSelector({
-  databases,
-  selected,
-  onSelect,
-}: {
-  databases: DatabaseInfo[];
-  selected: string;
-  onSelect: (db: string) => void;
-}) {
-  return (
-    <div className="flex flex-wrap gap-2">
-      {databases.map((db) => (
-        <button
-          key={db.name}
-          onClick={() => onSelect(db.name)}
-          className={cn(
-            "px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200",
-            selected === db.name
-              ? "bg-[var(--primary)] text-[var(--primary-foreground)] shadow-lg"
-              : "bg-[var(--card)] border border-[var(--border)] hover:border-[var(--primary)]/50"
-          )}
-        >
-          <div className="flex items-center gap-2">
-            <DatabaseIcon size={14} />
-            <span>{db.name}</span>
-            <span className="text-xs opacity-60">({db.tables})</span>
-          </div>
-        </button>
-      ))}
-    </div>
-  );
-}
-
-// Table List
-function TableList({
-  tables,
-  selected,
-  onSelect,
-}: {
-  tables: TableInfo[];
-  selected: string;
-  onSelect: (table: string) => void;
-}) {
-  return (
-    <div className="space-y-1">
-      {tables.map((table) => (
-        <button
-          key={table.name}
-          onClick={() => onSelect(table.name)}
-          className={cn(
-            "w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-all",
-            selected === table.name
-              ? "bg-[var(--primary)]/10 text-[var(--primary)] border-l-2 border-[var(--primary)]"
-              : "hover:bg-[var(--card-hover)] text-[var(--muted-foreground)]"
-          )}
-        >
-          <div className="flex items-center gap-2">
-            <Table2 size={14} />
-            <span className="font-mono">{table.name}</span>
-          </div>
-          <span className="text-xs opacity-50">{table.rows}</span>
-        </button>
-      ))}
-    </div>
-  );
-}
-
-// Data Table
-function DataTable({ data }: { data: TableData }) {
-  if (!data.rows || data.rows.length === 0) {
-    return (
-      <div className="text-center py-12 text-[var(--muted-foreground)]">
-        No data in this table
-      </div>
-    );
-  }
-
-  return (
-    <div className="overflow-auto max-h-[500px] rounded-lg border border-[var(--border)]">
-      <table className="w-full text-sm">
-        <thead className="bg-[var(--card)] sticky top-0">
-          <tr>
-            {data.columns.map((col) => (
-              <th
-                key={col}
-                className="px-4 py-3 text-left font-medium text-[var(--muted-foreground)] border-b border-[var(--border)] whitespace-nowrap"
-              >
-                {col}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {data.rows.map((row, i) => (
-            <tr
-              key={i}
-              className="hover:bg-[var(--card-hover)] transition-colors"
-            >
-              {row.map((cell, j) => (
-                <td
-                  key={j}
-                  className="px-4 py-2 border-b border-[var(--border)] whitespace-nowrap max-w-[300px] truncate"
-                  title={String(cell ?? "")}
-                >
-                  {cell === null ? (
-                    <span className="text-[var(--muted-foreground)] italic">
-                      NULL
-                    </span>
-                  ) : (
-                    String(cell)
-                  )}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-// Schema View
-function SchemaView({ schema }: { schema: ColumnInfo[] }) {
-  return (
-    <div className="space-y-2">
-      {schema.map((col) => (
-        <div
-          key={col.name}
-          className="flex items-center gap-4 p-3 bg-[var(--card)] rounded-lg border border-[var(--border)]"
-        >
-          <div className="flex-1">
-            <div className="flex items-center gap-2">
-              <span className="font-mono font-medium">{col.name}</span>
-              {col.key === "PRI" && (
-                <span className="px-1.5 py-0.5 text-[10px] bg-yellow-500/10 text-yellow-400 rounded">
-                  PRIMARY
-                </span>
-              )}
-              {col.key === "UNI" && (
-                <span className="px-1.5 py-0.5 text-[10px] bg-blue-500/10 text-blue-400 rounded">
-                  UNIQUE
-                </span>
-              )}
-            </div>
-            <div className="text-xs text-[var(--muted-foreground)] mt-1 font-mono">
-              {col.type}
-              {col.nullable && " • nullable"}
-              {col.extra && ` • ${col.extra}`}
-            </div>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// Snapshot Panel
-function SnapshotPanel({
-  database,
-  snapshots,
-  onRefresh,
-}: {
-  database: string;
-  snapshots: Snapshot[];
-  onRefresh: () => void;
-}) {
-  const [snapshotName, setSnapshotName] = useState("");
-  const addToast = useAppStore((s) => s.addToast);
+export default function Database() {
+  const [selectedDB, setSelectedDB] = useState<string | null>(null);
+  const [selectedTable, setSelectedTable] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState("data"); // data, structure, sql, snapshots
+  const [searchTable, setSearchTable] = useState("");
   const queryClient = useQueryClient();
 
-  const createMutation = useMutation({
-    mutationFn: () => createSnapshot(database, snapshotName),
-    onSuccess: () => {
-      addToast({ type: "success", title: "Snapshot created" });
-      setSnapshotName("");
-      queryClient.invalidateQueries({ queryKey: ["db-snapshots"] });
-      onRefresh();
-    },
-    onError: (err: Error) => {
-      addToast({
-        type: "error",
-        title: "Failed to create snapshot",
-        description: err.message,
-      });
-    },
-  });
-
-  const restoreMutation = useMutation({
-    mutationFn: (path: string) => restoreSnapshot(database, path),
-    onSuccess: () => {
-      addToast({ type: "success", title: "Database restored" });
-    },
-    onError: (err: Error) => {
-      addToast({
-        type: "error",
-        title: "Failed to restore",
-        description: err.message,
-      });
-    },
-  });
-
-  const deleteMutation = useMutation({
-    mutationFn: (id: string) => deleteSnapshot(id),
-    onSuccess: () => {
-      addToast({ type: "success", title: "Snapshot deleted" });
-      queryClient.invalidateQueries({ queryKey: ["db-snapshots"] });
-      onRefresh();
-    },
-  });
-
-  const formatSize = (bytes: number) => {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  };
-
-  const formatDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleString();
-  };
-
-  return (
-    <div className="space-y-4">
-      {/* Create Snapshot */}
-      <div className="flex gap-2">
-        <input
-          type="text"
-          value={snapshotName}
-          onChange={(e) => setSnapshotName(e.target.value)}
-          placeholder="Snapshot name (optional)"
-          className="flex-1 px-4 py-2 bg-[var(--background)] border border-[var(--border)] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/50"
-        />
-        <Button
-          onClick={() => createMutation.mutate()}
-          loading={createMutation.isPending}
-          disabled={!database}
-        >
-          <Camera size={14} />
-          Create Snapshot
-        </Button>
-      </div>
-
-      {/* Snapshot List */}
-      <div className="space-y-2">
-        {snapshots.length === 0 && (
-          <div className="text-center py-8 text-[var(--muted-foreground)]">
-            No snapshots for this database
-          </div>
-        )}
-        {snapshots.map((snap) => (
-          <div
-            key={snap.id}
-            className="flex items-center justify-between p-4 bg-[var(--card)] rounded-lg border border-[var(--border)]"
-          >
-            <div>
-              <div className="font-medium">{snap.name}</div>
-              <div className="flex items-center gap-4 text-xs text-[var(--muted-foreground)] mt-1">
-                <span className="flex items-center gap-1">
-                  <HardDrive size={12} />
-                  {formatSize(snap.size)}
-                </span>
-                <span className="flex items-center gap-1">
-                  <Clock size={12} />
-                  {formatDate(snap.created_at)}
-                </span>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() => restoreMutation.mutate(snap.path)}
-                loading={restoreMutation.isPending}
-              >
-                <RotateCcw size={14} />
-                Restore
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => deleteMutation.mutate(snap.id)}
-                loading={deleteMutation.isPending}
-              >
-                <Trash2 size={14} />
-              </Button>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// Main Component
-export default function Database() {
-  const [selectedDb, setSelectedDb] = useState("");
-  const [selectedTable, setSelectedTable] = useState("");
-  const [activeTab, setActiveTab] = useState<"data" | "schema" | "snapshots">(
-    "data"
-  );
-  const [page, setPage] = useState(0);
-
   // Queries
-  const { data: status, isLoading: statusLoading } = useQuery({
-    queryKey: ["db-status"],
-    queryFn: fetchDBStatus,
-    refetchInterval: 30000,
+  const {
+    data: databases,
+    isLoading: loadingDBs,
+    error: dbError,
+  } = useQuery({
+    queryKey: ["databases"],
+    queryFn: async () => {
+      const res = await fetch("/api/db/list");
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Failed to fetch databases");
+      }
+      return res.json() as Promise<string[]>;
+    },
   });
 
-  const { data: databases = [], refetch: refetchDatabases } = useQuery({
-    queryKey: ["db-databases"],
-    queryFn: fetchDatabases,
-    enabled: status?.connected,
+  const { data: tables, isLoading: loadingTables } = useQuery({
+    queryKey: ["tables", selectedDB],
+    queryFn: async () => {
+      if (!selectedDB) return [];
+      const res = await fetch(`/api/db/tables?database=${selectedDB}`);
+      if (!res.ok) throw new Error("Failed to fetch tables");
+      return res.json() as Promise<TableInfo[]>;
+    },
+    enabled: !!selectedDB,
   });
 
-  const { data: tables = [] } = useQuery({
-    queryKey: ["db-tables", selectedDb],
-    queryFn: () => fetchTables(selectedDb),
-    enabled: !!selectedDb,
+  const { data: tableData, isLoading: loadingData } = useQuery({
+    queryKey: ["tableData", selectedDB, selectedTable],
+    queryFn: async () => {
+      if (!selectedDB || !selectedTable) return null;
+      const res = await fetch(
+        `/api/db/data?database=${selectedDB}&table=${selectedTable}&page=1`
+      );
+      if (!res.ok) throw new Error("Failed to fetch data");
+      return res.json() as Promise<TableData>;
+    },
+    enabled: !!selectedDB && !!selectedTable && activeTab === "data",
   });
 
-  const { data: tableData, isLoading: dataLoading } = useQuery({
-    queryKey: ["db-table-data", selectedDb, selectedTable, page],
-    queryFn: () => fetchTableData(selectedDb, selectedTable, 50, page * 50),
-    enabled: !!selectedDb && !!selectedTable && activeTab === "data",
+  const { data: schema, isLoading: loadingSchema } = useQuery({
+    queryKey: ["schema", selectedDB, selectedTable],
+    queryFn: async () => {
+      if (!selectedDB || !selectedTable) return [];
+      const res = await fetch(
+        `/api/db/schema?database=${selectedDB}&table=${selectedTable}`
+      );
+      if (!res.ok) throw new Error("Failed to fetch schema");
+      return res.json() as Promise<ColumnInfo[]>;
+    },
+    enabled: !!selectedDB && !!selectedTable && activeTab === "structure",
   });
 
-  const { data: schema = [] } = useQuery({
-    queryKey: ["db-schema", selectedDb, selectedTable],
-    queryFn: () => fetchSchema(selectedDb, selectedTable),
-    enabled: !!selectedDb && !!selectedTable && activeTab === "schema",
+  const { data: snapshots, refetch: refetchSnapshots } = useQuery({
+    queryKey: ["snapshots"],
+    queryFn: async () => {
+      const res = await fetch("/api/db/snapshots");
+      if (!res.ok) throw new Error("Failed to fetch snapshots");
+      return res.json() as Promise<Snapshot[]>;
+    },
+    enabled: activeTab === "snapshots",
   });
 
-  const { data: snapshots = [], refetch: refetchSnapshots } = useQuery({
-    queryKey: ["db-snapshots", selectedDb],
-    queryFn: () => fetchSnapshots(selectedDb),
-    enabled: !!selectedDb && activeTab === "snapshots",
+  // Mutations
+  const createSnapshotMutation = useMutation({
+    mutationFn: async (db: string) => {
+      const res = await fetch("/api/db/snapshots", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ database: db }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Failed to create snapshot");
+      }
+    },
+    onSuccess: () => {
+      refetchSnapshots();
+    },
   });
 
-  // Reset table selection when database changes
-  useEffect(() => {
-    setSelectedTable("");
-    setPage(0);
-  }, [selectedDb]);
+  const restoreSnapshotMutation = useMutation({
+    mutationFn: async (snapshotId: string) => {
+      const res = await fetch(`/api/db/snapshots/${snapshotId}/restore`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Failed to restore snapshot");
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["databases"] });
+      queryClient.invalidateQueries({ queryKey: ["tables"] });
+      queryClient.invalidateQueries({ queryKey: ["tableData"] });
+      queryClient.invalidateQueries({ queryKey: ["schema"] });
+    },
+  });
 
-  if (statusLoading) {
+  const deleteSnapshotMutation = useMutation({
+    mutationFn: async (snapshotId: string) => {
+      const res = await fetch(`/api/db/snapshots/${snapshotId}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Failed to delete snapshot");
+      }
+    },
+    onSuccess: () => {
+      refetchSnapshots();
+    },
+  });
+
+  // Filtered Tables
+  const filteredTables =
+    tables?.filter((t) =>
+      t.name.toLowerCase().includes(searchTable.toLowerCase())
+    ) || [];
+
+  if (dbError) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="w-8 h-8 animate-spin text-[var(--primary)]" />
+      <div className="flex h-full items-center justify-center p-8">
+        <Card className="max-w-md w-full border-red-500/20 bg-red-500/5">
+          <CardHeader className="text-center">
+            <div className="mx-auto w-12 h-12 bg-red-500/10 rounded-full flex items-center justify-center mb-4 text-red-500">
+              <AlertCircle />
+            </div>
+            <CardTitle className="text-red-500">Connection Failed</CardTitle>
+          </CardHeader>
+          <CardContent className="text-center text-sm text-[var(--muted-foreground)] space-y-4">
+            <p>{(dbError as Error).message}</p>
+            <p>
+              Ensure the daemon is running and has MySQL access permissions.
+            </p>
+            <Button variant="secondary" onClick={() => window.location.reload()}>
+              Retry Connection
+            </Button>
+          </CardContent>
+        </Card>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold gradient-text">Database</h1>
-          <p className="text-[var(--muted-foreground)]">
-            Browse and manage your local databases
-          </p>
+    <div className="flex h-screen bg-[var(--background)] overflow-hidden">
+      {/* Sidebar - Database & Table Tree */}
+      <div className="w-64 flex-shrink-0 border-r border-[var(--border)] bg-[var(--card)]/50 backdrop-blur-sm flex flex-col">
+        <div className="p-4 border-b border-[var(--border)]">
+          <h2 className="font-semibold flex items-center gap-2 mb-4 text-[var(--foreground)]">
+            <DatabaseIcon className="w-4 h-4 text-blue-500" />
+            Connections
+          </h2>
+          <div className="relative">
+            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-[var(--muted-foreground)]" />
+            <Input
+              placeholder="Search tables..."
+              className="pl-9 h-9 text-xs"
+              value={searchTable}
+              onChange={(e) => setSearchTable(e.target.value)}
+            />
+          </div>
         </div>
-        <div className="flex items-center gap-3">
-          <StatusBadge
-            connected={status?.connected ?? false}
-            version={status?.version}
-          />
-          <Button variant="secondary" onClick={() => refetchDatabases()}>
-            <RefreshCw size={16} />
-            Refresh
-          </Button>
+
+        <div className="flex-1 overflow-y-auto p-2 space-y-1">
+          {loadingDBs ? (
+            <div className="flex justify-center p-4">
+              <Loader2 className="animate-spin text-[var(--muted-foreground)]" />
+            </div>
+          ) : (
+            databases?.map((db) => (
+              <div key={db} className="space-y-1">
+                <button
+                  onClick={() => {
+                    setSelectedDB(db === selectedDB ? null : db);
+                    if (db !== selectedDB) {
+                      setSelectedTable(null);
+                      setActiveTab("data");
+                    }
+                  }}
+                  className={cn(
+                    "w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors duration-200 group text-left",
+                    selectedDB === db
+                      ? "bg-blue-500/10 text-blue-500 font-medium"
+                      : "text-[var(--muted-foreground)] hover:bg-[var(--card-hover)] hover:text-[var(--foreground)]"
+                  )}
+                >
+                  {selectedDB === db ? (
+                    <ChevronDown size={14} />
+                  ) : (
+                    <ChevronRight size={14} />
+                  )}
+                  <DatabaseIcon
+                    size={14}
+                    className={cn(
+                      "group-hover:text-blue-500 transition-colors",
+                      selectedDB === db
+                        ? "text-blue-500"
+                        : "text-[var(--muted-foreground)]"
+                    )}
+                  />
+                  <span className="truncate">{db}</span>
+                </button>
+
+                {selectedDB === db && (
+                  <div className="ml-4 pl-2 border-l border-[var(--border)]">
+                    {loadingTables ? (
+                      <div className="py-2 pl-4 text-xs text-[var(--muted-foreground)]">
+                        Loading tables...
+                      </div>
+                    ) : (
+                      filteredTables.map((table) => (
+                        <button
+                          key={table.name}
+                          onClick={() => {
+                            setSelectedTable(table.name);
+                            setActiveTab("data");
+                          }}
+                          className={cn(
+                            "w-full flex items-center gap-2 px-3 py-1.5 rounded-md text-sm transition-all duration-200 text-left",
+                            selectedTable === table.name
+                              ? "bg-[var(--card-hover)] text-[var(--foreground)] font-medium"
+                              : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                          )}
+                        >
+                          <Table2
+                            size={14}
+                            className={
+                              selectedTable === table.name
+                                ? "text-emerald-500"
+                                : "opacity-50"
+                            }
+                          />
+                          <span className="truncate">{table.name}</span>
+                          <span className="ml-auto text-[10px] opacity-40 tabular-nums">
+                            {table.row_count}
+                          </span>
+                        </button>
+                      ))
+                    )}
+                    {filteredTables.length === 0 && !loadingTables && (
+                      <div className="py-2 pl-4 text-xs text-[var(--muted-foreground)] italic">
+                        No tables found
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))
+          )}
         </div>
       </div>
 
-      {/* Connection Error */}
-      {status && !status.connected && (
-        <Card>
-          <div className="p-6 text-center">
-            <AlertCircle
-              size={48}
-              className="mx-auto mb-4 text-red-400 opacity-50"
-            />
-            <h3 className="font-semibold text-lg mb-2">
-              Cannot Connect to MySQL
-            </h3>
-            <p className="text-[var(--muted-foreground)] mb-4">
-              {status.error || "Make sure MySQL is running and accessible."}
-            </p>
-            <p className="text-sm text-[var(--muted-foreground)]">
-              Connection: {status.user}@{status.host}:{status.port}
-            </p>
-          </div>
-        </Card>
-      )}
-
-      {/* Main Content */}
-      {status?.connected && (
-        <>
-          {/* Database Selector */}
-          <DatabaseSelector
-            databases={databases}
-            selected={selectedDb}
-            onSelect={setSelectedDb}
-          />
-
-          {selectedDb && (
-            <div className="grid grid-cols-12 gap-6">
-              {/* Table List Sidebar */}
-              <div className="col-span-3">
-                <Card>
-                  <div className="p-4">
-                    <h3 className="text-sm font-medium text-[var(--muted-foreground)] mb-3">
-                      Tables ({tables.length})
-                    </h3>
-                    <TableList
-                      tables={tables}
-                      selected={selectedTable}
-                      onSelect={setSelectedTable}
-                    />
-                  </div>
-                </Card>
+      {/* Main Content Area */}
+      <div className="flex-1 flex flex-col min-w-0 bg-[var(--background)]">
+        {selectedDB ? (
+          <>
+            {/* Header */}
+            <div className="h-14 border-b border-[var(--border)] px-6 flex items-center justify-between bg-[var(--card)]/30 backdrop-blur-md">
+              <div className="flex items-center gap-2 overflow-hidden">
+                <DatabaseIcon className="w-4 h-4 text-blue-500 flex-shrink-0" />
+                <span className="font-medium text-[var(--muted-foreground)] whitespace-nowrap">
+                  {selectedDB}
+                </span>
+                {selectedTable && (
+                  <>
+                    <ChevronRight className="w-4 h-4 text-[var(--muted-foreground)] flex-shrink-0" />
+                    <Table2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
+                    <span className="font-semibold text-[var(--foreground)] truncate">
+                      {selectedTable}
+                    </span>
+                  </>
+                )}
               </div>
-
-              {/* Main Panel */}
-              <div className="col-span-9">
-                {/* Tabs */}
-                <div className="flex items-center gap-1 mb-4 p-1 bg-[var(--card)] rounded-lg w-fit">
-                  {(["data", "schema", "snapshots"] as const).map((tab) => (
-                    <button
-                      key={tab}
-                      onClick={() => setActiveTab(tab)}
-                      className={cn(
-                        "px-4 py-2 rounded-md text-sm font-medium transition-all",
-                        activeTab === tab
-                          ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
-                          : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-                      )}
-                    >
-                      {tab === "data" && (
-                        <Table2 size={14} className="inline mr-2" />
-                      )}
-                      {tab === "schema" && (
-                        <Columns size={14} className="inline mr-2" />
-                      )}
-                      {tab === "snapshots" && (
-                        <Camera size={14} className="inline mr-2" />
-                      )}
-                      {tab.charAt(0).toUpperCase() + tab.slice(1)}
-                    </button>
-                  ))}
-                </div>
-
-                {/* Tab Content */}
-                <Card>
-                  <div className="p-4">
-                    {activeTab === "data" && (
-                      <>
-                        {!selectedTable ? (
-                          <div className="text-center py-12 text-[var(--muted-foreground)]">
-                            Select a table to view data
-                          </div>
-                        ) : dataLoading ? (
-                          <div className="flex items-center justify-center py-12">
-                            <Loader2 className="w-6 h-6 animate-spin text-[var(--primary)]" />
-                          </div>
-                        ) : tableData ? (
-                          <>
-                            <DataTable data={tableData} />
-                            {/* Pagination */}
-                            {tableData.total > tableData.limit && (
-                              <div className="flex items-center justify-between mt-4 pt-4 border-t border-[var(--border)]">
-                                <span className="text-sm text-[var(--muted-foreground)]">
-                                  Showing {tableData.offset + 1}-
-                                  {Math.min(
-                                    tableData.offset + tableData.limit,
-                                    tableData.total
-                                  )}{" "}
-                                  of {tableData.total}
-                                </span>
-                                <div className="flex gap-2">
-                                  <Button
-                                    size="sm"
-                                    variant="secondary"
-                                    disabled={page === 0}
-                                    onClick={() => setPage((p) => p - 1)}
-                                  >
-                                    Previous
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="secondary"
-                                    disabled={
-                                      tableData.offset + tableData.limit >=
-                                      tableData.total
-                                    }
-                                    onClick={() => setPage((p) => p + 1)}
-                                  >
-                                    Next
-                                  </Button>
-                                </div>
-                              </div>
-                            )}
-                          </>
-                        ) : null}
-                      </>
-                    )}
-
-                    {activeTab === "schema" && (
-                      <>
-                        {!selectedTable ? (
-                          <div className="text-center py-12 text-[var(--muted-foreground)]">
-                            Select a table to view schema
-                          </div>
-                        ) : (
-                          <SchemaView schema={schema} />
-                        )}
-                      </>
-                    )}
-
-                    {activeTab === "snapshots" && (
-                      <SnapshotPanel
-                        database={selectedDb}
-                        snapshots={snapshots}
-                        onRefresh={() => refetchSnapshots()}
-                      />
-                    )}
-                  </div>
-                </Card>
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="secondary" className="h-8 shadow-sm">
+                  <RefreshCw className="w-3.5 h-3.5 mr-2" />
+                  Refresh
+                </Button>
+                <Button
+                  size="sm"
+                  className="h-8 bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-500/20"
+                  onClick={() => createSnapshotMutation.mutate(selectedDB)}
+                  loading={createSnapshotMutation.isPending}
+                >
+                  <Camera className="w-3.5 h-3.5 mr-2" />
+                  Snapshot
+                </Button>
               </div>
             </div>
-          )}
 
-          {!selectedDb && databases.length > 0 && (
-            <Card>
-              <div className="text-center py-12 text-[var(--muted-foreground)]">
-                <DatabaseIcon size={48} className="mx-auto mb-4 opacity-30" />
-                <p>Select a database to get started</p>
+            {/* Content Tabs */}
+            <Tabs
+              value={activeTab}
+              onValueChange={setActiveTab}
+              className="flex-1 flex flex-col min-h-0"
+            >
+              <div className="px-6 border-b border-[var(--border)] bg-[var(--muted)]/20">
+                <TabsList className="bg-transparent -mb-px p-0 h-10 gap-6">
+                  <TabsTrigger
+                    value="data"
+                    disabled={!selectedTable}
+                    className="relative h-10 rounded-none border-b-2 border-transparent bg-transparent px-0 pb-2 pt-2 font-medium text-[var(--muted-foreground)] shadow-none transition-none data-[state=active]:border-blue-500 data-[state=active]:text-blue-500 data-[state=active]:shadow-none disabled:opacity-30"
+                  >
+                    Table Data
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="structure"
+                    disabled={!selectedTable}
+                    className="relative h-10 rounded-none border-b-2 border-transparent bg-transparent px-0 pb-2 pt-2 font-medium text-[var(--muted-foreground)] shadow-none transition-none data-[state=active]:border-blue-500 data-[state=active]:text-blue-500 data-[state=active]:shadow-none disabled:opacity-30"
+                  >
+                    Structure
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="sql"
+                    className="relative h-10 rounded-none border-b-2 border-transparent bg-transparent px-0 pb-2 pt-2 font-medium text-[var(--muted-foreground)] shadow-none transition-none data-[state=active]:border-blue-500 data-[state=active]:text-blue-500 data-[state=active]:shadow-none"
+                  >
+                    <Code2 className="w-4 h-4 mr-2" />
+                    SQL Console
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="snapshots"
+                    className="relative h-10 rounded-none border-b-2 border-transparent bg-transparent px-0 pb-2 pt-2 font-medium text-[var(--muted-foreground)] shadow-none transition-none data-[state=active]:border-blue-500 data-[state=active]:text-blue-500 data-[state=active]:shadow-none"
+                  >
+                    Snapshots
+                  </TabsTrigger>
+                </TabsList>
               </div>
-            </Card>
-          )}
 
-          {databases.length === 0 && (
-            <Card>
-              <div className="text-center py-12 text-[var(--muted-foreground)]">
-                <DatabaseIcon size={48} className="mx-auto mb-4 opacity-30" />
-                <p>No databases found</p>
+              {/* Tab Views */}
+              <div className="flex-1 overflow-hidden p-6 ">
+                <TabsContent
+                  value="data"
+                  className="h-full m-0 data-[state=active]:flex flex-col border border-[var(--border)] rounded-lg bg-[var(--card)] shadow-sm"
+                >
+                  {selectedTable ? (
+                    loadingData ? (
+                      <div className="flex h-full items-center justify-center">
+                        <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+                      </div>
+                    ) : tableData ? (
+                      <div className="flex-1 overflow-auto rounded-lg">
+                        <table className="w-full text-sm">
+                          <thead className="sticky top-0 bg-[var(--muted)]/80 backdrop-blur-sm z-10 shadow-sm">
+                            <tr>
+                              {tableData.columns.map((col) => (
+                                <th
+                                  key={col.name}
+                                  className="px-4 py-3 text-left font-semibold text-[var(--muted-foreground)] border-b border-[var(--border)] whitespace-nowrap"
+                                >
+                                  <div className="flex items-center gap-2">
+                                    {col.name}
+                                    {col.key === "PRI" && (
+                                      <Badge
+                                        variant="secondary"
+                                        className="h-4 px-1 text-[10px] bg-yellow-500/10 text-yellow-600 border-yellow-500/20"
+                                      >
+                                        PK
+                                      </Badge>
+                                    )}
+                                  </div>
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-[var(--border)]">
+                            {tableData.rows.map((row, i) => (
+                              <tr
+                                key={i}
+                                className="hover:bg-[var(--muted)]/30 transition-colors"
+                              >
+                                {tableData.columns.map((col) => (
+                                  <td
+                                    key={col.name}
+                                    className="px-4 py-2.5 whitespace-nowrap font-mono text-xs text-[var(--foreground)]"
+                                  >
+                                    {row[col.name] === null ? (
+                                      <span className="text-[var(--muted-foreground)] italic opacity-50">
+                                        NULL
+                                      </span>
+                                    ) : (
+                                      String(row[col.name])
+                                    )}
+                                  </td>
+                                ))}
+                              </tr>
+                            ))}
+                            {tableData.rows.length === 0 && (
+                              <tr>
+                                <td
+                                  colSpan={tableData.columns.length}
+                                  className="px-4 py-12 text-center text-[var(--muted-foreground)]"
+                                >
+                                  Table is empty
+                                </td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : null
+                  ) : (
+                    <div className="flex h-full flex-col items-center justify-center text-[var(--muted-foreground)]">
+                      <Table2 className="w-12 h-12 mb-4 opacity-20" />
+                      <p>Select a table to view data</p>
+                    </div>
+                  )}
+                </TabsContent>
+
+                <TabsContent
+                  value="structure"
+                  className="h-full m-0 data-[state=active]:flex flex-col border border-[var(--border)] rounded-lg bg-[var(--card)] shadow-sm p-4"
+                >
+                  {selectedTable ? (
+                    loadingSchema ? (
+                      <div className="flex h-full items-center justify-center">
+                        <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+                      </div>
+                    ) : schema && schema.length > 0 ? (
+                      <div className="space-y-2 overflow-auto">
+                        {schema.map((col) => (
+                          <div
+                            key={col.name}
+                            className="flex items-center gap-4 p-3 bg-[var(--background)] rounded-lg border border-[var(--border)]"
+                          >
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono font-medium">
+                                  {col.name}
+                                </span>
+                                {col.key === "PRI" && (
+                                  <Badge
+                                    variant="secondary"
+                                    className="h-4 px-1 text-[10px] bg-yellow-500/10 text-yellow-600 border-yellow-500/20"
+                                  >
+                                    PRIMARY
+                                  </Badge>
+                                )}
+                                {col.key === "UNI" && (
+                                  <Badge
+                                    variant="secondary"
+                                    className="h-4 px-1 text-[10px] bg-blue-500/10 text-blue-600 border-blue-500/20"
+                                  >
+                                    UNIQUE
+                                  </Badge>
+                                )}
+                              </div>
+                              <div className="text-xs text-[var(--muted-foreground)] mt-1 font-mono">
+                                {col.type}
+                                {col.nullable && " • nullable"}
+                                {col.default && ` • default: ${col.default}`}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="flex h-full flex-col items-center justify-center text-[var(--muted-foreground)]">
+                        <Columns className="w-12 h-12 mb-4 opacity-20" />
+                        <p>No schema information available for this table.</p>
+                      </div>
+                    )
+                  ) : (
+                    <div className="flex h-full flex-col items-center justify-center text-[var(--muted-foreground)]">
+                      <Columns className="w-12 h-12 mb-4 opacity-20" />
+                      <p>Select a table to view its structure</p>
+                    </div>
+                  )}
+                </TabsContent>
+
+                <TabsContent value="sql" className="h-full m-0">
+                  <SQLConsole database={selectedDB} />
+                </TabsContent>
+
+                <TabsContent value="snapshots" className="h-full m-0 space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {!snapshots?.filter((s) => s.database === selectedDB)
+                      .length ? (
+                      <div className="col-span-full py-12 text-center border border-dashed border-[var(--border)] rounded-lg">
+                        <Camera className="w-12 h-12 mx-auto mb-4 text-[var(--muted-foreground)] opacity-20" />
+                        <h3 className="font-semibold mb-1">No Snapshots</h3>
+                        <p className="text-sm text-[var(--muted-foreground)] mb-4">
+                          Create a backup of this database
+                        </p>
+                        <Button
+                          size="sm"
+                          onClick={() =>
+                            createSnapshotMutation.mutate(selectedDB)
+                          }
+                          loading={createSnapshotMutation.isPending}
+                        >
+                          Create Snapshot
+                        </Button>
+                      </div>
+                    ) : (
+                      snapshots
+                        ?.filter((s) => s.database === selectedDB)
+                        .map((snap) => (
+                          <Card
+                            key={snap.id}
+                            className="hover:shadow-lg transition-all duration-300 border-[var(--border)] bg-[var(--card)] group cursor-pointer"
+                          >
+                            <CardHeader className="p-4 pb-2 flex flex-row items-center justify-between space-y-0">
+                              <div className="flex items-center gap-2">
+                                <div className="p-2 bg-blue-500/10 rounded-lg text-blue-500">
+                                  <HardDrive size={16} />
+                                </div>
+                                <div className="font-semibold text-sm truncate max-w-[150px]">
+                                  {snap.filename}
+                                </div>
+                              </div>
+                              <Badge
+                                variant="secondary"
+                                className="font-mono text-xs"
+                              >
+                                {formatBytes(snap.size)}
+                              </Badge>
+                            </CardHeader>
+                            <CardContent className="p-4 pt-2">
+                              <div className="flex items-center text-xs text-[var(--muted-foreground)] mb-4">
+                                <Clock size={12} className="mr-1" />
+                                {formatDate(snap.created_at)}
+                              </div>
+                                                            <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                <Button
+                                                    size="sm"
+                                                    variant="secondary"
+                                                    className="flex-1 h-8 text-xs"
+                                                    onClick={() => restoreSnapshotMutation.mutate(snap.id)}
+                                                    loading={restoreSnapshotMutation.isPending}
+                                                >
+                                                    <RotateCcw size={12} className="mr-1" />
+                                                    Restore
+                                                </Button>
+                                                <Button
+                                                    size="sm"
+                                                    variant="danger"
+                                                    className="h-8 w-8 p-0"
+                                                    onClick={() => deleteSnapshotMutation.mutate(snap.id)}
+                                                    loading={deleteSnapshotMutation.isPending}
+                                                >
+                                                    <Trash2 size={12} />
+                                                </Button>
+                                            </div>                     </CardContent>
+                          </Card>
+                        ))
+                    )}
+                  </div>
+                </TabsContent>
               </div>
-            </Card>
-          )}
-        </>
-      )}
+            </Tabs>
+          </>
+        ) : (
+          <div className="flex-1 flex flex-col items-center justify-center text-[var(--muted-foreground)] bg-dot-pattern">
+            <div className="w-24 h-24 rounded-full bg-blue-500/5 flex items-center justify-center mb-6 animate-pulse">
+              <DatabaseIcon className="w-10 h-10 text-blue-500" />
+            </div>
+            <h2 className="text-xl font-semibold text-[var(--foreground)] mb-2">
+              Select a Database
+            </h2>
+            <p className="max-w-xs text-center text-sm">
+              Choose a database from the sidebar to view tables, run queries,
+              and manage snapshots.
+            </p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

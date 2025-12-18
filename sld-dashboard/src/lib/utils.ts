@@ -57,3 +57,20 @@ export function getProjectUrl(
   const protocol = secure ? "https" : "http";
   return `${protocol}://${name}.${tld}`;
 }
+
+/**
+ * Format a date string
+ */
+export function formatDate(dateStr: string): string {
+  if (!dateStr) return "";
+  try {
+    return new Date(dateStr).toLocaleString("en-US", {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "numeric",
+    });
+  } catch (e) {
+    return dateStr;
+  }
+}
