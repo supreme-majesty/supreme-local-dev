@@ -4,10 +4,19 @@ BINARY_NAME=sld
 MAIN_PATH=./cmd/sld
 
 # Build the binary
-build:
+build: frontend
 	@echo "Building $(BINARY_NAME)..."
 	go build -o $(BINARY_NAME) $(MAIN_PATH)
 	@echo "Build complete."
+
+# Build frontend
+frontend:
+	@echo "Building frontend..."
+	cd sld-dashboard && npm install && npm run build
+	@echo "Updating embedded assets..."
+	rm -rf pkg/assets/gui/*
+	cp -r sld-dashboard/dist/* pkg/assets/gui/
+	@echo "Frontend build complete."
 
 # Build and run the daemon
 run: build

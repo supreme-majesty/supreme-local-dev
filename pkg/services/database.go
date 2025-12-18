@@ -70,7 +70,62 @@ func NewDatabaseService() *DatabaseService {
 
 // Connect establishes a connection to MySQL
 func (d *DatabaseService) Connect() error {
-	// Try common socket locations first (no password needed for local socket)
+	var err error
+
+	// 1. Try Environment Variables
+	envUser := os.Getenv("SLD_DB_USER")
+	envPass := os.Getenv("SLD_DB_PASS")
+	envHost := os.Getenv("SLD_DB_HOST")
+	envPort := os.Getenv("SLD_DB_PORT")
+
+	if envUser != "" {
+		if envHost == "" {
+			envHost = "127.0.0.1"
+		}
+		if envPort == "" {
+			envPort = "3306"
+		}
+
+		dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/", envUser, envPass, envHost, envPort)
+		db, err := sql.Open("mysql", dsn)
+		if err == nil {
+			if err := db.Ping(); err == nil {
+				d.db = db
+				d.dsn = dsn
+				return nil
+			}
+			db.Close()
+		}
+	}
+
+	// 2. Try Current OS User (via socket)
+	// Many devs have 'alice'@'localhost' with auth_socket or no pass
+	currentUser := os.Getenv("USER")
+	if currentUser != "" && currentUser != "root" {
+		// Try common socket locations
+		socketPaths := []string{
+			"/var/run/mysqld/mysqld.sock",
+			"/tmp/mysql.sock",
+			"/var/lib/mysql/mysql.sock",
+		}
+
+		for _, sock := range socketPaths {
+			if _, err := os.Stat(sock); err == nil {
+				dsn := fmt.Sprintf("%s@unix(%s)/", currentUser, sock)
+				db, err := sql.Open("mysql", dsn)
+				if err == nil {
+					if err := db.Ping(); err == nil {
+						d.db = db
+						d.dsn = dsn
+						return nil
+					}
+					db.Close()
+				}
+			}
+		}
+	}
+
+	// 3. Try Root via Socket (Default for system installs)
 	socketPaths := []string{
 		"/var/run/mysqld/mysqld.sock",
 		"/tmp/mysql.sock",
@@ -92,16 +147,17 @@ func (d *DatabaseService) Connect() error {
 		}
 	}
 
-	// Fall back to TCP connection
+	// 4. Try Root via TCP (Default for old MySQL/Homebrew?)
 	dsn := "root@tcp(127.0.0.1:3306)/"
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
-		return fmt.Errorf("failed to connect to MySQL: %w", err)
+		return fmt.Errorf("failed to open database: %w", err)
 	}
 
 	if err := db.Ping(); err != nil {
 		db.Close()
-		return fmt.Errorf("MySQL ping failed: %w", err)
+		// Return a helpful error message with context
+		return fmt.Errorf("failed to connect to MySQL. Tried env vars, user '%s', and root. Error: %w. Try setting SLD_DB_USER environment variable", currentUser, err)
 	}
 
 	d.db = db

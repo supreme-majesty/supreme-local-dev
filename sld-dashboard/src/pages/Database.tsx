@@ -7,8 +7,6 @@ import {
   Camera,
   RotateCcw,
   Trash2,
-  ChevronRight,
-  ChevronDown,
   Columns,
   HardDrive,
   Clock,
