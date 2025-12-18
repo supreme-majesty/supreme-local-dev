@@ -1,4 +1,4 @@
-import { RefreshCw, Settings, Moon, Sun, Bell } from "lucide-react";
+import { RefreshCw, Settings, Moon, Sun, Bell, Command } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/useAppStore";
 import { useTheme } from "@/hooks/useTheme";
@@ -18,6 +18,13 @@ export function Topbar() {
 
   const handleRestart = () => {
     restartMutation.mutate();
+  };
+
+  const triggerCommandPalette = () => {
+    // Dispatch Cmd+K event to trigger the palette
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "k", metaKey: true, ctrlKey: true })
+    );
   };
 
   return (
@@ -44,6 +51,24 @@ export function Topbar() {
             </span>
           </div>
         )}
+
+        {/* Command Palette Hint */}
+        <button
+          onClick={triggerCommandPalette}
+          className={cn(
+            "hidden md:flex items-center gap-2 px-3 py-1.5 rounded-lg",
+            "bg-[var(--background)] border border-[var(--border)]",
+            "text-[var(--muted-foreground)] text-sm",
+            "hover:border-[var(--border-hover)] hover:text-[var(--foreground)]",
+            "transition-all duration-200"
+          )}
+        >
+          <Command size={14} />
+          <span>Command</span>
+          <kbd className="ml-1 px-1.5 py-0.5 text-[10px] font-medium bg-[var(--card)] rounded border border-[var(--border)]">
+            ⌘K
+          </kbd>
+        </button>
       </div>
 
       {/* Right Section - Actions */}

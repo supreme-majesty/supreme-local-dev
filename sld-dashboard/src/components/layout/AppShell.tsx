@@ -2,6 +2,7 @@ import { Outlet } from "react-router-dom";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
 import { Toast } from "@/components/common/Toast";
+import { CommandPalette } from "@/components/CommandPalette";
 import { useAppStore } from "@/stores/useAppStore";
 import { cn } from "@/lib/utils";
 
@@ -36,6 +37,9 @@ export function AppShell() {
 
       {/* Toast Container */}
       <Toast />
+
+      {/* Command Palette (Cmd+K) */}
+      <CommandPalette />
     </div>
   );
 }

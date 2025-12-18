@@ -44,7 +44,17 @@ var installCmd = &cobra.Command{
 			return fmt.Errorf("installation failed: %w", err)
 		}
 
+		// Install daemon as systemd service for auto-start
+		fmt.Println("Setting up daemon service...")
+		if err := installDaemonService(); err != nil {
+			fmt.Printf("Warning: Failed to install daemon service: %v\n", err)
+			fmt.Println("You can manually start the daemon with: sld daemon")
+		}
+
 		fmt.Println("Supreme Local Dev installed successfully! 🚀")
+		fmt.Println("")
+		fmt.Println("The SLD daemon is now running and will auto-start on boot.")
+		fmt.Println("Visit http://sld.test to access the dashboard.")
 		return nil
 	},
 }
@@ -166,6 +176,51 @@ func main() {
 	}
 }
 
+// installDaemonService installs and starts the SLD daemon as a systemd service
+func installDaemonService() error {
+	// Get executable path
+	exePath, err := os.Executable()
+	if err != nil {
+		exePath = "/usr/bin/sld"
+	}
+
+	// Create systemd service file
+	serviceContent := fmt.Sprintf(`[Unit]
+Description=Supreme Local Dev Daemon
+Documentation=https://github.com/supreme-majesty/supreme-local-dev
+After=network.target nginx.service
+
+[Service]
+Type=simple
+ExecStart=%s daemon
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+`, exePath)
+
+	servicePath := "/etc/systemd/system/sld-daemon.service"
+	if err := os.WriteFile(servicePath, []byte(serviceContent), 0644); err != nil {
+		return fmt.Errorf("failed to write service file: %w", err)
+	}
+
+	// Reload systemd and enable service
+	exec.Command("systemctl", "daemon-reload").Run()
+	if err := exec.Command("systemctl", "enable", "sld-daemon").Run(); err != nil {
+		return fmt.Errorf("failed to enable service: %w", err)
+	}
+
+	// Start the service
+	if err := exec.Command("systemctl", "start", "sld-daemon").Run(); err != nil {
+		return fmt.Errorf("failed to start service: %w", err)
+	}
+
+	return nil
+}
+
 func init() {
 	rootCmd.AddCommand(installCmd)
 	rootCmd.AddCommand(uninstallCmd)
@@ -199,6 +254,13 @@ func init() {
 	pluginCmd.AddCommand(pluginEnableCmd)
 
 	rootCmd.AddCommand(shareCmd)
+
+	// Service management
+	rootCmd.AddCommand(serviceCmd)
+	serviceCmd.AddCommand(serviceInstallCmd)
+	serviceCmd.AddCommand(serviceStartCmd)
+	serviceCmd.AddCommand(serviceStopCmd)
+	serviceCmd.AddCommand(serviceStatusCmd)
 
 }
 
@@ -583,6 +645,115 @@ var shareCmd = &cobra.Command{
 
 		fmt.Printf("✅ Tunnel active at: %s\n", res.Message)
 		fmt.Println("Tunnel will run in background until you stop it.")
+		return nil
+	},
+}
+
+// --- Service Management Commands ---
+
+var serviceCmd = &cobra.Command{
+	Use:   "service",
+	Short: "Manage the SLD daemon as a system service",
+}
+
+var serviceInstallCmd = &cobra.Command{
+	Use:   "install",
+	Short: "Install SLD daemon as a systemd service (auto-start on boot)",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if os.Geteuid() != 0 {
+			return fmt.Errorf("service installation requires root. Please run with sudo")
+		}
+
+		fmt.Println("Installing SLD daemon service...")
+
+		// Get executable path
+		exePath, err := os.Executable()
+		if err != nil {
+			exePath = "/usr/bin/sld"
+		}
+
+		// Create systemd service file
+		serviceContent := fmt.Sprintf(`[Unit]
+Description=Supreme Local Dev Daemon
+Documentation=https://github.com/supreme-majesty/supreme-local-dev
+After=network.target nginx.service
+
+[Service]
+Type=simple
+ExecStart=%s daemon
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+`, exePath)
+
+		servicePath := "/etc/systemd/system/sld-daemon.service"
+		if err := os.WriteFile(servicePath, []byte(serviceContent), 0644); err != nil {
+			return fmt.Errorf("failed to write service file: %w", err)
+		}
+
+		// Reload systemd and enable service
+		exec.Command("systemctl", "daemon-reload").Run()
+		if err := exec.Command("systemctl", "enable", "sld-daemon").Run(); err != nil {
+			return fmt.Errorf("failed to enable service: %w", err)
+		}
+
+		// Start the service
+		if err := exec.Command("systemctl", "start", "sld-daemon").Run(); err != nil {
+			return fmt.Errorf("failed to start service: %w", err)
+		}
+
+		fmt.Println("✅ SLD daemon service installed and started!")
+		fmt.Println("   The daemon will now start automatically on boot.")
+		fmt.Println("")
+		fmt.Println("   Use 'sld service status' to check status")
+		fmt.Println("   Use 'sld service stop' to stop the service")
+		return nil
+	},
+}
+
+var serviceStartCmd = &cobra.Command{
+	Use:   "start",
+	Short: "Start the SLD daemon service",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		fmt.Println("Starting SLD daemon service...")
+		out, err := exec.Command("sudo", "systemctl", "start", "sld-daemon").CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("failed to start service: %s", string(out))
+		}
+		fmt.Println("✅ SLD daemon started!")
+		return nil
+	},
+}
+
+var serviceStopCmd = &cobra.Command{
+	Use:   "stop",
+	Short: "Stop the SLD daemon service",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		fmt.Println("Stopping SLD daemon service...")
+		out, err := exec.Command("sudo", "systemctl", "stop", "sld-daemon").CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("failed to stop service: %s", string(out))
+		}
+		fmt.Println("✅ SLD daemon stopped!")
+		return nil
+	},
+}
+
+var serviceStatusCmd = &cobra.Command{
+	Use:   "status",
+	Short: "Show status of the SLD daemon service",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		out, err := exec.Command("systemctl", "status", "sld-daemon", "--no-pager").CombinedOutput()
+		if err != nil {
+			// Service might not be running, still show output
+			fmt.Println(string(out))
+			return nil
+		}
+		fmt.Println(string(out))
 		return nil
 	},
 }

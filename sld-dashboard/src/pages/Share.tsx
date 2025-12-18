@@ -8,7 +8,6 @@ import {
   Square,
   Loader2,
   CheckCircle2,
-  XCircle,
   Wifi,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
