@@ -3,7 +3,9 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -48,7 +50,9 @@ func (s *Server) Start() error {
 	http.HandleFunc("/api/db/table", s.handleDBTableData)
 	http.HandleFunc("/api/db/schema", s.handleDBSchema)
 	http.HandleFunc("/api/db/snapshots", s.handleDBSnapshots)
+	http.HandleFunc("/api/db/snapshots/download", s.handleDBDownload)
 	http.HandleFunc("/api/db/snapshots/restore", s.handleDBRestore)
+	http.HandleFunc("/api/db/import", s.handleDBImport)
 	http.HandleFunc("/api/db/query", s.handleDBQuery)
 
 	// Initialize WebSocket Hub
@@ -687,4 +691,81 @@ func (s *Server) handleDBQuery(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResponse(w, result, 200)
+}
+
+func (s *Server) handleDBDownload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		return
+	}
+
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		http.Error(w, "id parameter required", 400)
+		return
+	}
+
+	d, _ := daemon.GetClient()
+	// Security: Sanitize ID to prevent directory traversal
+	// In ListSnapshots we trust filenames in the dir, but here we take user input.
+	// Simple check: must not contain slashes
+	if strings.Contains(id, "/") || strings.Contains(id, "\\") {
+		http.Error(w, "invalid filename", 400)
+		return
+	}
+
+	path := filepath.Join(d.DatabaseService.SnapDir, id)
+	http.ServeFile(w, r, path)
+}
+
+func (s *Server) handleDBImport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		return
+	}
+
+	// 10MB limit
+	r.ParseMultipartForm(10 << 20)
+
+	file, handler, err := r.FormFile("file")
+	if err != nil {
+		jsonResponse(w, ErrorResponse{Error: "Error retrieving file"}, 400)
+		return
+	}
+	defer file.Close()
+
+	d, _ := daemon.GetClient()
+
+	// Create snapshots dir if not exists
+	os.MkdirAll(d.DatabaseService.SnapDir, 0755)
+
+	// Save file
+	// We preserve the name but might prefix timestamp if collision?
+	// For now just overwrite or simple save.
+	filename := handler.Filename
+	// Sanitize
+	filename = filepath.Base(filename)
+
+	destPath := filepath.Join(d.DatabaseService.SnapDir, filename)
+
+	// Write
+	dst, err := os.Create(destPath)
+	if err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+	defer dst.Close()
+
+	if _, err := io.Copy(dst, file); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+
+	// Check if we should restore
+	if r.URL.Query().Get("restore") == "true" {
+		if err := d.DatabaseService.RestoreSnapshot(filename); err != nil {
+			jsonResponse(w, ErrorResponse{Error: "Upload successful but restore failed: " + err.Error()}, 500)
+			return
+		}
+	}
+
+	jsonResponse(w, SuccessResponse{Success: true, Message: "File uploaded successfully"}, 200)
 }

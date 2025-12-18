@@ -374,22 +374,35 @@ func (d *DatabaseService) GetTableData(database, table string, page, perPage int
 	}, nil
 }
 
-// ExecuteQuery executes a read-only SELECT query
+// ExecuteQuery executes a SQL query (read or write)
+// ExecuteQuery executes a SQL query (read or write)
 func (d *DatabaseService) ExecuteQuery(database, query string) (*QueryResult, error) {
 	if err := d.ensureConnected(); err != nil {
 		return nil, err
-	}
-
-	// Safety: Only allow SELECT queries
-	trimmed := strings.TrimSpace(strings.ToUpper(query))
-	if !strings.HasPrefix(trimmed, "SELECT") {
-		return nil, fmt.Errorf("only SELECT queries are allowed")
 	}
 
 	if _, err := d.db.Exec("USE " + database); err != nil {
 		return nil, err
 	}
 
+	// Determine usage
+	trimmed := strings.TrimSpace(strings.ToUpper(query))
+	isSelect := strings.HasPrefix(trimmed, "SELECT") || strings.HasPrefix(trimmed, "SHOW") || strings.HasPrefix(trimmed, "DESCRIBE") || strings.HasPrefix(trimmed, "EXPLAIN")
+
+	if !isSelect {
+		res, err := d.db.Exec(query)
+		if err != nil {
+			return nil, err
+		}
+		affected, _ := res.RowsAffected()
+		return &QueryResult{
+			RowCount: int(affected),
+			Rows:     []map[string]interface{}{},
+			Columns:  []string{},
+		}, nil
+	}
+
+	// Handle SELECT-like queries
 	rows, err := d.db.Query(query)
 	if err != nil {
 		return nil, err

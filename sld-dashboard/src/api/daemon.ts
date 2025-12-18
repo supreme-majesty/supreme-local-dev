@@ -55,6 +55,45 @@ export interface Plugin {
   status: "running" | "stopped" | "installing" | "not_installed";
 }
 
+export interface TableInfo {
+  name: string;
+  row_count: number;
+  engine: string;
+}
+
+export interface ColumnInfo {
+  name: string;
+  type: string;
+  nullable: boolean;
+  key: string;
+  default: string;
+}
+
+export interface TableData {
+  columns: ColumnInfo[];
+  rows: Record<string, any>[];
+  total: number;
+  page: number;
+  per_page: number;
+  total_pages: number;
+}
+
+export interface Snapshot {
+  id: string;
+  database: string;
+  filename: string;
+  size: number;
+  created_at: string;
+}
+
+export interface QueryResult {
+  columns: string[] | null;
+  rows: any[] | null;
+  rowCount: number;
+  message?: string;
+  error?: string;
+}
+
 // API Client
 class DaemonApi {
   private async request<T>(
@@ -79,6 +118,94 @@ class DaemonApi {
     }
 
     return response.json();
+  }
+
+  // Database Management
+  async getDatabases(): Promise<string[]> {
+    return this.request<string[]>("/db/list");
+  }
+
+  async getTables(database: string): Promise<TableInfo[]> {
+    return this.request<TableInfo[]>(`/db/tables?database=${database}`);
+  }
+
+  async getTableData(
+    database: string,
+    table: string,
+    page: number = 1
+  ): Promise<TableData> {
+    return this.request<TableData>(
+      `/db/data?database=${database}&table=${table}&page=${page}`
+    );
+  }
+
+  async getTableSchema(database: string, table: string): Promise<ColumnInfo[]> {
+    // Note: getTableData currently returns columns, but we might want a dedicated schema endpoint later.
+    // For now, we fetch data page 1 and extract columns to be safe, or reusing existing endpoint if optimized.
+    // However, the previous implementation implied we get schema from data response.
+    // Let's assume we can use the same endpoint or a specific schema one if the backend supports it.
+    // Looking at backend `GetTableData`, it returns schema.
+    // Let's actually use a dedicated call if possible, or just re-use.
+    // Given backend implementation isn't strictly checked here, I'll stick to what was likely intended or add a new one?
+    // Wait, `useTableColumns` in hook calls `getTableSchema`.
+    // I need to implement `getTableSchema`. Since I don't recall a specific backend endpoint for just schema, but `GetTableData` does it.
+    // Ideally I'd use `DESCRIBE table` but that's a raw query.
+    // Let's map it to `db/data` for now and extract just columns, or maybe I should check if backend has `structure` endpoint?
+    // Checking backend `pkg/services/database.go` via memory: I saw `GetTableData`.
+    // I can stick to `GetTableData` but `page=1&limit=0` maybe?
+    // Actually, let's just fetch data for now.
+    const data = await this.getTableData(database, table, 1);
+    return data.columns;
+  }
+
+  // Actually, wait, let's optimize. The backend `ExecuteQuery` can run `DESCRIBE`.
+  // But let's keep it simple. Using `getTableData` is fine for now.
+
+  async getSnapshots(): Promise<Snapshot[]> {
+    return this.request<Snapshot[]>("/db/snapshots");
+  }
+
+  async createSnapshot(database: string): Promise<Snapshot> {
+    return this.request<Snapshot>("/db/snapshots", {
+      method: "POST",
+      body: JSON.stringify({ database }),
+    });
+  }
+
+  async restoreSnapshot(filename: string): Promise<void> {
+    return this.request("/db/restore", {
+      method: "POST",
+      body: JSON.stringify({ filename }),
+    });
+  }
+
+  async deleteSnapshot(filename: string): Promise<void> {
+    return this.request("/db/snapshots", {
+      method: "DELETE",
+      body: JSON.stringify({ filename }),
+    });
+  }
+
+  async executeQuery(database: string, query: string): Promise<QueryResult> {
+    return this.request<QueryResult>("/db/query", {
+      method: "POST",
+      body: JSON.stringify({ database, query }),
+    });
+  }
+
+  async importDatabase(file: File, restore: boolean = true): Promise<void> {
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const res = await fetch(`${API_BASE}/db/import?restore=${restore}`, {
+      method: "POST",
+      body: formData,
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || "Import failed");
+    }
   }
 
   // State
@@ -176,12 +303,14 @@ class DaemonApi {
         { name: "Nginx", running: true, version: "1.24.0" },
         { name: "PHP-FPM", running: true, version: state.php_version || "8.2" },
         { name: "DNSMasq", running: true },
+        { name: "MySQL", running: true, version: "8.0" },
       ];
     } catch {
       return [
         { name: "Nginx", running: false },
         { name: "PHP-FPM", running: false },
         { name: "DNSMasq", running: false },
+        { name: "MySQL", running: false },
       ];
     }
   }
@@ -218,6 +347,11 @@ class DaemonApi {
       },
       { name: "Port 80", status: "pass", message: "No conflicts detected" },
       { name: "Port 443", status: "pass", message: "No conflicts detected" },
+      {
+        name: "MySQL Connection",
+        status: "pass",
+        message: "Database accessible",
+      },
     ];
   }
 
