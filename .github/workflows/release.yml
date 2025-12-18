@@ -148,37 +148,29 @@ jobs:
         run: |
           $version = "${{ github.ref_name }}".TrimStart('v')
 
-          # Create WiX source file
+          # Create WiX source file (WiX v4 format for WiX v5 toolset)
           @"
           <?xml version="1.0" encoding="UTF-8"?>
-          <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
-            <Product Id="*" 
-                     Name="Supreme Local Dev" 
-                     Language="1033" 
-                     Version="$version.0" 
-                     Manufacturer="Supreme" 
-                     UpgradeCode="8B7E9A5C-3D2F-4E1A-B8C4-9F6E7D2A1B3C">
-              <Package InstallerVersion="200" Compressed="yes" InstallScope="perMachine" />
+          <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+            <Package Name="Supreme Local Dev"
+                     Language="1033"
+                     Version="$version.0"
+                     Manufacturer="Supreme"
+                     UpgradeCode="8B7E9A5C-3D2F-4E1A-B8C4-9F6E7D2A1B3C"
+                     Scope="perMachine">
               <MajorUpgrade DowngradeErrorMessage="A newer version is already installed." />
               <MediaTemplate EmbedCab="yes" />
-              <Feature Id="ProductFeature" Title="Supreme Local Dev" Level="1">
-                <ComponentGroupRef Id="ProductComponents" />
-              </Feature>
-            </Product>
-            <Fragment>
-              <Directory Id="TARGETDIR" Name="SourceDir">
-                <Directory Id="ProgramFiles64Folder">
-                  <Directory Id="INSTALLFOLDER" Name="Supreme Local Dev" />
+              <StandardDirectory Id="ProgramFiles64Folder">
+                <Directory Id="INSTALLFOLDER" Name="Supreme Local Dev">
+                  <Component Id="SldExe" Guid="*">
+                    <File Id="SldExeFile" Source="bin\sld-windows-amd64.exe" Name="sld.exe" KeyPath="yes" />
+                  </Component>
                 </Directory>
-              </Directory>
-            </Fragment>
-            <Fragment>
-              <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
-                <Component Id="SldExe" Guid="*">
-                  <File Id="SldExeFile" Source="bin\sld-windows-amd64.exe" Name="sld.exe" KeyPath="yes" />
-                </Component>
-              </ComponentGroup>
-            </Fragment>
+              </StandardDirectory>
+              <Feature Id="ProductFeature" Title="Supreme Local Dev" Level="1">
+                <ComponentRef Id="SldExe" />
+              </Feature>
+            </Package>
           </Wix>
           "@ | Out-File -Encoding utf8 sld.wxs
 
