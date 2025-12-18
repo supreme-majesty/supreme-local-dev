@@ -570,9 +570,7 @@ func (d *Daemon) Secure() error {
 	// certBase := "/var/lib/sld"
 
 	// Collect domains from state
-
-	// Collect domains from state
-	domains := []string{}
+	domains := []string{"sld.test", "*.test"} // Explicitly add system domains
 	// Linked sites
 	for name := range d.State.Data.Links {
 		domains = append(domains, name+".test")
@@ -582,7 +580,7 @@ func (d *Daemon) Secure() error {
 		entries, err := os.ReadDir(p)
 		if err == nil {
 			for _, entry := range entries {
-				if entry.IsDir() {
+				if entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") {
 					domains = append(domains, entry.Name()+".test")
 				}
 			}

@@ -22,6 +22,10 @@ var installCmd = &cobra.Command{
 	Use:   "install",
 	Short: "Install SLD dependencies and core services",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if os.Geteuid() != 0 {
+			return fmt.Errorf("installation requires root privileges. Please run with sudo")
+		}
+
 		fmt.Println("Installing Supreme Local Dev...")
 
 		d, err := daemon.GetClient()

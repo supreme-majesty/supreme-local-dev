@@ -8,6 +8,7 @@ import (
 
 	"github.com/supreme-majesty/supreme-local-dev/pkg/assets"
 	"github.com/supreme-majesty/supreme-local-dev/pkg/daemon"
+	"github.com/supreme-majesty/supreme-local-dev/pkg/daemon/metrics"
 )
 
 type Server struct {
@@ -33,6 +34,7 @@ func (s *Server) Start() error {
 	http.HandleFunc("/api/plugins", s.handlePlugins)
 	http.HandleFunc("/api/plugins/install", s.handlePluginInstall)
 	http.HandleFunc("/api/plugins/toggle", s.handlePluginToggle)
+	http.HandleFunc("/api/metrics", s.handleMetrics)
 
 	// Serve GUI static files
 	guiFS, _ := assets.GetGuiFS()
@@ -327,4 +329,14 @@ func (s *Server) handlePluginToggle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResponse(w, SuccessResponse{Success: true}, 200)
+}
+
+func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	d, _ := daemon.GetClient()
+	stats, err := metrics.Collect(d)
+	if err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+	jsonResponse(w, stats, 200)
 }

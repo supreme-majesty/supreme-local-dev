@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 )
 
-//go:embed runtime/*
-//go:embed gui/*
+//go:embed runtime
+//go:embed gui
 var assetsFS embed.FS
 
 // Extract extracts the embedded runtime assets to the destination directory.
@@ -41,7 +41,8 @@ func Extract(destDir string) error {
 
 // ReadTemplate reads an embedded template file.
 func ReadTemplate(name string) (string, error) {
-	data, err := assetsFS.ReadFile(fmt.Sprintf("runtime/nginx/%s", name))
+	path := fmt.Sprintf("runtime/nginx/%s", name)
+	data, err := assetsFS.ReadFile(path)
 	if err != nil {
 		return "", err
 	}
