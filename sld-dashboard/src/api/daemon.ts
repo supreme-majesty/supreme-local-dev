@@ -55,6 +55,11 @@ export interface Plugin {
   status: "running" | "stopped" | "installing" | "not_installed";
 }
 
+export interface DatabaseInfo {
+  name: string;
+  tables: number;
+}
+
 export interface TableInfo {
   name: string;
   row_count: number;
@@ -121,8 +126,8 @@ class DaemonApi {
   }
 
   // Database Management
-  async getDatabases(): Promise<string[]> {
-    return this.request<string[]>("/db/list");
+  async getDatabases(): Promise<DatabaseInfo[]> {
+    return this.request<DatabaseInfo[]>("/db/databases");
   }
 
   async getTables(database: string): Promise<TableInfo[]> {

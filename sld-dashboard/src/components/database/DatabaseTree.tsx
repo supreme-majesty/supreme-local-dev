@@ -168,12 +168,12 @@ export function DatabaseTree({
 
         {databases.map((db) => (
           <DatabaseNode
-            key={db}
-            name={db}
-            isSelected={selectedDb === db}
-            selectedTable={selectedDb === db ? selectedTable : null}
-            onSelectDb={() => onSelectDb(db)}
-            onSelectTable={(table) => onSelectTable(db, table)}
+            key={db.name}
+            name={db.name}
+            isSelected={selectedDb === db.name}
+            selectedTable={selectedDb === db.name ? selectedTable : null}
+            onSelectDb={() => onSelectDb(db.name)}
+            onSelectTable={(table) => onSelectTable(db.name, table)}
           />
         ))}
       </div>

@@ -30,10 +30,12 @@ import { SQLConsole } from "@/components/database/SQLConsole";
 // @ts-ignore
 import { DatabaseTree } from "@/components/database/DatabaseTree";
 import { DataForm } from "@/components/database/DataForm";
+import { TableCreator } from "@/components/database/TableCreator";
 import {
   useTableData,
   useTableColumns,
   useSnapshots,
+  useDatabases,
   useCreateSnapshotMutation,
   useRestoreSnapshotMutation,
   useDeleteSnapshotMutation,
@@ -58,6 +60,8 @@ export default function Database() {
     selectedTable,
     page
   );
+
+  const { data: databases } = useDatabases();
   const { data: tableSchema } = useTableColumns(selectedDB, selectedTable);
   const { data: snapshots } = useSnapshots();
 
@@ -84,6 +88,76 @@ export default function Database() {
       // Reset input?
       e.target.value = "";
     }
+  };
+
+  const handleTruncateTable = () => {
+    if (!selectedDB || !selectedTable) return;
+    if (
+      !confirm(
+        `Are you sure you want to TRUNCATE table "${selectedTable}"? This will delete ALL data!`
+      )
+    )
+      return;
+
+    executeQueryMutation.mutate({
+      database: selectedDB,
+      query: `TRUNCATE TABLE \`${selectedTable}\``,
+    });
+  };
+
+  const handleDropTable = () => {
+    if (!selectedDB || !selectedTable) return;
+    if (
+      !confirm(
+        `Are you sure you want to DROP table "${selectedTable}"? This action is IRREVERSIBLE!`
+      )
+    )
+      return;
+
+    executeQueryMutation.mutate(
+      {
+        database: selectedDB,
+        query: `DROP TABLE \`${selectedTable}\``,
+      },
+      {
+        onSuccess: () => {
+          setSelectedTable(null);
+        },
+      }
+    );
+  };
+
+  const handleDropDatabase = () => {
+    if (!selectedDB) return;
+    if (
+      !confirm(
+        `Are you sure you want to DROP database "${selectedDB}"? This action is IRREVERSIBLE!`
+      )
+    )
+      return;
+
+    executeQueryMutation.mutate(
+      {
+        database: selectedDB,
+        query: `DROP DATABASE \`${selectedDB}\``,
+      },
+      {
+        onSuccess: () => {
+          setSelectedDB(null);
+          setSelectedTable(null);
+        },
+      }
+    );
+  };
+
+  const handleCreateDatabase = () => {
+    const name = prompt("Enter database name:");
+    if (!name) return;
+
+    executeQueryMutation.mutate({
+      database: "information_schema", // Connecting to any DB to run CREATE
+      query: `CREATE DATABASE \`${name}\``,
+    });
   };
 
   const handleDeleteRow = (row: Record<string, any>) => {
@@ -161,6 +235,23 @@ export default function Database() {
   const handleSelectTable = (db: string, table: string) => {
     setSelectedDB(db);
     setSelectedTable(table);
+  };
+
+  const handleCreateTable = (query: string) => {
+    if (!selectedDB) return;
+
+    executeQueryMutation.mutate(
+      { database: selectedDB, query },
+      {
+        onSuccess: () => {
+          // Refresh tables (invalidate queries)
+          // Since we rely on react-query invalidation in hook (likely),
+          // we just need to switch view.
+          // Ideally we select the new table, but let's just go to structure view of DB for now.
+          setActiveTab("structure");
+        },
+      }
+    );
   };
 
   const currentSnapshotList =
@@ -314,6 +405,14 @@ export default function Database() {
                   className="gap-2 rounded-b-none border-b-2 border-transparent data-[variant=primary]:border-[var(--primary)]"
                 >
                   <FileDown size={14} /> Import
+                </Button>
+                <Button
+                  variant={activeTab === "create-table" ? "primary" : "ghost"}
+                  size="sm"
+                  onClick={() => setActiveTab("create-table")}
+                  className="gap-2 rounded-b-none border-b-2 border-transparent data-[variant=primary]:border-[var(--primary)]"
+                >
+                  <Plus size={14} /> Create Table
                 </Button>
               </>
             ) : (
@@ -670,8 +769,156 @@ export default function Database() {
             </div>
           )}
 
+          {/* Context: Create Table */}
+          {activeTab === "create-table" && selectedDB && (
+            <div className="p-6">
+              <TableCreator
+                database={selectedDB}
+                onCancel={() => setActiveTab("structure")}
+                onSave={handleCreateTable}
+                isLoading={executeQueryMutation.isPending}
+              />
+            </div>
+          )}
+
+          {/* Context: Operations */}
+          {activeTab === "operations" && selectedDB && (
+            <div className="max-w-2xl mx-auto mt-8 flex flex-col gap-6">
+              {/* Database Operations */}
+              {!selectedTable && (
+                <Card className="border-red-200 dark:border-red-900/50">
+                  <CardHeader>
+                    <CardTitle className="text-red-600 dark:text-red-400">
+                      Database Operations
+                    </CardTitle>
+                    <CardDescription>
+                      Danger zone for database <strong>{selectedDB}</strong>.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <Button
+                      variant="danger"
+                      className="w-full"
+                      onClick={handleDropDatabase}
+                      loading={executeQueryMutation.isPending}
+                    >
+                      <Trash2 size={16} className="mr-2" /> Drop Database
+                    </Button>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Table Operations */}
+              {selectedTable && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Table Operations</CardTitle>
+                    <CardDescription>
+                      Manage table <strong>{selectedTable}</strong>.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="flex flex-col gap-4">
+                    <div className="border rounded-md p-4 flex items-center justify-between">
+                      <div>
+                        <h4 className="font-medium text-sm">Truncate Table</h4>
+                        <p className="text-xs text-[var(--muted-foreground)]">
+                          Delete all rows but keep structure.
+                        </p>
+                      </div>
+                      <Button
+                        variant="secondary"
+                        onClick={handleTruncateTable}
+                        loading={executeQueryMutation.isPending}
+                      >
+                        Truncate
+                      </Button>
+                    </div>
+                    <div className="border border-red-200 dark:border-red-900/50 rounded-md p-4 flex items-center justify-between bg-red-50/50 dark:bg-red-900/10">
+                      <div>
+                        <h4 className="font-medium text-sm text-red-600 dark:text-red-400">
+                          Drop Table
+                        </h4>
+                        <p className="text-xs text-red-600/70 dark:text-red-400/70">
+                          Delete the table and all its data.
+                        </p>
+                      </div>
+                      <Button
+                        variant="danger"
+                        onClick={handleDropTable}
+                        loading={executeQueryMutation.isPending}
+                      >
+                        Drop Table
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+            </div>
+          )}
+
+          {/* Context: Databases Management */}
+          {activeTab === "databases" && (
+            <div className="max-w-4xl mx-auto mt-8">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-xl font-semibold">Databases</h2>
+                <Button onClick={handleCreateDatabase}>
+                  <Plus size={16} className="mr-2" /> Create Database
+                </Button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {databases?.map((db) => (
+                  <Card
+                    key={db.name}
+                    className="hover:border-[var(--primary)] transition-colors"
+                  >
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                      <CardTitle className="text-base font-medium">
+                        {db.name}
+                      </CardTitle>
+                      <DatabaseIcon
+                        size={16}
+                        className="text-[var(--muted-foreground)]"
+                      />
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-xs text-[var(--muted-foreground)] mb-4">
+                        {db.tables ?? 0} tables
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          className="w-full"
+                          onClick={() => setSelectedDB(db.name)}
+                        >
+                          Manage
+                        </Button>
+                        <Button
+                          variant="danger"
+                          size="sm"
+                          onClick={() => {
+                            // Dirty hack to set selectedDB for the handler, or just call mutate directly
+                            if (confirm(`Drop database ${db.name}?`)) {
+                              executeQueryMutation.mutate({
+                                database: db.name,
+                                query: `DROP DATABASE \`${db.name}\``,
+                              });
+                            }
+                          }}
+                        >
+                          <Trash2 size={14} />
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Placeholders */}
-          {["export", "operations", "databases"].includes(activeTab) && (
+          {["export"].includes(activeTab) && (
             <div className="flex flex-col items-center justify-center h-full text-[var(--muted-foreground)] opacity-50">
               <HardDrive size={48} className="mb-4" />
               <p>Feature coming soon...</p>
