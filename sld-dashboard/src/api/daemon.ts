@@ -131,7 +131,7 @@ class DaemonApi {
   }
 
   async getTables(database: string): Promise<TableInfo[]> {
-    return this.request<TableInfo[]>(`/db/tables?database=${database}`);
+    return this.request<TableInfo[]>(`/db/tables?db=${database}`);
   }
 
   async getTableData(
@@ -140,29 +140,15 @@ class DaemonApi {
     page: number = 1
   ): Promise<TableData> {
     return this.request<TableData>(
-      `/db/data?database=${database}&table=${table}&page=${page}`
+      `/db/table?db=${database}&table=${table}&page=${page}`
     );
   }
 
   async getTableSchema(database: string, table: string): Promise<ColumnInfo[]> {
-    // Note: getTableData currently returns columns, but we might want a dedicated schema endpoint later.
-    // For now, we fetch data page 1 and extract columns to be safe, or reusing existing endpoint if optimized.
-    // However, the previous implementation implied we get schema from data response.
-    // Let's assume we can use the same endpoint or a specific schema one if the backend supports it.
-    // Looking at backend `GetTableData`, it returns schema.
-    // Let's actually use a dedicated call if possible, or just re-use.
-    // Given backend implementation isn't strictly checked here, I'll stick to what was likely intended or add a new one?
-    // Wait, `useTableColumns` in hook calls `getTableSchema`.
-    // I need to implement `getTableSchema`. Since I don't recall a specific backend endpoint for just schema, but `GetTableData` does it.
-    // Ideally I'd use `DESCRIBE table` but that's a raw query.
-    // Let's map it to `db/data` for now and extract just columns, or maybe I should check if backend has `structure` endpoint?
-    // Checking backend `pkg/services/database.go` via memory: I saw `GetTableData`.
-    // I can stick to `GetTableData` but `page=1&limit=0` maybe?
-    // Actually, let's just fetch data for now.
-    const data = await this.getTableData(database, table, 1);
-    return data.columns;
+    return this.request<ColumnInfo[]>(
+      `/db/schema?db=${database}&table=${table}`
+    );
   }
-
   // Actually, wait, let's optimize. The backend `ExecuteQuery` can run `DESCRIBE`.
   // But let's keep it simple. Using `getTableData` is fine for now.
 

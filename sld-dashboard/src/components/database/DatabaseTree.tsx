@@ -108,7 +108,7 @@ function DatabaseNode({
 
       {expanded && (
         <div className="border-l border-[var(--border)] ml-5 my-1">
-          {tables.map((t) => (
+          {(tables || []).map((t) => (
             <TableNode
               key={t.name}
               tableName={t.name}
@@ -116,7 +116,7 @@ function DatabaseNode({
               onSelect={() => onSelectTable(t.name)}
             />
           ))}
-          {tables.length === 0 && !isLoading && (
+          {(tables || []).length === 0 && !isLoading && (
             <div className="px-6 py-2 text-xs text-[var(--muted-foreground)] italic">
               No tables
             </div>
@@ -166,7 +166,7 @@ export function DatabaseTree({
           </div>
         )}
 
-        {databases.map((db) => (
+        {(databases || []).map((db) => (
           <DatabaseNode
             key={db.name}
             name={db.name}

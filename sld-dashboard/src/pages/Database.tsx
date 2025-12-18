@@ -455,7 +455,7 @@ export default function Database() {
                       <thead className="text-xs text-[var(--muted-foreground)] uppercase bg-[var(--muted)]/50 border-b border-[var(--border)]">
                         <tr>
                           <th className="px-4 py-3 font-medium">Actions</th>
-                          {tableData.columns.map((col) => (
+                          {tableData.columns?.map((col) => (
                             <th
                               key={col.name}
                               className="px-4 py-3 font-medium whitespace-nowrap"
@@ -469,7 +469,7 @@ export default function Database() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-[var(--border)]">
-                        {tableData.rows.map((row, i) => (
+                        {tableData.rows?.map((row, i) => (
                           <tr
                             key={i}
                             className="hover:bg-[var(--muted)]/30 group"
@@ -496,7 +496,7 @@ export default function Database() {
                                 </button>
                               </div>
                             </td>
-                            {tableData.columns.map((col) => (
+                            {tableData.columns?.map((col) => (
                               <td
                                 key={col.name}
                                 className="px-4 py-2 whitespace-nowrap max-w-[300px] truncate"
@@ -574,7 +574,7 @@ export default function Database() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[var(--border)]">
-                  {tableSchema.map((col) => (
+                  {(tableSchema || []).map((col) => (
                     <tr key={col.name} className="hover:bg-[var(--muted)]/30">
                       <td className="px-4 py-2 font-medium">{col.name}</td>
                       <td className="px-4 py-2 font-mono text-xs">
@@ -619,7 +619,7 @@ export default function Database() {
           {activeTab === "snapshots" && selectedDB && (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               <Card
-                className="border-dashed border-2 flex items-center justify-center p-6 cursor-pointer hover:border-[var(--primary)] transition-colors"
+                className="col-span-full w-full border-dashed border-2 flex items-center justify-center p-6 cursor-pointer hover:border-[var(--primary)] transition-colors"
                 onClick={() => createSnapshotMutation.mutate(selectedDB)}
               >
                 <div className="text-center">
@@ -629,7 +629,7 @@ export default function Database() {
                   <p className="font-medium">Create Snapshot</p>
                 </div>
               </Card>
-              {currentSnapshotList.map((snap) => (
+              {(currentSnapshotList || []).map((snap) => (
                 <Card key={snap.id}>
                   <CardHeader className="pb-2">
                     <CardTitle className="text-base truncate">
@@ -867,7 +867,7 @@ export default function Database() {
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {databases?.map((db) => (
+                {(databases || []).map((db) => (
                   <Card
                     key={db.name}
                     className="hover:border-[var(--primary)] transition-colors"
