@@ -3,6 +3,7 @@ import { AppShell } from "@/components/layout/AppShell";
 import Dashboard from "@/pages/Dashboard";
 import Projects from "@/pages/Projects";
 import Domains from "@/pages/Domains";
+import Database from "@/pages/Database";
 import Plugins from "@/pages/Plugins";
 import Settings from "@/pages/Settings";
 import Doctor from "@/pages/Doctor";
@@ -23,6 +24,7 @@ function App() {
               <Route path="/" element={<Dashboard />} />
               <Route path="/projects" element={<Projects />} />
               <Route path="/domains" element={<Domains />} />
+              <Route path="/database" element={<Database />} />
               <Route path="/plugins" element={<Plugins />} />
               <Route path="/xray" element={<XRay />} />
               <Route path="/share" element={<Share />} />

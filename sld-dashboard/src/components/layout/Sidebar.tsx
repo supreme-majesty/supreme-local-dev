@@ -10,6 +10,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Share2,
+  Database,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/useAppStore";
@@ -18,6 +19,7 @@ const navItems = [
   { to: "/", icon: LayoutDashboard, label: "Dashboard" },
   { to: "/projects", icon: FolderOpen, label: "Projects" },
   { to: "/domains", icon: Globe, label: "Domains" },
+  { to: "/database", icon: Database, label: "Database" },
   { to: "/plugins", icon: Puzzle, label: "Plugins" },
   { to: "/xray", icon: Zap, label: "X-Ray" },
   { to: "/share", icon: Share2, label: "Share" },

@@ -22,12 +22,13 @@ import (
 )
 
 type Daemon struct {
-	State         *state.Manager
-	Events        *events.Bus
-	Adapter       adapters.SystemAdapter
-	PluginManager *plugins.Manager
-	TunnelManager *services.TunnelManager
-	XRayService   *services.XRayService
+	State           *state.Manager
+	Events          *events.Bus
+	Adapter         adapters.SystemAdapter
+	PluginManager   *plugins.Manager
+	TunnelManager   *services.TunnelManager
+	XRayService     *services.XRayService
+	DatabaseService *services.DatabaseService
 }
 
 var instance *Daemon
@@ -56,6 +57,7 @@ func Initialize() (*Daemon, error) {
 	pluginManager := plugins.NewManager("/var/lib/sld/plugins", stateManager)
 	tunnelManager := services.NewTunnelManager("/var/lib/sld")
 	xrayService := services.NewXRayService(eventBus)
+	databaseService := services.NewDatabaseService()
 
 	// Start X-Ray immediately
 	go xrayService.Start()
@@ -79,12 +81,13 @@ func Initialize() (*Daemon, error) {
 	}
 
 	instance = &Daemon{
-		State:         stateManager,
-		Events:        eventBus,
-		Adapter:       adapter,
-		PluginManager: pluginManager,
-		TunnelManager: tunnelManager,
-		XRayService:   xrayService,
+		State:           stateManager,
+		Events:          eventBus,
+		Adapter:         adapter,
+		PluginManager:   pluginManager,
+		TunnelManager:   tunnelManager,
+		XRayService:     xrayService,
+		DatabaseService: databaseService,
 	}
 
 	return instance, nil
