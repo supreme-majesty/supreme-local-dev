@@ -92,6 +92,108 @@ jobs:
           name: sld-deb
           path: "*.deb"
 
+  package-daemon-macos:
+    name: Package Daemon (macOS .pkg)
+    needs: build-daemon
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download macOS Binary
+        uses: actions/download-artifact@v4
+        with:
+          name: daemon-darwin
+          path: bin
+
+      - name: Create PKG Installer
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          chmod +x bin/sld-darwin-amd64
+          mkdir -p pkg-root/usr/local/bin
+          cp bin/sld-darwin-amd64 pkg-root/usr/local/bin/sld
+
+          # Create component plist
+          pkgbuild --analyze --root pkg-root component.plist
+
+          # Build the package
+          pkgbuild \
+            --root pkg-root \
+            --identifier com.supreme-local-dev.sld \
+            --version $VERSION \
+            --install-location / \
+            --component-plist component.plist \
+            supreme-local-dev_${VERSION}_amd64.pkg
+
+      - name: Upload PKG
+        uses: actions/upload-artifact@v4
+        with:
+          name: sld-pkg
+          path: "*.pkg"
+
+  package-daemon-windows:
+    name: Package Daemon (Windows .msi)
+    needs: build-daemon
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Windows Binary
+        uses: actions/download-artifact@v4
+        with:
+          name: daemon-windows
+          path: bin
+
+      - name: Create MSI Installer
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart('v')
+
+          # Create WiX source file
+          @"
+          <?xml version="1.0" encoding="UTF-8"?>
+          <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+            <Product Id="*" 
+                     Name="Supreme Local Dev" 
+                     Language="1033" 
+                     Version="$version.0" 
+                     Manufacturer="Supreme" 
+                     UpgradeCode="8B7E9A5C-3D2F-4E1A-B8C4-9F6E7D2A1B3C">
+              <Package InstallerVersion="200" Compressed="yes" InstallScope="perMachine" />
+              <MajorUpgrade DowngradeErrorMessage="A newer version is already installed." />
+              <MediaTemplate EmbedCab="yes" />
+              <Feature Id="ProductFeature" Title="Supreme Local Dev" Level="1">
+                <ComponentGroupRef Id="ProductComponents" />
+              </Feature>
+            </Product>
+            <Fragment>
+              <Directory Id="TARGETDIR" Name="SourceDir">
+                <Directory Id="ProgramFiles64Folder">
+                  <Directory Id="INSTALLFOLDER" Name="Supreme Local Dev" />
+                </Directory>
+              </Directory>
+            </Fragment>
+            <Fragment>
+              <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
+                <Component Id="SldExe" Guid="*">
+                  <File Id="SldExeFile" Source="bin\sld-windows-amd64.exe" Name="sld.exe" KeyPath="yes" />
+                </Component>
+              </ComponentGroup>
+            </Fragment>
+          </Wix>
+          "@ | Out-File -Encoding utf8 sld.wxs
+
+          # Install WiX toolset
+          dotnet tool install --global wix
+
+          # Build MSI
+          wix build sld.wxs -o supreme-local-dev_${version}_amd64.msi
+
+      - name: Upload MSI
+        uses: actions/upload-artifact@v4
+        with:
+          name: sld-msi
+          path: "*.msi"
+
   build-ui:
     name: Build UI (Tauri)
     needs: validate
@@ -154,7 +256,14 @@ jobs:
 
   publish-release:
     name: Publish Release
-    needs: [build-daemon, package-daemon-linux, build-ui]
+    needs:
+      [
+        build-daemon,
+        package-daemon-linux,
+        package-daemon-macos,
+        package-daemon-windows,
+        build-ui,
+      ]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -172,15 +281,27 @@ jobs:
           name: sld-deb
           path: assets/deb
 
-      # Tauri action uploads its own assets to the release draft automatically.
-      # We just need to upload the extra daemon binaries and .deb packages to the SAME release.
-      # However, getting the release ID from matrix jobs is tricky.
-      # Strategy: Use a generic GH Release action to upload extra assets to the tag.
+      - name: Download PKG Assets
+        uses: actions/download-artifact@v4
+        with:
+          name: sld-pkg
+          path: assets/pkg
 
-      - name: Upload Daemon & Deb to Release
+      - name: Download MSI Assets
+        uses: actions/download-artifact@v4
+        with:
+          name: sld-msi
+          path: assets/msi
+
+      # Tauri action uploads its own assets to the release draft automatically.
+      # We just need to upload the extra daemon binaries and packages to the SAME release.
+
+      - name: Upload All Assets to Release
         uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: |
             assets/daemon/*
             assets/deb/*.deb
+            assets/pkg/*.pkg
+            assets/msi/*.msi
