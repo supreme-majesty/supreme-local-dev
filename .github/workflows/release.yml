@@ -75,7 +75,7 @@ jobs:
         run: |
           VERSION=${GITHUB_REF_NAME#v}
           chmod +x bin/sld-linux-amd64
-          # Assuming scripts/packaging exists via repo checkout
+          chmod +x scripts/packaging/postinst
           fpm -s dir -t deb \
             -n supreme-local-dev \
             -v $VERSION \
@@ -83,7 +83,7 @@ jobs:
             --description "Supreme Local Dev Daemon" \
             --url "https://github.com/supreme-majesty/supreme-local-dev" \
             --maintainer "Supreme <dev@supreme.local>" \
-            --prefix /usr/bin \
+            --after-install scripts/packaging/postinst \
             bin/sld-linux-amd64=/usr/bin/sld
 
       - name: Upload Deb

@@ -80,7 +80,58 @@ var statusCmd = &cobra.Command{
 	},
 }
 
+// isInstalled checks if SLD has been configured on the system
+func isInstalled() bool {
+	_, err := os.Stat("/var/lib/sld/state.json")
+	return err == nil
+}
+
+// autoInstall attempts to run 'sudo sld install' with interactive password prompt
+func autoInstall() bool {
+	fmt.Println("⚠️  SLD is not configured on this system.")
+	fmt.Println("🔧 Running automatic installation...")
+	fmt.Println()
+
+	// Get the current executable path
+	exe, err := os.Executable()
+	if err != nil {
+		exe = "sld" // Fallback to PATH lookup
+	}
+
+	// Run sudo with interactive mode for password prompt
+	cmd := exec.Command("sudo", exe, "install")
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		fmt.Println()
+		fmt.Printf("❌ Installation failed: %v\n", err)
+		fmt.Println("   Please run 'sudo sld install' manually.")
+		return false
+	}
+
+	fmt.Println()
+	fmt.Println("✅ Installation complete! Continuing with your command...")
+	fmt.Println()
+	return true
+}
+
 func main() {
+	// Auto-detect missing installation for commands that need it
+	if len(os.Args) > 1 {
+		cmd := os.Args[1]
+		// Skip check for install, help, version, and completion commands
+		skipCheck := cmd == "install" || cmd == "--help" || cmd == "-h" ||
+			cmd == "--version" || cmd == "-v" || cmd == "help" || cmd == "completion"
+
+		if !skipCheck && !isInstalled() {
+			if !autoInstall() {
+				os.Exit(1)
+			}
+		}
+	}
+
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

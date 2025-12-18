@@ -1,0 +1,13 @@
+#!/bin/bash
+set -e
+
+echo "🚀 Running SLD post-installation setup..."
+
+# Run sld install to configure the system
+if [ -x /usr/bin/sld ]; then
+    /usr/bin/sld install || {
+        echo "⚠️  Automatic setup skipped. Run 'sudo sld install' manually to finish configuration."
+    }
+fi
+
+echo "✅ SLD installation complete!"
