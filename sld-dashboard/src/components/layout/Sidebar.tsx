@@ -115,7 +115,9 @@ export function Sidebar() {
             </span>
           )}
           <span className="text-[10px] text-[var(--muted-foreground)] whitespace-nowrap">
-            {sidebarCollapsed ? "v1.0" : "© 2025 • v1.0.0"}
+            {sidebarCollapsed
+              ? "v1.0"
+              : `© ${new Date().getFullYear()} • v${__APP_VERSION__}`}
           </span>
         </div>
       </div>

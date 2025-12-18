@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,10 +15,13 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "sld",
-	Short: "Supreme Local Dev",
-	Long:  `High-performance local development environment for PHP/Laravel.`,
+	Use:     "sld",
+	Short:   "Supreme Local Dev",
+	Long:    `High-performance local development environment for PHP/Laravel.`,
+	Version: Version,
 }
+
+var Version = "dev"
 
 var installCmd = &cobra.Command{
 	Use:   "install",
@@ -190,6 +195,9 @@ func init() {
 
 	pluginCmd.AddCommand(pluginInstallCmd)
 	pluginCmd.AddCommand(pluginEnableCmd)
+
+	rootCmd.AddCommand(shareCmd)
+
 }
 
 // --- Commands ---
@@ -512,6 +520,52 @@ var linksCmd = &cobra.Command{
 		for name, path := range d.State.Data.Links {
 			fmt.Printf(" - %s -> %s\n", name, path)
 		}
+		return nil
+	},
+}
+
+var shareCmd = &cobra.Command{
+	Use:   "share [site]",
+	Short: "Share a site via public URL (Cloudflare Tunnel)",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		name := ""
+		if len(args) > 0 {
+			name = args[0]
+		} else {
+			cwd, _ := os.Getwd()
+			name = filepath.Base(cwd)
+		}
+
+		fmt.Printf("Starting tunnel for %s... 🚀\n", name)
+
+		// Call API
+		// We need a helper to call API from CLI properly
+		// For now simple http post
+		url := "http://localhost:2025/api/share/start"
+		body := fmt.Sprintf(`{"site":"%s"}`, name)
+
+		resp, err := http.Post(url, "application/json", strings.NewReader(body))
+		if err != nil {
+			return fmt.Errorf("daemon not reachable: %w", err)
+		}
+		defer resp.Body.Close()
+
+		var res struct {
+			Success bool   `json:"success"`
+			Message string `json:"message"`
+			Error   string `json:"error"`
+		}
+
+		if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+			return err
+		}
+
+		if !res.Success {
+			return fmt.Errorf("failed to start tunnel: %s", res.Error)
+		}
+
+		fmt.Printf("✅ Tunnel active at: %s\n", res.Message)
+		fmt.Println("Tunnel will run in background until you stop it.")
 		return nil
 	},
 }

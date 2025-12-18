@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"strings"
 
 	"github.com/supreme-majesty/supreme-local-dev/pkg/assets"
 	"github.com/supreme-majesty/supreme-local-dev/pkg/daemon"
@@ -35,10 +36,40 @@ func (s *Server) Start() error {
 	http.HandleFunc("/api/plugins/install", s.handlePluginInstall)
 	http.HandleFunc("/api/plugins/toggle", s.handlePluginToggle)
 	http.HandleFunc("/api/metrics", s.handleMetrics)
+	http.HandleFunc("/api/share/start", s.handleShareStart)
+	http.HandleFunc("/api/share/stop", s.handleShareStop)
+	http.HandleFunc("/api/share/status", s.handleShareStatus)
 
 	// Serve GUI static files
 	guiFS, _ := assets.GetGuiFS()
-	http.Handle("/", http.FileServer(guiFS))
+	fileServer := http.FileServer(guiFS)
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		// Skip API requests (addressed by specific handlers, but safe to check)
+		if strings.HasPrefix(path, "/api") {
+			http.NotFound(w, r)
+			return
+		}
+
+		// Try to open the file relative to the FS
+		// http.FS expects paths without leading slash for Open usually, but let's check.
+		// Actually http.Dir implementation handles it.
+		// Let's use simple logic:
+		f, err := guiFS.Open(strings.TrimPrefix(path, "/"))
+		if err == nil {
+			defer f.Close()
+			stat, _ := f.Stat()
+			if !stat.IsDir() {
+				// File exists, serve it
+				fileServer.ServeHTTP(w, r)
+				return
+			}
+		}
+
+		// Fallback to index.html for SPA
+		r.URL.Path = "/"
+		fileServer.ServeHTTP(w, r)
+	})
 
 	fmt.Printf("SLD Daemon listening on port %d...\n", s.Port)
 	return http.ListenAndServe(fmt.Sprintf(":%d", s.Port), nil)
@@ -339,4 +370,57 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, stats, 200)
+}
+
+// Tunnel / Share Handlers
+
+func (s *Server) handleShareStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		return
+	}
+
+	var req struct {
+		Site string `json:"site"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
+		return
+	}
+
+	d, _ := daemon.GetClient()
+	url, err := d.TunnelManager.StartTunnel(req.Site)
+	if err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+
+	jsonResponse(w, SuccessResponse{Success: true, Message: url}, 200)
+}
+
+func (s *Server) handleShareStop(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		return
+	}
+
+	var req struct {
+		Site string `json:"site"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
+		return
+	}
+
+	d, _ := daemon.GetClient()
+	if err := d.TunnelManager.StopTunnel(req.Site); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+
+	jsonResponse(w, SuccessResponse{Success: true}, 200)
+}
+
+func (s *Server) handleShareStatus(w http.ResponseWriter, r *http.Request) {
+	d, _ := daemon.GetClient()
+	tunnels := d.TunnelManager.GetTunnels()
+	jsonResponse(w, tunnels, 200)
 }

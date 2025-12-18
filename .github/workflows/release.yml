@@ -32,6 +32,10 @@ jobs:
             goos: windows
             goarch: amd64
             output_name: sld-windows-amd64.exe
+          - os: macos-latest
+            goos: darwin
+            goarch: arm64
+            output_name: sld-darwin-arm64
     steps:
       - uses: actions/checkout@v4
 
