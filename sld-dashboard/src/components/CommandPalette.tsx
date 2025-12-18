@@ -197,7 +197,9 @@ export function CommandPalette() {
       description: site.domain,
       icon: ExternalLink,
       category: "sites" as const,
-      action: () => window.open(`http://${site.domain}`, "_blank"),
+      action: () => {
+        window.open(`http://${site.domain}`, "_blank");
+      },
       keywords: ["browser", "visit"],
     },
     {
