@@ -4,19 +4,11 @@
 
 set -e
 
-echo ""
-echo "╔════════════════════════════════════════════════════════════╗"
-echo "║  🚀 Supreme Local Dev installed!                           ║"
-echo "╚════════════════════════════════════════════════════════════╝"
-echo ""
-
-# Install the systemd service
+# Install the systemd service to run after apt completes
 if [ -d /etc/systemd/system ]; then
-    # Copy service file (embedded in package or downloaded)
     cat > /etc/systemd/system/sld-setup.service << 'EOF'
 [Unit]
 Description=Supreme Local Dev Setup
-Documentation=https://github.com/supreme-majesty/supreme-local-dev
 After=network.target
 ConditionPathExists=!/var/lib/sld/.setup-complete
 
@@ -33,26 +25,13 @@ StandardError=journal
 WantedBy=multi-user.target
 EOF
 
-    # Reload systemd and enable the service
     systemctl daemon-reload
     systemctl enable sld-setup.service
-
-    echo "🔧 Setup will complete automatically in background..."
-    echo "   (Running: systemctl start sld-setup.service)"
-    echo ""
-
-    # Start the service asynchronously (won't block apt)
-    # Use 'at' or nohup to truly defer, or just start and let it queue
     nohup systemctl start sld-setup.service > /dev/null 2>&1 &
-
-    echo "✅ Installation queued. Check status with:"
-    echo "   systemctl status sld-setup.service"
-    echo "   journalctl -u sld-setup.service -f"
-    echo ""
-else
-    echo "⚠️  systemd not found. Please run manually:"
-    echo "   sudo sld install"
-    echo ""
 fi
+
+echo ""
+echo "✅ Supreme Local Dev installed successfully!"
+echo ""
 
 exit 0
