@@ -1,13 +1,17 @@
 #!/bin/bash
-set -e
+# Post-installation script for supreme-local-dev
+# Note: We cannot run 'sld install' here because apt holds the dpkg lock
 
-echo "🚀 Running SLD post-installation setup..."
+echo ""
+echo "╔════════════════════════════════════════════════════════════╗"
+echo "║  🚀 Supreme Local Dev installed successfully!              ║"
+echo "╠════════════════════════════════════════════════════════════╣"
+echo "║  To complete setup, run:                                   ║"
+echo "║                                                            ║"
+echo "║    sudo sld install                                        ║"
+echo "║                                                            ║"
+echo "║  This will configure Nginx, PHP, and DNS for .test domains ║"
+echo "╚════════════════════════════════════════════════════════════╝"
+echo ""
 
-# Run sld install to configure the system
-if [ -x /usr/bin/sld ]; then
-    /usr/bin/sld install || {
-        echo "⚠️  Automatic setup skipped. Run 'sudo sld install' manually to finish configuration."
-    }
-fi
-
-echo "✅ SLD installation complete!"
+exit 0
