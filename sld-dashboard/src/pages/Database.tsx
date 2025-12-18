@@ -266,6 +266,11 @@ export default function Database() {
           selectedTable={selectedTable}
           onSelectDb={handleSelectDb}
           onSelectTable={handleSelectTable}
+          onCreateTable={(db) => {
+            setSelectedDB(db);
+            setSelectedTable(null);
+            setActiveTab("create-table");
+          }}
         />
       </div>
 

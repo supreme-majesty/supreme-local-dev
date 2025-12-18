@@ -7,6 +7,7 @@ import {
   Server,
   RefreshCw,
   MoreVertical,
+  Plus,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDatabases, useTables } from "@/hooks/use-database";
@@ -17,16 +18,19 @@ interface DatabaseTreeProps {
   selectedTable: string | null;
   onSelectDb: (db: string) => void;
   onSelectTable: (db: string, table: string) => void;
+  onCreateTable: (db: string) => void;
 }
 
 function TableNode({
   tableName,
   isSelected,
   onSelect,
+  isMainAction, // For "New"
 }: {
   tableName: string;
   isSelected: boolean;
   onSelect: () => void;
+  isMainAction?: boolean;
 }) {
   return (
     <div
@@ -34,17 +38,23 @@ function TableNode({
         "flex items-center gap-2 px-6 py-1.5 text-sm cursor-pointer transition-colors",
         isSelected
           ? "bg-[var(--primary)]/10 text-[var(--primary)] border-r-2 border-[var(--primary)]"
-          : "text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--muted)]/50"
+          : "text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--muted)]/50",
+        isMainAction && "text-green-500 hover:text-green-600 italic"
       )}
       onClick={(e) => {
         e.stopPropagation();
         onSelect();
       }}
     >
-      <TableIcon
-        size={14}
-        className={cn(isSelected && "text-[var(--primary)]")}
-      />
+      {isMainAction ? (
+        <RefreshCw size={14} className="opacity-0 w-0" /> // spacer hack if needed, or just icon
+      ) : (
+        <TableIcon
+          size={14}
+          className={cn(isSelected && "text-[var(--primary)]")}
+        />
+      )}
+      {isMainAction && <Plus size={14} />}
       <span className="truncate">{tableName}</span>
     </div>
   );
@@ -56,12 +66,14 @@ function DatabaseNode({
   selectedTable,
   onSelectDb,
   onSelectTable,
+  onCreateTable,
 }: {
   name: string;
   isSelected: boolean;
   selectedTable: string | null;
   onSelectDb: () => void;
   onSelectTable: (table: string) => void;
+  onCreateTable: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const { data: tables = [], isLoading } = useTables(expanded ? name : null);
@@ -108,6 +120,14 @@ function DatabaseNode({
 
       {expanded && (
         <div className="border-l border-[var(--border)] ml-5 my-1">
+          {/* New Table Action */}
+          <TableNode
+            tableName="New"
+            isSelected={false} // "New" is an action, typically not a persistent selection state unless we track "creating"
+            onSelect={onCreateTable}
+            isMainAction
+          />
+
           {(tables || []).map((t) => (
             <TableNode
               key={t.name}
@@ -132,6 +152,7 @@ export function DatabaseTree({
   selectedTable,
   onSelectDb,
   onSelectTable,
+  onCreateTable,
 }: DatabaseTreeProps) {
   const { data: databases = [], isLoading, refetch } = useDatabases();
 
@@ -174,6 +195,7 @@ export function DatabaseTree({
             selectedTable={selectedDb === db.name ? selectedTable : null}
             onSelectDb={() => onSelectDb(db.name)}
             onSelectTable={(table) => onSelectTable(db.name, table)}
+            onCreateTable={() => onCreateTable(db.name)}
           />
         ))}
       </div>
