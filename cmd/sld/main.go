@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/supreme-majesty/supreme-local-dev/pkg/daemon"
@@ -75,6 +76,22 @@ var statusCmd = &cobra.Command{
 
 		fmt.Printf("Nginx: %s\n", status)
 		fmt.Printf("PHP:   %s\n", d.Adapter.GetPHPVersion())
+
+		if len(d.State.Data.SiteConfigs) > 0 {
+			fmt.Println("\nIsolated Sites:")
+			for domain, conf := range d.State.Data.SiteConfigs {
+				details := []string{}
+				if conf.PHPVersion != "" {
+					details = append(details, fmt.Sprintf("PHP %s", conf.PHPVersion))
+				}
+				if conf.WebRoot != "" {
+					details = append(details, fmt.Sprintf("Root: %s", conf.WebRoot))
+				}
+				if len(details) > 0 {
+					fmt.Printf(" - %s [%s]\n", domain, strings.Join(details, ", "))
+				}
+			}
+		}
 
 		return nil
 	},
@@ -162,6 +179,7 @@ func init() {
 	rootCmd.AddCommand(unparkCmd)
 	rootCmd.AddCommand(unsecureCmd)
 	rootCmd.AddCommand(restartCmd)
+	rootCmd.AddCommand(refreshCmd)
 	rootCmd.AddCommand(logsCmd)
 	rootCmd.AddCommand(doctorCmd)
 	rootCmd.AddCommand(pluginCmd)
@@ -202,6 +220,18 @@ var restartCmd = &cobra.Command{
 			return err
 		}
 		return d.Restart()
+	},
+}
+
+var refreshCmd = &cobra.Command{
+	Use:   "refresh",
+	Short: "Re-scan all projects for configuration changes (.sld.yaml, composer.json)",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		d, err := daemon.GetClient()
+		if err != nil {
+			return err
+		}
+		return d.Refresh()
 	},
 }
 

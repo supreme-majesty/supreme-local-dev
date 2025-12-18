@@ -10,16 +10,24 @@ import (
 // State represents the persistent configuration of the SLD environment.
 // State represents the persistent configuration of the SLD environment.
 type State struct {
-	TLD            string            `json:"tld"`
-	Paths          []string          `json:"paths"`           // Parked paths
-	Links          map[string]string `json:"links"`           // Linked projects (siteName -> path)
-	Services       map[string]string `json:"services"`        // Service status/config
-	Certificates   []string          `json:"certificates"`    // Secured domains
-	PHPVersion     string            `json:"php_version"`     // Default PHP version
-	Secure         bool              `json:"secure"`          // Is global HTTPS enabled?
-	Port           string            `json:"port"`            // Main HTTP Port (default 80)
-	Ignored        []string          `json:"ignored"`         // Ignored project paths
-	EnabledPlugins []string          `json:"enabled_plugins"` // Plugins to auto-start
+	TLD            string                `json:"tld"`
+	Paths          []string              `json:"paths"`           // Parked paths
+	Links          map[string]string     `json:"links"`           // Linked projects (siteName -> path)
+	Services       map[string]string     `json:"services"`        // Service status/config
+	Certificates   []string              `json:"certificates"`    // Secured domains
+	PHPVersion     string                `json:"php_version"`     // Default PHP version
+	Secure         bool                  `json:"secure"`          // Is global HTTPS enabled?
+	Port           string                `json:"port"`            // Main HTTP Port (default 80)
+	Ignored        []string              `json:"ignored"`         // Ignored project paths
+	EnabledPlugins []string              `json:"enabled_plugins"` // Plugins to auto-start
+	SiteConfigs    map[string]SiteConfig `json:"site_configs"`    // Site-specific configurations
+}
+
+// SiteConfig represents isolated configuration for a specific site
+type SiteConfig struct {
+	PHPVersion  string `json:"php_version,omitempty"`  // Override PHP version
+	WebRoot     string `json:"web_root,omitempty"`     // Override web root (e.g. public)
+	NodeVersion string `json:"node_version,omitempty"` // Node Version
 }
 
 type Manager struct {
@@ -48,6 +56,7 @@ func NewManager() (*Manager, error) {
 			Port:           "80", // Default port
 			Ignored:        []string{},
 			EnabledPlugins: []string{},
+			SiteConfigs:    make(map[string]SiteConfig),
 		},
 	}, nil
 }
@@ -83,6 +92,9 @@ func (m *Manager) Load() error {
 	}
 	if m.Data.EnabledPlugins == nil {
 		m.Data.EnabledPlugins = []string{}
+	}
+	if m.Data.SiteConfigs == nil {
+		m.Data.SiteConfigs = make(map[string]SiteConfig)
 	}
 
 	return nil
@@ -200,6 +212,18 @@ func (m *Manager) SetPluginEnabled(id string, enabled bool) {
 		}
 		m.Data.EnabledPlugins = newPlugins
 	}
+	m.Save()
+}
+
+// SetSiteConfig updates configuration for a specific site
+func (m *Manager) SetSiteConfig(domain string, config SiteConfig) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.Data.SiteConfigs == nil {
+		m.Data.SiteConfigs = make(map[string]SiteConfig)
+	}
+	m.Data.SiteConfigs[domain] = config
 	m.Save()
 }
 

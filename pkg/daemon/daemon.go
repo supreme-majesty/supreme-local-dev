@@ -17,6 +17,7 @@ import (
 	"github.com/supreme-majesty/supreme-local-dev/pkg/daemon/state"
 	"github.com/supreme-majesty/supreme-local-dev/pkg/events"
 	"github.com/supreme-majesty/supreme-local-dev/pkg/plugins"
+	"github.com/supreme-majesty/supreme-local-dev/pkg/project"
 	"github.com/supreme-majesty/supreme-local-dev/pkg/services"
 )
 
@@ -236,35 +237,138 @@ func (d *Daemon) replacePaths(config string) string {
 
 // Helper to write Nginx config with current state (PHP version, etc)
 func (d *Daemon) refreshNginxConfig() error {
+	// 1. Get Base Config
 	templateName := "sld.conf"
 	if d.State.Data.Secure {
 		templateName = "sld-ssl.conf"
 	}
 
-	configStr, err := assets.ReadTemplate(templateName)
+	baseConfig, err := assets.ReadTemplate(templateName)
 	if err != nil {
 		return fmt.Errorf("failed to read embedded template %s: %w", templateName, err)
 	}
 
-	// 1. Replace Paths
-	configStr = d.replacePaths(configStr)
+	// 2. Perform Standard Replacements on Base Config
+	baseConfig = d.replacePaths(baseConfig)
 
-	// 2. Replace Port
 	port := d.State.Data.Port
 	if port == "" {
 		port = "80"
 	}
-	configStr = strings.ReplaceAll(configStr, "listen 80;", fmt.Sprintf("listen %s;", port))
+	baseConfig = strings.ReplaceAll(baseConfig, "listen 80;", fmt.Sprintf("listen %s;", port))
 
-	// 3. Replace PHP Socket if version is set
 	if d.State.Data.PHPVersion != "" {
 		socketPath, err := d.Adapter.CheckPHPSocket(d.State.Data.PHPVersion)
 		if err == nil {
-			configStr = replaceSocket(configStr, socketPath)
+			baseConfig = replaceSocket(baseConfig, socketPath)
 		}
 	}
 
-	return d.Adapter.WriteNginxConfig(configStr)
+	// 3. Generate Isolated Server Blocks
+	isolationBlocks := ""
+	for domain, config := range d.State.Data.SiteConfigs {
+		if config.PHPVersion != "" {
+			// Find path for this domain
+			projectPath := ""
+			// Check Links
+			linkPath, ok := d.State.Data.Links[strings.TrimSuffix(domain, "."+d.State.Data.TLD)]
+			if ok {
+				projectPath = linkPath
+			} else {
+				// Check Parked Paths (Scan again? Optimization needed for real app)
+				// For now, let's assume if it's in SiteConfigs, it exists.
+				// But we need the PATH to set root/router.
+				// Wait, router.php logic handles path routing dynamically.
+				// But for isolation, we are bypassing the wildcard server block.
+				// So we need to set `root` correctly in the isolated block.
+
+				// Re-scanning parked paths to find where this domain lives
+				name := strings.TrimSuffix(domain, "."+d.State.Data.TLD)
+				for _, p := range d.State.Data.Paths {
+					if _, err := os.Stat(filepath.Join(p, name)); err == nil {
+						projectPath = filepath.Join(p, name)
+						break
+					}
+				}
+			}
+
+			if projectPath != "" {
+				socket, err := d.Adapter.CheckPHPSocket(config.PHPVersion)
+				if err == nil {
+					// Use WebRoot override if present
+					webRoot := projectPath
+					if config.WebRoot != "" {
+						webRoot = filepath.Join(projectPath, config.WebRoot)
+					}
+
+					// Basic Server Block Template for Isolation
+					block := fmt.Sprintf(`
+server {
+    listen %s;
+    server_name %s;
+    root "%s";
+    
+    index index.html index.htm index.php;
+
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    location ~ \.php$ {
+        fastcgi_pass unix:%s;
+        fastcgi_index index.php;
+        fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
+        include fastcgi_params;
+        fastcgi_param PHP_VALUE "error_reporting=E_ALL & ~E_DEPRECATED";
+    }
+}
+`, port, domain, webRoot, socket)
+
+					// If secure, add SSL block too (using snakeoil for simplicity or same certs)
+					// But wait, the wildcard cert works for these!
+					// If d.State.Data.Secure is true, we should generate an SSL block.
+					if d.State.Data.Secure {
+						// We assume certs are at /var/lib/sld/certs/dev.pem
+						certPath := "/var/lib/sld/certs/dev.pem"
+						keyPath := "/var/lib/sld/certs/dev-key.pem"
+
+						block += fmt.Sprintf(`
+server {
+    listen 443 ssl;
+    server_name %s;
+    root "%s";
+    
+    ssl_certificate %s;
+    ssl_certificate_key %s;
+
+    index index.html index.htm index.php;
+
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    location ~ \.php$ {
+        fastcgi_pass unix:%s;
+        fastcgi_index index.php;
+        fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
+        include fastcgi_params;
+    }
+}
+`, domain, webRoot, certPath, keyPath, socket)
+					}
+
+					isolationBlocks += block
+				} else {
+					fmt.Printf("Warning: PHP socket for %s not found. Skipping isolation for %s.\n", config.PHPVersion, domain)
+				}
+			}
+		}
+	}
+
+	// Append isolation blocks to config
+	finalConfig := baseConfig + "\n# --- Isolated Sites ---\n" + isolationBlocks
+
+	return d.Adapter.WriteNginxConfig(finalConfig)
 }
 
 func getRealUserHome() string {
@@ -285,7 +389,36 @@ func (d *Daemon) Park(path string) error {
 		return err
 	}
 	d.State.AddPath(absPath)
-	return nil
+
+	// Scan for subdirectories and detect configs (Isolation)
+	// NOTE: Park registers a ROOT. Use Scan logic to find sub-projects?
+	// actually Park is for scanning subfolders.
+	// But we need to configure Nginx for specific subfolders if they have constraints.
+	// The current Park logic relies on wildcard domain matching.
+	// If a specific subfolder needs a specific PHP version, we need to register it as an "Explicit" site config?
+	// Yes. We can scan immediately or on request.
+	// Let's scan immediately for this implementation.
+
+	entries, err := os.ReadDir(absPath)
+	if err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") {
+				subPath := filepath.Join(absPath, entry.Name())
+				// Detect config
+				if conf, err := project.Detect(subPath); err == nil && (conf.PHP != "" || conf.Public != "") {
+					domain := fmt.Sprintf("%s.%s", entry.Name(), d.State.Data.TLD)
+					d.State.SetSiteConfig(domain, state.SiteConfig{
+						PHPVersion:  conf.PHP,
+						WebRoot:     conf.Public,
+						NodeVersion: conf.Node,
+					})
+					fmt.Printf("Detected config for %s: PHP %s\n", domain, conf.PHP)
+				}
+			}
+		}
+	}
+	// Also trigger Nginx reload to apply any new isolation configs
+	return d.refreshNginxConfig()
 }
 
 func (d *Daemon) Forget(path string) error {
@@ -303,12 +436,50 @@ func (d *Daemon) Link(name, path string) error {
 		return err
 	}
 	d.State.AddLink(name, absPath)
-	return nil
+
+	// Detect config
+	if conf, err := project.Detect(absPath); err == nil && (conf.PHP != "" || conf.Public != "") {
+		domain := fmt.Sprintf("%s.%s", name, d.State.Data.TLD)
+		d.State.SetSiteConfig(domain, state.SiteConfig{
+			PHPVersion:  conf.PHP,
+			WebRoot:     conf.Public,
+			NodeVersion: conf.Node,
+		})
+		fmt.Printf("Detected config for %s: PHP %s\n", domain, conf.PHP)
+	}
+
+	return d.refreshNginxConfig()
 }
 
 func (d *Daemon) Unlink(name string) error {
 	d.State.RemoveLink(name)
-	return nil
+	// Remove config if any
+	domain := fmt.Sprintf("%s.%s", name, d.State.Data.TLD)
+	if _, ok := d.State.Data.SiteConfigs[domain]; ok {
+		// We have a SetSiteConfig, but no RemoveSiteConfig.
+		// We should add RemoveSiteConfig or just access map directly (State is public-ish)
+		// Let's rely on refreshNginxConfig ignoring it if link is gone?
+		// No, refreshNginxConfig iterates SiteConfigs.
+		// We should cleanup state.
+		delete(d.State.Data.SiteConfigs, domain)
+		d.State.Save()
+	}
+	return d.refreshNginxConfig()
+}
+
+// Refresh re-scans all projects for configuration changes
+func (d *Daemon) Refresh() error {
+	fmt.Println("Scanning parked paths...")
+	for _, p := range d.State.Data.Paths {
+		d.Park(p) // Re-scan
+	}
+
+	fmt.Println("Scanning linked sites...")
+	for name, path := range d.State.Data.Links {
+		d.Link(name, path) // Re-scan
+	}
+
+	return d.refreshNginxConfig()
 }
 
 // GetSites returns a list of all available sites (parked + linked)
