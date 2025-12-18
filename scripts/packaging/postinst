@@ -1,17 +1,58 @@
 #!/bin/bash
 # Post-installation script for supreme-local-dev
-# Note: We cannot run 'sld install' here because apt holds the dpkg lock
+# Uses systemd to defer 'sld install' until after apt releases the lock
+
+set -e
 
 echo ""
 echo "╔════════════════════════════════════════════════════════════╗"
-echo "║  🚀 Supreme Local Dev installed successfully!              ║"
-echo "╠════════════════════════════════════════════════════════════╣"
-echo "║  To complete setup, run:                                   ║"
-echo "║                                                            ║"
-echo "║    sudo sld install                                        ║"
-echo "║                                                            ║"
-echo "║  This will configure Nginx, PHP, and DNS for .test domains ║"
+echo "║  🚀 Supreme Local Dev installed!                           ║"
 echo "╚════════════════════════════════════════════════════════════╝"
 echo ""
+
+# Install the systemd service
+if [ -d /etc/systemd/system ]; then
+    # Copy service file (embedded in package or downloaded)
+    cat > /etc/systemd/system/sld-setup.service << 'EOF'
+[Unit]
+Description=Supreme Local Dev Setup
+Documentation=https://github.com/supreme-majesty/supreme-local-dev
+After=network.target
+ConditionPathExists=!/var/lib/sld/.setup-complete
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/sld install
+ExecStartPost=/bin/touch /var/lib/sld/.setup-complete
+ExecStartPost=/bin/systemctl disable sld-setup.service
+RemainAfterExit=no
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    # Reload systemd and enable the service
+    systemctl daemon-reload
+    systemctl enable sld-setup.service
+
+    echo "🔧 Setup will complete automatically in background..."
+    echo "   (Running: systemctl start sld-setup.service)"
+    echo ""
+
+    # Start the service asynchronously (won't block apt)
+    # Use 'at' or nohup to truly defer, or just start and let it queue
+    nohup systemctl start sld-setup.service > /dev/null 2>&1 &
+
+    echo "✅ Installation queued. Check status with:"
+    echo "   systemctl status sld-setup.service"
+    echo "   journalctl -u sld-setup.service -f"
+    echo ""
+else
+    echo "⚠️  systemd not found. Please run manually:"
+    echo "   sudo sld install"
+    echo ""
+fi
 
 exit 0

@@ -1,0 +1,17 @@
+[Unit]
+Description=Supreme Local Dev Setup
+Documentation=https://github.com/supreme-majesty/supreme-local-dev
+After=network.target
+ConditionPathExists=!/var/lib/sld/.setup-complete
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/sld install
+ExecStartPost=/bin/touch /var/lib/sld/.setup-complete
+ExecStartPost=/bin/systemctl disable sld-setup.service
+RemainAfterExit=no
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
