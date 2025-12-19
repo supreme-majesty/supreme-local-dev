@@ -149,6 +149,7 @@ function DatabaseParamsNode({
             className="flex items-center justify-end gap-2 px-2 py-1 mb-1"
             onClick={(e) => e.stopPropagation()}
           >
+            {/* First Page */}
             <div className="flex gap-1">
               <span
                 className={cn(
@@ -157,11 +158,30 @@ function DatabaseParamsNode({
                     ? "text-[var(--muted-foreground)] hover:text-[var(--primary)]"
                     : "text-[var(--muted)] cursor-not-allowed"
                 )}
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                title="End"
+                onClick={() => setPage(1)}
               >
-                {"<<<"}
+                {"<<"}
               </span>
             </div>
+
+            {/* Previous Page */}
+            <div className="flex gap-1">
+              <span
+                className={cn(
+                  "text-xs font-bold cursor-pointer",
+                  page > 1
+                    ? "text-[var(--muted-foreground)] hover:text-[var(--primary)]"
+                    : "text-[var(--muted)] cursor-not-allowed"
+                )}
+                title="Previous"
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                {"<"}
+              </span>
+            </div>
+
+            {/* Page Selector */}
             <div className="flex items-center gap-1">
               <select
                 value={safePage}
@@ -177,6 +197,24 @@ function DatabaseParamsNode({
                 )}
               </select>
             </div>
+
+            {/* Next Page */}
+            <div className="flex gap-1">
+              <span
+                className={cn(
+                  "text-xs font-bold cursor-pointer",
+                  page < totalPages
+                    ? "text-[var(--muted-foreground)] hover:text-[var(--primary)]"
+                    : "text-[var(--muted)] cursor-not-allowed"
+                )}
+                title="Next"
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              >
+                {">"}
+              </span>
+            </div>
+
+            {/* Last Page */}
             <div className="flex gap-1">
               <span
                 className={cn(
@@ -185,9 +223,10 @@ function DatabaseParamsNode({
                     ? "text-[var(--muted-foreground)] hover:text-[var(--primary)]"
                     : "text-[var(--muted)] cursor-not-allowed"
                 )}
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                title="End"
+                onClick={() => setPage(totalPages)}
               >
-                {">>>"}
+                {">>"}
               </span>
             </div>
           </div>
