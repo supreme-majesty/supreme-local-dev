@@ -29,13 +29,20 @@ type TableInfo struct {
 	Overhead  int64  `json:"overhead"`
 }
 
+// ForeignKeyInfo represents a foreign key relationship
+type ForeignKeyInfo struct {
+	Table  string `json:"table"`
+	Column string `json:"column"`
+}
+
 // ColumnInfo represents a table column
 type ColumnInfo struct {
-	Name     string `json:"name"`
-	Type     string `json:"type"`
-	Nullable bool   `json:"nullable"`
-	Key      string `json:"key"`
-	Default  string `json:"default"`
+	Name       string          `json:"name"`
+	Type       string          `json:"type"`
+	Nullable   bool            `json:"nullable"`
+	Key        string          `json:"key"`
+	Default    string          `json:"default"`
+	ForeignKey *ForeignKeyInfo `json:"foreign_key,omitempty"`
 }
 
 // TableData represents paginated table data
@@ -273,6 +280,28 @@ func (d *DatabaseService) GetTableColumns(database, table string) ([]ColumnInfo,
 		return nil, err
 	}
 
+	// 1. Get Foreign Keys
+	fks := make(map[string]ForeignKeyInfo)
+	fkQuery := `
+		SELECT COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME 
+		FROM information_schema.KEY_COLUMN_USAGE 
+		WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND REFERENCED_TABLE_NAME IS NOT NULL
+	`
+	fkRows, err := d.db.Query(fkQuery, database, table)
+	if err == nil {
+		defer fkRows.Close()
+		for fkRows.Next() {
+			var colName, refTable, refCol string
+			if err := fkRows.Scan(&colName, &refTable, &refCol); err == nil {
+				fks[colName] = ForeignKeyInfo{
+					Table:  refTable,
+					Column: refCol,
+				}
+			}
+		}
+	}
+
+	// 2. Get Column Details
 	// Quote table name to handle special characters/keywords
 	rows, err := d.db.Query(fmt.Sprintf("DESCRIBE `%s`", table))
 	if err != nil {
@@ -287,13 +316,20 @@ func (d *DatabaseService) GetTableColumns(database, table string) ([]ColumnInfo,
 		if err := rows.Scan(&field, &colType, &null, &key, &defaultVal, &extra); err != nil {
 			continue
 		}
-		columns = append(columns, ColumnInfo{
+
+		colInfo := ColumnInfo{
 			Name:     field,
 			Type:     colType,
 			Nullable: null == "YES",
 			Key:      key,
 			Default:  defaultVal.String,
-		})
+		}
+
+		if fk, ok := fks[field]; ok {
+			colInfo.ForeignKey = &fk
+		}
+
+		columns = append(columns, colInfo)
 	}
 
 	return columns, nil
@@ -731,4 +767,31 @@ func (d *DatabaseService) ImportSQL(database, sqlFilePath string) error {
 	}
 
 	return nil
+}
+
+// GetForeignValues returns distinct values from a referenced table
+func (d *DatabaseService) GetForeignValues(database, table, column string) ([]string, error) {
+	if err := d.ensureConnected(); err != nil {
+		return nil, err
+	}
+	if _, err := d.db.Exec("USE " + database); err != nil {
+		return nil, err
+	}
+
+	// Safety check: quote identifiers
+	query := fmt.Sprintf("SELECT DISTINCT `%s` FROM `%s` ORDER BY `%s` LIMIT 100", column, table, column)
+	rows, err := d.db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var values []string
+	for rows.Next() {
+		var val sql.NullString
+		if err := rows.Scan(&val); err == nil && val.Valid {
+			values = append(values, val.String)
+		}
+	}
+	return values, nil
 }

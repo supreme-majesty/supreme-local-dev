@@ -75,6 +75,10 @@ export interface ColumnInfo {
   nullable: boolean;
   key: string;
   default: string;
+  foreign_key?: {
+    table: string;
+    column: string;
+  };
 }
 
 export interface TableData {
@@ -166,6 +170,15 @@ class DaemonApi {
     return this.request<ColumnInfo[]>(
       `/db/schema?db=${database}&table=${table}`
     );
+  }
+
+  async getForeignValues(
+    database: string,
+    table: string,
+    column: string
+  ): Promise<string[]> {
+    const params = new URLSearchParams({ database, table, column });
+    return this.request<string[]>(`/db/foreign-values?${params.toString()}`);
   }
   // Actually, wait, let's optimize. The backend `ExecuteQuery` can run `DESCRIBE`.
   // But let's keep it simple. Using `getTableData` is fine for now.

@@ -54,6 +54,7 @@ func (s *Server) Start() error {
 	http.HandleFunc("/api/db/snapshots/restore", s.handleDBRestore)
 	http.HandleFunc("/api/db/import", s.handleDBImport)
 	http.HandleFunc("/api/db/query", s.handleDBQuery)
+	http.HandleFunc("/api/db/foreign-values", s.handleDBForeignValues)
 
 	// Initialize WebSocket Hub
 	hub := NewHub()
@@ -790,4 +791,32 @@ func (s *Server) handleDBImport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResponse(w, SuccessResponse{Success: true, Message: "File uploaded successfully"}, 200)
+}
+
+func (s *Server) handleDBForeignValues(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	dbName := r.URL.Query().Get("database")
+	table := r.URL.Query().Get("table")
+	column := r.URL.Query().Get("column")
+
+	if dbName == "" || table == "" || column == "" {
+		http.Error(w, "Missing database, table, or column parameter", http.StatusBadRequest)
+		return
+	}
+
+	d, _ := daemon.GetClient()
+	values, err := d.DatabaseService.GetForeignValues(dbName, table, column)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(values); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
 }

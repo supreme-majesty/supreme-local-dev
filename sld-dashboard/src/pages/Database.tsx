@@ -57,6 +57,7 @@ import {
   useExecuteQueryMutation,
   useImportDatabaseMutation,
 } from "@/hooks/use-database";
+import { api } from "@/api/daemon";
 
 export default function Database() {
   const [selectedDB, setSelectedDB] = useState<string | null>(null);
@@ -97,6 +98,7 @@ export default function Database() {
     value: string;
     originalRow: Record<string, any>;
   } | null>(null);
+  const [fkOptions, setFkOptions] = useState<string[] | null>(null);
 
   // Persist perPage to localStorage
   useEffect(() => {
@@ -548,7 +550,7 @@ $mysqli->close();
   };
 
   // Inline editing functions
-  const startInlineEdit = (
+  const startInlineEdit = async (
     rowIndex: number,
     colName: string,
     value: any,
@@ -560,10 +562,36 @@ $mysqli->close();
       value: value === null ? "" : String(value),
       originalRow: row,
     });
+    setFkOptions(null);
+
+    // Fetch FK options if applicable
+    const cols = searchResults ? searchResults.columns : tableData?.columns;
+    const colInfo = cols?.find(
+      (c: any) => (typeof c === "string" ? c : c.name) === colName
+    );
+
+    if (
+      colInfo &&
+      typeof colInfo !== "string" &&
+      colInfo.foreign_key &&
+      selectedDB
+    ) {
+      try {
+        const opts = await api.getForeignValues(
+          selectedDB,
+          colInfo.foreign_key.table,
+          colInfo.foreign_key.column
+        );
+        setFkOptions(opts);
+      } catch (err) {
+        console.error("Failed to fetch FK options", err);
+      }
+    }
   };
 
   const cancelInlineEdit = () => {
     setEditingCell(null);
+    setFkOptions(null);
   };
 
   const saveInlineEdit = async () => {
@@ -1042,22 +1070,43 @@ $mysqli->close();
                                   editingCell?.rowIndex === i &&
                                   editingCell?.colName === colName;
 
+                                const isFK =
+                                  typeof col !== "string" && !!col.foreign_key;
+
                                 return (
                                   <td
                                     key={colName}
                                     className={`px-4 py-2 whitespace-nowrap max-w-[300px] ${
                                       isEditing
                                         ? ""
-                                        : "truncate cursor-pointer hover:bg-[var(--muted)]/30"
+                                        : `truncate cursor-pointer hover:bg-[var(--muted)]/30 ${
+                                            isFK
+                                              ? "text-[var(--primary)] hover:underline"
+                                              : ""
+                                          }`
                                     }`}
-                                    onClick={() => {
+                                    onDoubleClick={() => {
                                       if (!isEditing && pkCol) {
                                         startInlineEdit(i, colName, val, row);
                                       }
                                     }}
+                                    onClick={() => {
+                                      if (!isEditing && isFK && val) {
+                                        setSelectedDB(selectedDB!);
+                                        setSelectedTable(
+                                          col.foreign_key!.table
+                                        );
+                                        // Reset view
+                                        setPage(1);
+                                        setSortCol("");
+                                        setFilterText("");
+                                      }
+                                    }}
                                     title={
                                       pkCol
-                                        ? "Click to edit"
+                                        ? isFK
+                                          ? "Click to navigate, Double-click to edit"
+                                          : "Double-click to edit"
                                         : "No primary key - cannot edit"
                                     }
                                   >
@@ -1071,6 +1120,34 @@ $mysqli->close();
                                           const isDate =
                                             type.includes("datetime") ||
                                             type.includes("timestamp");
+
+                                          // FK Dropdown
+                                          if (isFK && fkOptions) {
+                                            return (
+                                              <select
+                                                value={editingCell.value}
+                                                onChange={(e) =>
+                                                  setEditingCell({
+                                                    ...editingCell,
+                                                    value: e.target.value,
+                                                  })
+                                                }
+                                                onKeyDown={handleInlineKeyDown}
+                                                onBlur={saveInlineEdit}
+                                                autoFocus
+                                                className="w-full bg-[var(--background)] border border-[var(--primary)] rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
+                                              >
+                                                <option value="">
+                                                  Select...
+                                                </option>
+                                                {fkOptions.map((opt) => (
+                                                  <option key={opt} value={opt}>
+                                                    {opt}
+                                                  </option>
+                                                ))}
+                                              </select>
+                                            );
+                                          }
 
                                           // Format for datetime-local: YYYY-MM-DDThh:mm:ss
                                           const displayValue =
@@ -1105,8 +1182,6 @@ $mysqli->close();
                                                   });
                                                 }}
                                                 onKeyDown={(e) => {
-                                                  // Prevent Enter from interfering with native picker if needed,
-                                                  // but generally we want Enter to save
                                                   handleInlineKeyDown(e);
                                                 }}
                                                 // Remove onBlur for dates because clicking the picker/Now button triggers blur
@@ -1125,8 +1200,6 @@ $mysqli->close();
                                                     onClick={(e) => {
                                                       e.stopPropagation(); // Prevent row click
                                                       const now = new Date();
-                                                      // We need YYYY-MM-DD hh:mm:ss (local time ideally, but simple ISO works for now, or construct manually)
-
                                                       // Construct local YYYY-MM-DD hh:mm:ss
                                                       const localIso = new Date(
                                                         now.getTime() -
@@ -1141,7 +1214,6 @@ $mysqli->close();
                                                         ...editingCell,
                                                         value: localIso,
                                                       });
-                                                      // Focus back on input?
                                                     }}
                                                     className="p-1 text-[var(--muted-foreground)] hover:text-[var(--primary)] bg-[var(--muted)] rounded border border-[var(--border)]"
                                                     title="Set to NOW"
