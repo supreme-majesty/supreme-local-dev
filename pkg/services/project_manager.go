@@ -166,7 +166,37 @@ func (pm *ProjectManager) OpenInEditor(path string, editorID string) error {
 		return fmt.Errorf("path does not exist: %s", path)
 	}
 
-	cmd := exec.Command(bin, path)
+	var cmd *exec.Cmd
+	user := os.Getenv("SUDO_USER")
+
+	// If running as root and we have a SUDO_USER, drop privileges and set display
+	if os.Geteuid() == 0 && user != "" {
+		// Use runuser to execute as the real user
+		// We set DISPLAY=:0 for GUI support (common default)
+		cmd = exec.Command("runuser", "-u", user, "--", bin, path)
+
+		// Set environment variables for the command
+		// We preserve existing envs (like PATH) but add DISPLAY
+		env := os.Environ()
+		hasDisplay := false
+		for _, e := range env {
+			if strings.HasPrefix(e, "DISPLAY=") {
+				hasDisplay = true
+				break
+			}
+		}
+		if !hasDisplay {
+			env = append(env, "DISPLAY=:0")
+		}
+
+		// Ensure HOME is correct (runuser usually handles this but good to be sure)
+		// env = append(env, fmt.Sprintf("HOME=/home/%s", user)) // Naive, let runuser handle?
+
+		cmd.Env = env
+	} else {
+		cmd = exec.Command(bin, path)
+	}
+
 	return cmd.Start() // Non-blocking
 }
 
