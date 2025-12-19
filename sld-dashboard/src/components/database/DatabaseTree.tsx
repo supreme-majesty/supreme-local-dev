@@ -62,6 +62,9 @@ function TableNode({
   );
 }
 
+// Pagination constants
+const ITEMS_PER_PAGE = 10;
+
 function DatabaseNode({
   name,
   isSelected,
@@ -69,7 +72,7 @@ function DatabaseNode({
   onSelectDb,
   onSelectTable,
   onCreateTable,
-  filter,
+  filter: globalFilter,
 }: {
   name: string;
   isSelected: boolean;
@@ -80,18 +83,29 @@ function DatabaseNode({
   filter: string;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [localFilter, setLocalFilter] = useState("");
+  const [page, setPage] = useState(1);
+
+  // Combine global filter (from top search) and local filter
+  const effectiveFilter = localFilter || globalFilter;
+
   const { data: tables = [], isLoading } = useTables(
-    expanded || filter ? name : null
-  ); // Auto-fetch if filtering
-
-  // Auto-expand if filter is active and matches tables (or if simpler, just always if filtered)
-
-  // Actually, we want to expand if we have a filter to show matching tables.
-  // But we also need to respect user toggle?
-  // Standard tree filter behavior: if filter matches children, expand.
+    expanded || effectiveFilter ? name : null
+  );
 
   const filteredTables = (tables || []).filter((t) =>
-    t.name?.toLowerCase().includes(filter.toLowerCase())
+    t.name?.toLowerCase().includes(effectiveFilter.toLowerCase())
+  );
+
+  // Pagination Logic
+  const totalPages = Math.ceil(filteredTables.length / ITEMS_PER_PAGE);
+  const safePage = Math.min(Math.max(1, page), Math.max(1, totalPages));
+
+  // Calculate slice
+  const startIndex = (safePage - 1) * ITEMS_PER_PAGE;
+  const paginatedTables = filteredTables.slice(
+    startIndex,
+    startIndex + ITEMS_PER_PAGE
   );
 
   const toggle = (e: React.MouseEvent) => {
@@ -109,7 +123,7 @@ function DatabaseNode({
 
   // If effective expansion state depends on filter
   const isExpanded =
-    expanded || (filter.length > 0 && filteredTables.length > 0);
+    expanded || (globalFilter.length > 0 && filteredTables.length > 0);
 
   return (
     <div>
@@ -139,18 +153,78 @@ function DatabaseNode({
       </div>
 
       {isExpanded && (
-        <div className="border-l border-[var(--border)] ml-5 my-1">
-          {/* New Table Action - Only show if NO filter or if "new" matches filter (optional) */}
-          {!filter && (
-            <TableNode
-              tableName="New"
-              isSelected={false}
-              onSelect={onCreateTable}
-              isMainAction
-            />
+        <div className="border-l border-[var(--border)] ml-5 my-1 pl-1">
+          {/* Filter Input */}
+          <div className="px-2 py-1 mb-1">
+            <div className="relative flex items-center">
+              <input
+                value={localFilter}
+                onChange={(e) => {
+                  setLocalFilter(e.target.value);
+                  setPage(1); // Reset to page 1 on filter change
+                }}
+                className="w-full text-xs h-7 px-2 pr-6 rounded border border-[var(--border)] bg-[var(--background)] focus:outline-none focus:border-[var(--primary)] text-[var(--foreground)] placeholder:text-[var(--muted-foreground)]"
+                placeholder="Type to filter these, Enter"
+                onClick={(e) => e.stopPropagation()}
+              />
+              {localFilter && (
+                <button
+                  className="absolute right-1 text-[var(--muted-foreground)] hover:text-red-400"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setLocalFilter("");
+                    setPage(1);
+                  }}
+                >
+                  <span className="text-xs font-bold">x</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Pagination Controls */}
+          {totalPages > 1 && (
+            <div
+              className="flex items-center gap-2 px-2 py-1 mb-1"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center gap-1">
+                <select
+                  value={safePage}
+                  onChange={(e) => setPage(Number(e.target.value))}
+                  className="h-6 text-xs border border-[var(--border)] rounded bg-[var(--card)] px-1"
+                >
+                  {Array.from({ length: totalPages }, (_, i) => i + 1).map(
+                    (p) => (
+                      <option key={p} value={p}>
+                        {p}
+                      </option>
+                    )
+                  )}
+                </select>
+              </div>
+              <div className="flex gap-1">
+                {/* Only show simplified arrows like >> if strictly matching image, but arrows represent prev/next usually */}
+                {/* If image had "1 v >>>" style: */}
+                <span
+                  className="text-xs text-[var(--muted-foreground)] tracking-widest cursor-pointer hover:text-[var(--primary)]"
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                >
+                  &gt;&gt;&gt;
+                </span>
+              </div>
+            </div>
           )}
 
-          {filteredTables.map((t) => (
+          {/* New Table Action - Always visible */}
+          <TableNode
+            tableName="New"
+            isSelected={false}
+            onSelect={onCreateTable}
+            isMainAction
+          />
+
+          {paginatedTables.map((t) => (
             <TableNode
               key={t.name}
               tableName={t.name}
@@ -160,7 +234,7 @@ function DatabaseNode({
           ))}
           {filteredTables.length === 0 && !isLoading && (
             <div className="px-6 py-2 text-xs text-[var(--muted-foreground)] italic">
-              {filter ? "No matching tables" : "No tables"}
+              {effectiveFilter ? "No matching tables" : "No tables"}
             </div>
           )}
         </div>
@@ -179,16 +253,8 @@ export function DatabaseTree({
   const { data: databases = [], isLoading, refetch } = useDatabases();
   const [searchTerm, setSearchTerm] = useState("");
 
-  const filteredDatabases = (databases || []).filter(
-    (db) => db.name?.toLowerCase().includes(searchTerm.toLowerCase())
-    // Note: We might want to also include DBs that have matching tables,
-    // but we can't efficiently know that without fetching all tables.
-    // For now, strict DB name match OR just rely on the user opening the DB
-    // where they expect matches?
-    // Actually, common pattern is: show DB if name matches.
-    // If name doesn't match, we hide it.
-    // BUT what if a user searches for a table name? They expect parent DB to show.
-    // That requires fetching tables. Let's stick to DB name filtering + Table name filtering within filtered DBs for now to avoid n+1 fetch storm.
+  const filteredDatabases = (databases || []).filter((db) =>
+    db.name?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   return (

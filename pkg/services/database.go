@@ -21,9 +21,12 @@ type DatabaseService struct {
 
 // TableInfo represents a database table with metadata
 type TableInfo struct {
-	Name     string `json:"name"`
-	RowCount int64  `json:"row_count"`
-	Engine   string `json:"engine"`
+	Name      string `json:"name"`
+	RowCount  int64  `json:"row_count"`
+	Engine    string `json:"engine"`
+	Collation string `json:"collation"`
+	Size      int64  `json:"size"`
+	Overhead  int64  `json:"overhead"`
 }
 
 // ColumnInfo represents a table column
@@ -232,7 +235,10 @@ func (d *DatabaseService) ListTables(database string) ([]TableInfo, error) {
 		SELECT 
 			TABLE_NAME, 
 			COALESCE(TABLE_ROWS, 0) as row_count,
-			COALESCE(ENGINE, '') as engine
+			COALESCE(ENGINE, '') as engine,
+			COALESCE(TABLE_COLLATION, '') as collation,
+			COALESCE(DATA_LENGTH + INDEX_LENGTH, 0) as size,
+			COALESCE(DATA_FREE, 0) as overhead
 		FROM information_schema.TABLES 
 		WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE'
 		ORDER BY TABLE_NAME
@@ -247,7 +253,7 @@ func (d *DatabaseService) ListTables(database string) ([]TableInfo, error) {
 	var tables []TableInfo
 	for rows.Next() {
 		var t TableInfo
-		if err := rows.Scan(&t.Name, &t.RowCount, &t.Engine); err != nil {
+		if err := rows.Scan(&t.Name, &t.RowCount, &t.Engine, &t.Collation, &t.Size, &t.Overhead); err != nil {
 			continue
 		}
 		tables = append(tables, t)

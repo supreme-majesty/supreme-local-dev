@@ -64,6 +64,9 @@ export interface TableInfo {
   name: string;
   row_count: number;
   engine: string;
+  collation: string;
+  size: number;
+  overhead: number;
 }
 
 export interface ColumnInfo {

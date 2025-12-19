@@ -19,8 +19,6 @@ import {
   Download as DownloadIcon,
   FileDown,
   FileUp,
-  X,
-  ChevronsRight,
 } from "lucide-react";
 import { formatBytes, formatDate } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
@@ -39,6 +37,7 @@ import { SQLConsole } from "@/components/database/SQLConsole";
 // @ts-ignore
 import { DatabaseTree } from "@/components/database/DatabaseTree";
 import { DataForm } from "@/components/database/DataForm";
+import { DatabaseStructure } from "@/components/database/DatabaseStructure";
 import { TableCreator } from "@/components/database/TableCreator";
 import {
   useTableData,
@@ -69,7 +68,6 @@ export default function Database() {
   const [restoreAfterImport, setRestoreAfterImport] = useState(true);
   const [triggers, setTriggers] = useState<any[]>([]);
   const [loadingTriggers, setLoadingTriggers] = useState(false);
-  const [quickFilter, setQuickFilter] = useState("");
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -964,14 +962,40 @@ export default function Database() {
             </div>
           )}
 
-          {/* Context: DB, Tab: Tables (Structure placeholder for DB level) */}
+          {/* Context: DB, Tab: Tables (Structure view for DB) */}
           {activeTab === "structure" && selectedDB && !selectedTable && (
-            <div className="text-center py-12 text-[var(--muted-foreground)]">
-              <TableIcon size={48} className="mx-auto mb-4 opacity-50" />
-              <p>
-                Select a table from the sidebar to view its structure or data.
-              </p>
-            </div>
+            <DatabaseStructure
+              database={selectedDB}
+              onSelectTable={(table) => {
+                setSelectedTable(table);
+                // Default to browse or structure? usually structure if clicking from list
+                setActiveTab("browse");
+              }}
+              onDropTable={(table) => {
+                if (
+                  confirm(
+                    `Are you sure you want to DROP table '${table}'? This cannot be undone.`
+                  )
+                ) {
+                  executeQueryMutation.mutate({
+                    database: selectedDB,
+                    query: `DROP TABLE \`${table}\``,
+                  });
+                }
+              }}
+              onEmptyTable={(table) => {
+                if (
+                  confirm(
+                    `Are you sure you want to TRUNCATE table '${table}'? This will delete all rows.`
+                  )
+                ) {
+                  executeQueryMutation.mutate({
+                    database: selectedDB,
+                    query: `TRUNCATE TABLE \`${table}\``,
+                  });
+                }
+              }}
+            />
           )}
 
           {/* Context: Edit */}
