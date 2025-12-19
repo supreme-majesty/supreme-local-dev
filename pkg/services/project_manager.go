@@ -138,10 +138,22 @@ func (pm *ProjectManager) OpenInEditor(path string, editorID string) error {
 	var bin string
 
 	// Find the binary for the requested editor
-	for _, ed := range supportedEditors {
+	// Find the binary for the requested editor
+	available := pm.DetectEditors()
+	for _, ed := range available {
 		if ed.ID == editorID {
 			bin = ed.Bin
 			break
+		}
+	}
+
+	// Fallback to supported list if not detected (weird, but safe)
+	if bin == "" {
+		for _, ed := range supportedEditors {
+			if ed.ID == editorID {
+				bin = ed.Bin
+				break
+			}
 		}
 	}
 
