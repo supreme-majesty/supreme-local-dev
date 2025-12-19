@@ -47,6 +47,7 @@ import { DatabaseTree } from "@/components/database/DatabaseTree";
 import { DataForm } from "@/components/database/DataForm";
 import { DatabaseStructure } from "@/components/database/DatabaseStructure";
 import { TableCreator } from "@/components/database/TableCreator";
+import { Modal } from "@/components/ui/Modal";
 import {
   useTableData,
   useTableColumns,
@@ -92,6 +93,13 @@ export default function Database() {
   const [showExplainModal, setShowExplainModal] = useState(false);
   const [showPhpModal, setShowPhpModal] = useState(false);
   const [explainData, setExplainData] = useState<any>(null);
+
+  // Result modal state
+  const [resultModal, setResultModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    content: string;
+  }>({ isOpen: false, title: "", content: "" });
 
   // Inline cell editing state
   const [editingCell, setEditingCell] = useState<{
@@ -261,24 +269,124 @@ export default function Database() {
       case "repair":
         query = `REPAIR TABLE ${tableList}`;
         break;
-      case "show_create":
-        // Show CREATE statements for each table
+      case "show_create": {
+        // Show CREATE statements for all tables in a modal
+        const results: string[] = [];
         for (const t of tables) {
           try {
             const result = await executeQueryMutation.mutateAsync({
               database: selectedDB,
               query: `SHOW CREATE TABLE \`${t}\``,
             });
-            alert(
-              `CREATE TABLE for ${t}:\n\n${
-                result.rows?.[0]?.["Create Table"] || "N/A"
-              }`
-            );
+            const createStmt = result.rows?.[0]?.["Create Table"] || "N/A";
+            results.push(`-- Table: ${t}\n${createStmt};\n`);
           } catch (e) {
-            console.error(`Failed to get CREATE for ${t}`, e);
+            results.push(
+              `-- Table: ${t}\n-- Error: Failed to get CREATE statement\n`
+            );
+          }
+        }
+        setResultModal({
+          isOpen: true,
+          title: `CREATE TABLE Statements (${tables.length} tables)`,
+          content: results.join("\n"),
+        });
+        return;
+      }
+      case "export": {
+        // Export selected tables as SQL
+        const results: string[] = [];
+        for (const t of tables) {
+          try {
+            const createResult = await executeQueryMutation.mutateAsync({
+              database: selectedDB,
+              query: `SHOW CREATE TABLE \`${t}\``,
+            });
+            results.push(`-- Table: ${t}`);
+            results.push(`DROP TABLE IF EXISTS \`${t}\`;`);
+            results.push(createResult.rows?.[0]?.["Create Table"] + ";");
+            results.push("");
+          } catch (e) {
+            results.push(`-- Error exporting ${t}`);
+          }
+        }
+        setResultModal({
+          isOpen: true,
+          title: `Export (${tables.length} tables)`,
+          content: results.join("\n"),
+        });
+        return;
+      }
+      case "add_prefix": {
+        const prefix = prompt("Enter prefix to add to table names:");
+        if (!prefix) return;
+        for (const t of tables) {
+          try {
+            await executeQueryMutation.mutateAsync({
+              database: selectedDB,
+              query: `RENAME TABLE \`${t}\` TO \`${prefix}${t}\``,
+            });
+          } catch (e) {
+            console.error(`Failed to rename ${t}`, e);
           }
         }
         return;
+      }
+      case "replace_prefix": {
+        const oldPrefix = prompt("Enter current prefix to replace:");
+        if (!oldPrefix) return;
+        const newPrefix = prompt("Enter new prefix:");
+        if (newPrefix === null) return;
+        for (const t of tables) {
+          if (t.startsWith(oldPrefix)) {
+            const newName = newPrefix + t.slice(oldPrefix.length);
+            try {
+              await executeQueryMutation.mutateAsync({
+                database: selectedDB,
+                query: `RENAME TABLE \`${t}\` TO \`${newName}\``,
+              });
+            } catch (e) {
+              console.error(`Failed to rename ${t}`, e);
+            }
+          }
+        }
+        return;
+      }
+      case "copy_with_prefix": {
+        const prefix = prompt("Enter prefix for copied tables:");
+        if (!prefix) return;
+        for (const t of tables) {
+          try {
+            await executeQueryMutation.mutateAsync({
+              database: selectedDB,
+              query: `CREATE TABLE \`${prefix}${t}\` LIKE \`${t}\``,
+            });
+            await executeQueryMutation.mutateAsync({
+              database: selectedDB,
+              query: `INSERT INTO \`${prefix}${t}\` SELECT * FROM \`${t}\``,
+            });
+          } catch (e) {
+            console.error(`Failed to copy ${t}`, e);
+          }
+        }
+        return;
+      }
+      case "copy": {
+        // Copy table structure only
+        for (const t of tables) {
+          const newName = prompt(`Enter new name for copy of "${t}":`);
+          if (!newName) continue;
+          try {
+            await executeQueryMutation.mutateAsync({
+              database: selectedDB,
+              query: `CREATE TABLE \`${newName}\` LIKE \`${t}\``,
+            });
+          } catch (e) {
+            console.error(`Failed to copy ${t}`, e);
+          }
+        }
+        return;
+      }
       default:
         alert(`Action "${action}" is not yet implemented.`);
         return;
@@ -289,11 +397,23 @@ export default function Database() {
         database: selectedDB,
         query,
       });
-      alert(
-        `${action.toUpperCase()} completed successfully.\n\nRows affected: ${
-          result.rowCount || 0
-        }`
-      );
+      // Format result for modal
+      const rows = result.rows || [];
+      const content =
+        rows.length > 0
+          ? rows
+              .map((r: any) =>
+                Object.entries(r)
+                  .map(([k, v]) => `${k}: ${v}`)
+                  .join("\n")
+              )
+              .join("\n\n")
+          : `Rows affected: ${result.rowCount || 0}`;
+      setResultModal({
+        isOpen: true,
+        title: `${action.toUpperCase()} Result`,
+        content,
+      });
     } catch (e) {
       console.error(`Failed to ${action}`, e);
     }
@@ -1049,11 +1169,77 @@ $mysqli->close();
                         value=""
                         onChange={(e) => {
                           const val = e.target.value;
-                          if (val === "delete") handleBulkDelete();
-                          else if (val === "export") {
-                            alert(
-                              `Export functionality for ${selectedRows.size} rows is not yet implemented.`
+                          if (!val) return;
+
+                          if (val === "delete") {
+                            handleBulkDelete();
+                          } else if (val === "export") {
+                            // Export selected rows as SQL INSERT statements
+                            const selectedData = filteredRows.filter(
+                              (row: any) => {
+                                const pk = getValue(row, pkCol);
+                                return (
+                                  pk !== undefined &&
+                                  selectedRows.has(String(pk))
+                                );
+                              }
                             );
+                            const cols =
+                              (searchResults || tableData)?.columns || [];
+                            const colNames = cols.map((c: any) =>
+                              typeof c === "string" ? c : c.name
+                            );
+
+                            const inserts = selectedData.map((row: any) => {
+                              const values = colNames.map((col: string) => {
+                                const val = getValue(row, col);
+                                if (val === null) return "NULL";
+                                if (typeof val === "number") return val;
+                                return `'${String(val).replace(/'/g, "\\'")}'`;
+                              });
+                              return `INSERT INTO \`${selectedTable}\` (\`${colNames.join(
+                                "`, `"
+                              )}\`) VALUES (${values.join(", ")});`;
+                            });
+
+                            setResultModal({
+                              isOpen: true,
+                              title: `Export ${selectedData.length} rows`,
+                              content: inserts.join("\n"),
+                            });
+                            setSelectedRows(new Set());
+                          } else if (val === "copy") {
+                            // Copy selected rows to clipboard as TSV
+                            const selectedData = filteredRows.filter(
+                              (row: any) => {
+                                const pk = getValue(row, pkCol);
+                                return (
+                                  pk !== undefined &&
+                                  selectedRows.has(String(pk))
+                                );
+                              }
+                            );
+                            const cols =
+                              (searchResults || tableData)?.columns || [];
+                            const colNames = cols.map((c: any) =>
+                              typeof c === "string" ? c : c.name
+                            );
+
+                            const header = colNames.join("\t");
+                            const rows = selectedData.map((row: any) =>
+                              colNames
+                                .map((col: string) =>
+                                  String(getValue(row, col) ?? "")
+                                )
+                                .join("\t")
+                            );
+                            const tsv = [header, ...rows].join("\n");
+
+                            navigator.clipboard.writeText(tsv);
+                            alert(
+                              `Copied ${selectedData.length} rows to clipboard!`
+                            );
+                            setSelectedRows(new Set());
                           }
                           e.target.value = "";
                         }}
@@ -1181,7 +1367,7 @@ $mysqli->close();
                 <div className="border border-[var(--border)] rounded-md overflow-hidden bg-[var(--card)]">
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm text-left">
-                      <thead className="text-xs text-[var(--muted-foreground)] uppercase bg-[var(--muted)]/50 border-b border-[var(--border)]">
+                      <thead className="text-xs text-[var(--muted-foreground)] bg-[var(--muted)]/50 border-b border-[var(--border)]">
                         <tr>
                           {pkCol && (
                             <th className="w-8 px-4 py-3 text-center">
@@ -1465,20 +1651,39 @@ $mysqli->close();
                                           <button
                                             className="opacity-0 group-hover/cell:opacity-100 p-0.5 text-[var(--muted-foreground)] hover:text-[var(--primary)] transition-opacity bg-[var(--card)] rounded shadow-sm border border-[var(--border)] absolute right-0 top-1/2 -translate-y-1/2 z-10 cursor-pointer"
                                             onClick={(e) => {
-                                              e.preventDefault(); // Ensure prevent default
+                                              e.preventDefault();
                                               e.stopPropagation();
 
+                                              const fkTable =
+                                                col.foreign_key!.table;
+                                              const fkColumn =
+                                                col.foreign_key!.column;
+                                              const fkValue = String(val);
+
                                               setSelectedDB(selectedDB!);
-                                              setSelectedTable(
-                                                col.foreign_key!.table
-                                              );
+                                              setSelectedTable(fkTable);
                                               setPage(1);
                                               setSortCol("");
                                               setFilterText("");
+
+                                              // Set search criteria to filter by FK value
+                                              setSearchCriteria({
+                                                [fkColumn]: {
+                                                  value: fkValue,
+                                                  operator: "=",
+                                                },
+                                              });
+
+                                              // Trigger search after navigating
+                                              setTimeout(() => {
+                                                setActiveTab("search");
+                                              }, 100);
                                             }}
                                             title={`Navigate to ${
                                               col.foreign_key!.table
-                                            }`}
+                                            } where ${
+                                              col.foreign_key!.column
+                                            } = ${val}`}
                                           >
                                             <ExternalLink size={10} />
                                           </button>
@@ -1650,7 +1855,7 @@ $mysqli->close();
           {activeTab === "structure" && selectedTable && tableSchema && (
             <div className="border border-[var(--border)] rounded-md overflow-hidden bg-[var(--card)]">
               <table className="w-full text-sm text-left">
-                <thead className="text-xs text-[var(--muted-foreground)] uppercase bg-[var(--muted)]/50 border-b border-[var(--border)]">
+                <thead className="text-xs text-[var(--muted-foreground)] bg-[var(--muted)]/50 border-b border-[var(--border)]">
                   <tr>
                     <th className="px-4 py-3 font-medium">Name</th>
                     <th className="px-4 py-3 font-medium">Type</th>
@@ -2703,6 +2908,34 @@ $mysqli->close();
           </div>
         </div>
       )}
+
+      {/* Result Modal for bulk actions */}
+      <Modal
+        isOpen={resultModal.isOpen}
+        onClose={() =>
+          setResultModal({ isOpen: false, title: "", content: "" })
+        }
+        title={resultModal.title}
+        footer={
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => {
+              navigator.clipboard.writeText(resultModal.content);
+              alert("Copied to clipboard!");
+            }}
+            className="gap-1"
+          >
+            <Copy size={14} /> Copy to Clipboard
+          </Button>
+        }
+      >
+        <div className="max-h-[60vh] overflow-auto">
+          <pre className="bg-[var(--muted)]/50 p-4 rounded text-sm font-mono overflow-x-auto whitespace-pre-wrap">
+            {resultModal.content}
+          </pre>
+        </div>
+      </Modal>
     </div>
   );
 }
