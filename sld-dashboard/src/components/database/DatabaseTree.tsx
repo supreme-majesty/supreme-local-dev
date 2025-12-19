@@ -65,7 +65,7 @@ function TableNode({
 }
 
 // Pagination constants
-const ITEMS_PER_PAGE = 10;
+const ITEMS_PER_PAGE = 50;
 
 function DatabaseParamsNode({
   dbName,
@@ -167,9 +167,11 @@ function DatabaseParamsNode({
             <div className="flex gap-1">
               <span
                 className="text-xs text-[var(--muted-foreground)] tracking-widest cursor-pointer hover:text-[var(--primary)]"
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                onClick={() =>
+                  setPage((p) => (p === totalPages ? p - 1 : p + 1))
+                }
               >
-                &gt;&gt;&gt;
+                {page === totalPages ? "<<<" : ">>>"}
               </span>
             </div>
           </div>
