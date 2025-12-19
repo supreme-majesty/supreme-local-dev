@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
   Database as DatabaseIcon,
   Table as TableIcon,
@@ -294,16 +294,19 @@ function RecursiveTreeNode({
   const hasChildren = Object.keys(node.children).length > 0;
 
   // If selectedDB starts with this node's fullName + '_', we should probably be expanded
-  // (if we are a group that contains the selected DB).
-  // AND if we are the selected DB itself, we might want to be expanded to show tables.
   const isSelectedPath = selectedDb === node.fullName;
   const isParentOfSelected = selectedDb?.startsWith(node.fullName + "_");
+  const isMatchingFilter = !!filter && node.fullName.includes(filter);
 
   // Auto-expand if we are in the path of the selected DB or filtering matches
-  const isExpanded =
-    expanded ||
-    (!!filter && node.fullName.includes(filter)) ||
-    isParentOfSelected;
+  // Use effect so user can collapse it manually afterwards
+  useEffect(() => {
+    if (isParentOfSelected || isMatchingFilter) {
+      setExpanded(true);
+    }
+  }, [isParentOfSelected, isMatchingFilter]);
+
+  const isExpanded = expanded;
 
   // Toggle handler
   const toggle = (e: React.MouseEvent) => {
@@ -319,8 +322,13 @@ function RecursiveTreeNode({
     e.stopPropagation();
     if (node.isDatabase) {
       onSelectDb(node.fullName);
-      // Also expand if it wasn't
-      if (!expanded) setExpanded(true);
+
+      // If already expanded and selected, toggle close
+      if (expanded && selectedDb === node.fullName) {
+        setExpanded(false);
+      } else if (!expanded) {
+        setExpanded(true);
+      }
     } else {
       // Just a group folder, toggle it
       setExpanded(!expanded);

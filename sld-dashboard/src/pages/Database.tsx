@@ -26,6 +26,7 @@ import {
   Clock,
   Copy,
   X,
+  ExternalLink,
 } from "lucide-react";
 import { formatBytes, formatDate } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
@@ -1090,23 +1091,10 @@ $mysqli->close();
                                         startInlineEdit(i, colName, val, row);
                                       }
                                     }}
-                                    onClick={() => {
-                                      if (!isEditing && isFK && val) {
-                                        setSelectedDB(selectedDB!);
-                                        setSelectedTable(
-                                          col.foreign_key!.table
-                                        );
-                                        // Reset view
-                                        setPage(1);
-                                        setSortCol("");
-                                        setFilterText("");
-                                      }
-                                    }}
+                                    onClick={undefined} // Remove cell click navigation
                                     title={
                                       pkCol
-                                        ? isFK
-                                          ? "Click to navigate, Double-click to edit"
-                                          : "Double-click to edit"
+                                        ? "Double-click to edit"
                                         : "No primary key - cannot edit"
                                     }
                                   >
@@ -1234,23 +1222,45 @@ $mysqli->close();
                                         })()}
                                       </div>
                                     ) : (
-                                      <span
-                                        className={
-                                          val === null
-                                            ? "text-[var(--muted-foreground)] italic"
-                                            : ""
-                                        }
-                                      >
-                                        {val === null ? (
-                                          "NULL"
-                                        ) : val === undefined ? (
-                                          <span className="text-red-400 text-[10px]">
-                                            (missing)
-                                          </span>
-                                        ) : (
-                                          String(val)
+                                      <div className="flex items-center justify-between group/cell relative min-h-[20px]">
+                                        <span
+                                          className={
+                                            val === null
+                                              ? "text-[var(--muted-foreground)] italic"
+                                              : ""
+                                          }
+                                        >
+                                          {val === null ? (
+                                            "NULL"
+                                          ) : val === undefined ? (
+                                            <span className="text-red-400 text-[10px]">
+                                              (missing)
+                                            </span>
+                                          ) : (
+                                            String(val)
+                                          )}
+                                        </span>
+                                        {!isEditing && isFK && val && (
+                                          <button
+                                            className="opacity-0 group-hover/cell:opacity-100 p-0.5 text-[var(--muted-foreground)] hover:text-[var(--primary)] transition-opacity bg-[var(--card)] rounded shadow-sm border border-[var(--border)] absolute right-0 top-1/2 -translate-y-1/2"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setSelectedDB(selectedDB!);
+                                              setSelectedTable(
+                                                col.foreign_key!.table
+                                              );
+                                              setPage(1);
+                                              setSortCol("");
+                                              setFilterText("");
+                                            }}
+                                            title={`Navigate to ${
+                                              col.foreign_key!.table
+                                            }`}
+                                          >
+                                            <ExternalLink size={10} />
+                                          </button>
                                         )}
-                                      </span>
+                                      </div>
                                     )}
                                   </td>
                                 );
