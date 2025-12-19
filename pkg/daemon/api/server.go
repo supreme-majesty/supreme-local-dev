@@ -529,25 +529,15 @@ func (s *Server) handleDBTableData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Transform rows from map to array to match frontend DataTable component
-	var rows [][]interface{}
+	// Return rows as maps to match frontend expectation
 	var colNames []string
-
 	for _, col := range data.Columns {
 		colNames = append(colNames, col.Name)
 	}
 
-	for _, rowMap := range data.Rows {
-		var row []interface{}
-		for _, col := range colNames {
-			row = append(row, rowMap[col])
-		}
-		rows = append(rows, row)
-	}
-
 	resp := map[string]interface{}{
-		"columns": colNames,
-		"rows":    rows,
+		"columns": data.Columns,
+		"rows":    data.Rows,
 		"total":   data.Total,
 		"limit":   data.PerPage,
 		"offset":  (data.Page - 1) * data.PerPage,

@@ -91,7 +91,7 @@ function DatabaseNode({
   // Standard tree filter behavior: if filter matches children, expand.
 
   const filteredTables = (tables || []).filter((t) =>
-    t.name.toLowerCase().includes(filter.toLowerCase())
+    t.name?.toLowerCase().includes(filter.toLowerCase())
   );
 
   const toggle = (e: React.MouseEvent) => {
@@ -180,7 +180,7 @@ export function DatabaseTree({
   const [searchTerm, setSearchTerm] = useState("");
 
   const filteredDatabases = (databases || []).filter(
-    (db) => db.name.toLowerCase().includes(searchTerm.toLowerCase())
+    (db) => db.name?.toLowerCase().includes(searchTerm.toLowerCase())
     // Note: We might want to also include DBs that have matching tables,
     // but we can't efficiently know that without fetching all tables.
     // For now, strict DB name match OR just rely on the user opening the DB

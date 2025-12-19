@@ -18,7 +18,7 @@ import {
   Search,
   Zap,
 } from "lucide-react";
-import { formatBytes, formatDate, cn } from "@/lib/utils";
+import { formatBytes, formatDate } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
 import {
   Card,
@@ -27,6 +27,8 @@ import {
   CardContent,
   CardDescription,
 } from "@/components/ui/Card";
+import { Label } from "@/components/ui/Label";
+import { Input } from "@/components/ui/Input";
 import { Badge } from "@/components/ui/Badge";
 import { SQLConsole } from "@/components/database/SQLConsole";
 // @ts-ignore
@@ -74,6 +76,17 @@ export default function Database() {
     if (val === null) return "NULL";
     if (typeof val === "number") return val;
     return `'${String(val).replace(/'/g, "\\'")}'`;
+  };
+
+  // Helper to safely get value from row (handles case mismatch)
+  const getValue = (row: Record<string, any>, colName: string) => {
+    if (!colName) return undefined;
+    if (row[colName] !== undefined) return row[colName];
+    // Try lowercase key match
+    const lowerCol = colName.toLowerCase();
+    const key = Object.keys(row).find((k) => k.toLowerCase() === lowerCol);
+    if (key && row[key] !== undefined) return row[key];
+    return undefined;
   };
 
   // Mutations
@@ -540,15 +553,18 @@ export default function Database() {
                                 key={col.name}
                                 className="px-4 py-2 whitespace-nowrap max-w-[300px] truncate"
                               >
-                                <span
-                                  className={cn(
-                                    row[col.name] === null &&
-                                      "text-[var(--muted-foreground)] italic"
-                                  )}
-                                >
-                                  {row[col.name] === null
-                                    ? "NULL"
-                                    : String(row[col.name])}
+                                <span>
+                                  {(() => {
+                                    const val = getValue(row, col.name);
+                                    if (val === null) return "NULL";
+                                    if (val === undefined)
+                                      return (
+                                        <span className="text-red-400 text-[10px]">
+                                          (missing)
+                                        </span>
+                                      );
+                                    return String(val);
+                                  })()}
                                 </span>
                               </td>
                             ))}
@@ -605,6 +621,99 @@ export default function Database() {
                   Select a table to browse
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Context: Table, Tab: Insert */}
+          {activeTab === "insert" && selectedTable && tableSchema && (
+            <div className="max-w-4xl mx-auto mt-8">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <Plus size={18} /> Insert Row
+                  </CardTitle>
+                  <CardDescription>
+                    Insert data into table <strong>{selectedTable}</strong>.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      const formData = new FormData(e.currentTarget);
+                      const data: Record<string, any> = {};
+                      tableSchema.forEach((col) => {
+                        const val = formData.get(col.name);
+                        if (val !== "" && val !== null) {
+                          data[col.name] = val;
+                        } else if (col.nullable || col.default) {
+                          // Skip sending empty string for nullable/default cols to let DB handle it
+                          // Or strictly send null? Let's skip to allow defaults.
+                        } else {
+                          // Send empty string if not nullable and no default (strict mode?)
+                          data[col.name] = "";
+                        }
+                      });
+                      handleSaveRow(data);
+                    }}
+                    className="space-y-4"
+                  >
+                    <div className="grid grid-cols-[200px_1fr_100px] gap-4 font-medium text-sm text-[var(--muted-foreground)] px-4 mb-2">
+                      <div>Column</div>
+                      <div>Value</div>
+                      <div>Type</div>
+                    </div>
+
+                    <div className="space-y-2 border-t border-[var(--border)] pt-4">
+                      {tableSchema.map((col) => (
+                        <div
+                          key={col.name}
+                          className="grid grid-cols-[200px_1fr_100px] gap-4 items-center px-4"
+                        >
+                          <Label
+                            htmlFor={`field-${col.name}`}
+                            className="truncate"
+                            title={col.name}
+                          >
+                            {col.name}
+                            {col.key === "PRI" && (
+                              <span className="text-yellow-500 ml-1 text-[10px]">
+                                (PK)
+                              </span>
+                            )}
+                          </Label>
+                          <Input
+                            id={`field-${col.name}`}
+                            name={col.name}
+                            placeholder={
+                              col.default
+                                ? `Default: ${col.default}`
+                                : col.nullable
+                                ? "NULL"
+                                : ""
+                            }
+                          />
+                          <div
+                            className="text-xs text-[var(--muted-foreground)] truncate"
+                            title={col.type}
+                          >
+                            {col.type}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="flex justify-end pt-4 border-t border-[var(--border)]">
+                      <Button
+                        type="submit"
+                        loading={executeQueryMutation.isPending}
+                      >
+                        <Plus size={16} className="mr-2" /> Insert
+                      </Button>
+                    </div>
+                  </form>
+                </CardContent>
+              </Card>
             </div>
           )}
 
@@ -833,6 +942,123 @@ export default function Database() {
           {/* Context: Operations */}
           {activeTab === "operations" && selectedDB && (
             <div className="max-w-2xl mx-auto mt-8 flex flex-col gap-6">
+              {/* Context: Table, Tab: Operations */}
+              {activeTab === "operations" && selectedTable && (
+                <div className="space-y-6 max-w-2xl">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-lg flex items-center gap-2">
+                        <Settings size={18} /> Table Options
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="space-y-2">
+                        <Label>Rename table to:</Label>
+                        <div className="flex gap-2">
+                          <Input
+                            defaultValue={selectedTable}
+                            id="rename-table-input"
+                          />
+                          <Button
+                            onClick={() => {
+                              const newName = (
+                                document.getElementById(
+                                  "rename-table-input"
+                                ) as HTMLInputElement
+                              ).value;
+                              if (newName && newName !== selectedTable) {
+                                executeQueryMutation.mutate(
+                                  {
+                                    database: selectedDB!,
+                                    query: `RENAME TABLE \`${selectedTable}\` TO \`${newName}\``,
+                                  },
+                                  {
+                                    onSuccess: () => {
+                                      setSelectedTable(newName);
+                                      // Refresh tables implicitly
+                                    },
+                                  }
+                                );
+                              }
+                            }}
+                          >
+                            Go
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2 pt-4 border-t border-[var(--border)]">
+                        <Label>Copy table to (database.table):</Label>
+                        <div className="flex gap-2">
+                          <Input
+                            placeholder={`${selectedTable}_copy`}
+                            id="copy-table-input"
+                          />
+                          <Button
+                            variant="secondary"
+                            onClick={() => {
+                              const newName = (
+                                document.getElementById(
+                                  "copy-table-input"
+                                ) as HTMLInputElement
+                              ).value;
+                              if (newName) {
+                                executeQueryMutation.mutate(
+                                  {
+                                    database: selectedDB!,
+                                    query: `CREATE TABLE \`${newName}\` LIKE \`${selectedTable}\`; INSERT INTO \`${newName}\` SELECT * FROM \`${selectedTable}\`;`,
+                                  },
+                                  {
+                                    onSuccess: () => alert("Table copied!"),
+                                  }
+                                );
+                              }
+                            }}
+                          >
+                            Copy
+                          </Button>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card className="border-red-200 dark:border-red-900/20">
+                    <CardHeader>
+                      <CardTitle className="text-lg text-red-500 flex items-center gap-2">
+                        <Trash2 size={18} /> Table Maintenance
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="flex flex-col gap-2">
+                        <div className="flex justify-between items-center p-3 rounded-md bg-red-50 dark:bg-red-900/10">
+                          <div className="text-sm font-medium">
+                            Empty the table (TRUNCATE)
+                          </div>
+                          <Button
+                            variant="danger"
+                            size="sm"
+                            onClick={handleTruncateTable}
+                          >
+                            Truncate
+                          </Button>
+                        </div>
+                        <div className="flex justify-between items-center p-3 rounded-md bg-red-50 dark:bg-red-900/10">
+                          <div className="text-sm font-medium">
+                            Delete the table (DROP)
+                          </div>
+                          <Button
+                            variant="danger"
+                            size="sm"
+                            onClick={handleDropTable}
+                          >
+                            Drop
+                          </Button>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
               {/* Database Operations */}
               {!selectedTable && (
                 <Card className="border-red-200 dark:border-red-900/50">
@@ -967,20 +1193,10 @@ export default function Database() {
           )}
 
           {/* Placeholders */}
-          {[
-            "export",
-            "import",
-            "search",
-            "insert",
-            "operations",
-            "triggers",
-          ].includes(activeTab) && (
-            <div className="flex flex-col items-center justify-center h-full text-[var(--muted-foreground)] opacity-50">
-              <HardDrive size={48} className="mb-4" />
-              <p className="text-lg font-medium capitalize">
-                {activeTab} Feature
-              </p>
-              <p className="text-sm">Coming soon...</p>
+          {["export", "import", "search", "triggers"].includes(activeTab) && (
+            <div className="text-center py-12 text-[var(--muted-foreground)]">
+              {activeTab.charAt(0).toUpperCase() + activeTab.slice(1)} coming
+              soon...
             </div>
           )}
         </div>

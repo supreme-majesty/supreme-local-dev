@@ -266,7 +266,8 @@ func (d *DatabaseService) GetTableColumns(database, table string) ([]ColumnInfo,
 		return nil, err
 	}
 
-	rows, err := d.db.Query("DESCRIBE " + table)
+	// Quote table name to handle special characters/keywords
+	rows, err := d.db.Query(fmt.Sprintf("DESCRIBE `%s`", table))
 	if err != nil {
 		return nil, err
 	}
@@ -353,12 +354,18 @@ func (d *DatabaseService) GetTableData(database, table string, page, perPage int
 
 		row := make(map[string]interface{})
 		for i, col := range colNames {
+			// Use schema column name if available to ensure consistency with frontend
+			key := col
+			if i < len(columns) {
+				key = columns[i].Name
+			}
+
 			val := values[i]
 			// Convert byte slices to strings for JSON
 			if b, ok := val.([]byte); ok {
-				row[col] = string(b)
+				row[key] = string(b)
 			} else {
-				row[col] = val
+				row[key] = val
 			}
 		}
 		data = append(data, row)
