@@ -518,12 +518,17 @@ func (s *Server) handleDBTableData(w http.ResponseWriter, r *http.Request) {
 		offset, _ = strconv.Atoi(o)
 	}
 
+	// New parameters: sort, order, profile
+	sortCol := r.URL.Query().Get("sort")
+	sortOrder := r.URL.Query().Get("order") // ASC or DESC
+	profile := r.URL.Query().Get("profile") == "true"
+
 	// Convert offset/limit to page/perPage
 	perPage := limit
 	page := (offset / limit) + 1
 
 	d, _ := daemon.GetClient()
-	data, err := d.DatabaseService.GetTableData(db, table, page, perPage)
+	data, err := d.DatabaseService.GetTableDataEx(db, table, page, perPage, sortCol, sortOrder, profile)
 	if err != nil {
 		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
 		return
@@ -536,11 +541,17 @@ func (s *Server) handleDBTableData(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := map[string]interface{}{
-		"columns": data.Columns,
-		"rows":    data.Rows,
-		"total":   data.Total,
-		"limit":   data.PerPage,
-		"offset":  (data.Page - 1) * data.PerPage,
+		"columns":     data.Columns,
+		"rows":        data.Rows,
+		"total":       data.Total,
+		"limit":       data.PerPage,
+		"offset":      (data.Page - 1) * data.PerPage,
+		"total_pages": data.TotalPages,
+	}
+
+	// Include query time if profiling was enabled
+	if profile && data.QueryTime > 0 {
+		resp["query_time"] = data.QueryTime
 	}
 
 	jsonResponse(w, resp, 200)

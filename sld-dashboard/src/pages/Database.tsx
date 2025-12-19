@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import {
   Database as DatabaseIcon,
   Table as TableIcon,
@@ -10,6 +10,10 @@ import {
   Camera,
   RotateCcw,
   ArrowRight,
+  ArrowUp,
+  ArrowDown,
+  ChevronLeft,
+  ChevronRight,
   Code2,
   Settings,
   Columns,
@@ -19,6 +23,9 @@ import {
   Download as DownloadIcon,
   FileDown,
   FileUp,
+  Clock,
+  Copy,
+  X,
 } from "lucide-react";
 import { formatBytes, formatDate } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
@@ -69,14 +76,46 @@ export default function Database() {
   const [triggers, setTriggers] = useState<any[]>([]);
   const [loadingTriggers, setLoadingTriggers] = useState(false);
 
+  // Table controls state - load from localStorage
+  const [perPage, setPerPage] = useState(() => {
+    const saved = localStorage.getItem("db_perPage");
+    return saved ? parseInt(saved, 10) : 25;
+  });
+  const [showAll, setShowAll] = useState(false);
+  const [filterText, setFilterText] = useState("");
+  const [sortCol, setSortCol] = useState("");
+  const [sortOrder, setSortOrder] = useState<"ASC" | "DESC">("ASC");
+  const [profiling, setProfiling] = useState(false);
+  const [showExplainModal, setShowExplainModal] = useState(false);
+  const [showPhpModal, setShowPhpModal] = useState(false);
+  const [explainData, setExplainData] = useState<any>(null);
+
+  // Inline cell editing state
+  const [editingCell, setEditingCell] = useState<{
+    rowIndex: number;
+    colName: string;
+    value: string;
+    originalRow: Record<string, any>;
+  } | null>(null);
+
+  // Persist perPage to localStorage
+  useEffect(() => {
+    localStorage.setItem("db_perPage", String(perPage));
+  }, [perPage]);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Queries
-  const { data: tableData, isLoading: loadingData } = useTableData(
-    selectedDB,
-    selectedTable,
-    page
-  );
+  // Queries - use table control options
+  const {
+    data: tableData,
+    isLoading: loadingData,
+    refetch: refetchTableData,
+  } = useTableData(selectedDB, selectedTable, page, {
+    perPage: showAll ? 10000 : perPage,
+    sortCol,
+    sortOrder,
+    profile: profiling,
+  });
 
   const { data: databases } = useDatabases();
   const { data: tableSchema } = useTableColumns(selectedDB, selectedTable);
@@ -432,6 +471,133 @@ export default function Database() {
   const currentSnapshotList =
     snapshots?.filter((s) => s.database === selectedDB) || [];
 
+  // Filter rows client-side based on filterText
+  const filteredRows = useMemo(() => {
+    const rows = searchResults?.rows || tableData?.rows || [];
+    if (!filterText.trim()) return rows;
+
+    const searchLower = filterText.toLowerCase();
+    return rows.filter((row: Record<string, any>) =>
+      Object.values(row).some(
+        (val) => val !== null && String(val).toLowerCase().includes(searchLower)
+      )
+    );
+  }, [searchResults, tableData, filterText]);
+
+  // Build current query for display
+  const currentQuery = useMemo(() => {
+    if (!selectedDB || !selectedTable) return "";
+    let q = `SELECT * FROM \`${selectedTable}\``;
+    if (sortCol) q += ` ORDER BY \`${sortCol}\` ${sortOrder}`;
+    q += ` LIMIT ${showAll ? "ALL" : perPage}`;
+    return q;
+  }, [selectedDB, selectedTable, sortCol, sortOrder, perPage, showAll]);
+
+  // Handle Explain SQL
+  const handleExplainSQL = async () => {
+    if (!selectedDB || !selectedTable) return;
+    const query = `EXPLAIN SELECT * FROM \`${selectedTable}\`${
+      sortCol ? ` ORDER BY \`${sortCol}\` ${sortOrder}` : ""
+    }`;
+    const result = await executeQueryMutation.mutateAsync({
+      database: selectedDB,
+      query,
+    });
+    setExplainData(result);
+    setShowExplainModal(true);
+  };
+
+  // Generate PHP code
+  const generatePhpCode = () => {
+    if (!selectedDB || !selectedTable) return "";
+    const query = `SELECT * FROM \`${selectedTable}\`${
+      sortCol ? ` ORDER BY \`${sortCol}\` ${sortOrder}` : ""
+    } LIMIT ${showAll ? 10000 : perPage}`;
+    return `<?php
+// Database connection
+$mysqli = new mysqli("localhost", "root", "", "${selectedDB}");
+if ($mysqli->connect_error) {
+    die("Connection failed: " . $mysqli->connect_error);
+}
+
+// Execute query
+$result = $mysqli->query("${query}");
+
+// Fetch results
+while ($row = $result->fetch_assoc()) {
+    print_r($row);
+}
+
+$mysqli->close();
+?>`;
+  };
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+  };
+
+  // Toggle column sort - click same column toggles direction, new column sorts ASC
+  const handleColumnSort = (colName: string) => {
+    if (sortCol === colName) {
+      setSortOrder(sortOrder === "ASC" ? "DESC" : "ASC");
+    } else {
+      setSortCol(colName);
+      setSortOrder("ASC");
+    }
+    setPage(1);
+  };
+
+  // Inline editing functions
+  const startInlineEdit = (
+    rowIndex: number,
+    colName: string,
+    value: any,
+    row: Record<string, any>
+  ) => {
+    setEditingCell({
+      rowIndex,
+      colName,
+      value: value === null ? "" : String(value),
+      originalRow: row,
+    });
+  };
+
+  const cancelInlineEdit = () => {
+    setEditingCell(null);
+  };
+
+  const saveInlineEdit = async () => {
+    if (!editingCell || !selectedDB || !selectedTable || !pkCol) return;
+
+    const pkValue = getValue(editingCell.originalRow, pkCol);
+    const newValue =
+      editingCell.value === ""
+        ? "NULL"
+        : `'${editingCell.value.replace(/'/g, "\\'")}'`;
+
+    const query = `UPDATE \`${selectedTable}\` SET \`${editingCell.colName}\` = ${newValue} WHERE \`${pkCol}\` = '${pkValue}'`;
+
+    try {
+      await executeQueryMutation.mutateAsync({
+        database: selectedDB,
+        query,
+      });
+      setEditingCell(null);
+      refetchTableData();
+    } catch (err) {
+      console.error("Failed to save:", err);
+    }
+  };
+
+  const handleInlineKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      saveInlineEdit();
+    } else if (e.key === "Escape") {
+      cancelInlineEdit();
+    }
+  };
+
   return (
     <div className="flex h-[calc(100vh-6rem)] -m-6 bg-[var(--background)] animate-fade-in relative">
       {/* Sidebar - Database Tree */}
@@ -648,6 +814,145 @@ export default function Database() {
           {/* Context: Table, Tab: Browse */}
           {activeTab === "browse" && selectedTable && (
             <div className="space-y-4">
+              {/* Action Links Bar */}
+              <div className="flex items-center gap-4 text-sm text-[var(--muted-foreground)] border-b border-[var(--border)] pb-3">
+                <button
+                  className="hover:text-[var(--primary)] hover:underline"
+                  onClick={() => refetchTableData()}
+                >
+                  Refresh
+                </button>
+                <button
+                  className="hover:text-[var(--primary)] hover:underline"
+                  onClick={handleExplainSQL}
+                >
+                  Explain SQL
+                </button>
+                <button
+                  className="hover:text-[var(--primary)] hover:underline"
+                  onClick={() => setShowPhpModal(true)}
+                >
+                  Create PHP code
+                </button>
+              </div>
+
+              {/* Controls Bar */}
+              <div className="flex flex-wrap items-center gap-4 py-2 px-3 bg-[var(--muted)]/30 rounded-md border border-[var(--border)]">
+                {/* Profiling */}
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <Checkbox
+                    checked={profiling}
+                    onChange={(e) => setProfiling(e.target.checked)}
+                  />
+                  <span>Profiling</span>
+                  {profiling && tableData?.query_time !== undefined && (
+                    <span className="text-[var(--primary)] font-medium">
+                      ({tableData.query_time.toFixed(4)}s)
+                    </span>
+                  )}
+                </label>
+
+                <div className="h-4 w-px bg-[var(--border)]" />
+
+                {/* Show All */}
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <Checkbox
+                    checked={showAll}
+                    onChange={(e) => {
+                      setShowAll(e.target.checked);
+                      setPage(1);
+                    }}
+                  />
+                  <span>Show all</span>
+                </label>
+
+                <div className="h-4 w-px bg-[var(--border)]" />
+
+                {/* Number of rows */}
+                <div className="flex items-center gap-2 text-sm">
+                  <span>Number of rows:</span>
+                  <select
+                    value={perPage}
+                    onChange={(e) => {
+                      setPerPage(Number(e.target.value));
+                      setPage(1);
+                    }}
+                    disabled={showAll}
+                    className="bg-[var(--background)] border border-[var(--border)] rounded px-2 py-1 text-sm disabled:opacity-50"
+                  >
+                    <option value={25}>25</option>
+                    <option value={50}>50</option>
+                    <option value={100}>100</option>
+                    <option value={250}>250</option>
+                    <option value={500}>500</option>
+                  </select>
+                </div>
+
+                <div className="h-4 w-px bg-[var(--border)]" />
+
+                {/* Filter rows */}
+                <div className="flex items-center gap-2 text-sm">
+                  <span>Filter rows:</span>
+                  <input
+                    type="text"
+                    value={filterText}
+                    onChange={(e) => setFilterText(e.target.value)}
+                    placeholder="Search this table"
+                    className="bg-[var(--background)] border border-[var(--border)] rounded px-2 py-1 text-sm w-40"
+                  />
+                  {filterText && (
+                    <button
+                      onClick={() => setFilterText("")}
+                      className="text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+
+                <div className="h-4 w-px bg-[var(--border)]" />
+
+                {/* Sort by key */}
+                <div className="flex items-center gap-2 text-sm">
+                  <span>Sort by key:</span>
+                  <select
+                    value={sortCol}
+                    onChange={(e) => {
+                      setSortCol(e.target.value);
+                      setPage(1);
+                    }}
+                    className="bg-[var(--background)] border border-[var(--border)] rounded px-2 py-1 text-sm"
+                  >
+                    <option value="">None</option>
+                    {tableSchema?.map((col) => (
+                      <option key={col.name} value={col.name}>
+                        {col.name}
+                      </option>
+                    ))}
+                  </select>
+                  {sortCol && (
+                    <button
+                      onClick={() =>
+                        setSortOrder(sortOrder === "ASC" ? "DESC" : "ASC")
+                      }
+                      className="px-2 py-1 text-xs bg-[var(--background)] border border-[var(--border)] rounded hover:bg-[var(--muted)]"
+                    >
+                      {sortOrder}
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Query Info */}
+              {profiling && tableData?.query_time !== undefined && (
+                <div className="text-sm text-[var(--muted-foreground)] bg-[#ffffcc] text-black px-3 py-2 rounded border border-yellow-400">
+                  <Clock size={14} className="inline mr-2" />
+                  Showing rows 0 - {filteredRows.length - 1} (
+                  {tableData?.total || 0} total, Query took{" "}
+                  {tableData.query_time.toFixed(4)} seconds.)
+                </div>
+              )}
+
               {loadingData || isSearching ? (
                 <div className="flex justify-center py-10">
                   <RefreshCw className="animate-spin text-[var(--muted-foreground)]" />
@@ -664,80 +969,139 @@ export default function Database() {
                         <tr>
                           <th className="px-4 py-3 font-medium">Actions</th>
                           {(searchResults || tableData).columns?.map(
-                            (col: any) => (
-                              <th
-                                key={typeof col === "string" ? col : col.name}
-                                className="px-4 py-3 font-medium whitespace-nowrap"
-                              >
-                                {typeof col === "string" ? col : col.name}
-                                <span className="ml-1 text-[10px] text-[var(--muted-foreground)] normal-case">
-                                  {typeof col === "string" ? "" : col.type}
-                                </span>
-                              </th>
-                            )
+                            (col: any) => {
+                              const colName =
+                                typeof col === "string" ? col : col.name;
+                              const colType =
+                                typeof col === "string" ? "" : col.type;
+                              const isSorted = sortCol === colName;
+                              return (
+                                <th
+                                  key={colName}
+                                  className="px-4 py-3 font-medium whitespace-nowrap cursor-pointer hover:bg-[var(--muted)]/50 select-none"
+                                  onClick={() => handleColumnSort(colName)}
+                                >
+                                  <div className="flex items-center gap-1">
+                                    {colName}
+                                    <span className="text-[10px] text-[var(--muted-foreground)] normal-case">
+                                      {colType}
+                                    </span>
+                                    {isSorted &&
+                                      (sortOrder === "ASC" ? (
+                                        <ArrowUp
+                                          size={12}
+                                          className="text-[var(--primary)]"
+                                        />
+                                      ) : (
+                                        <ArrowDown
+                                          size={12}
+                                          className="text-[var(--primary)]"
+                                        />
+                                      ))}
+                                  </div>
+                                </th>
+                              );
+                            }
                           )}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-[var(--border)]">
-                        {((searchResults || tableData).rows || []).map(
-                          (row: any, i: number) => (
-                            <tr
-                              key={i}
-                              className="hover:bg-[var(--muted)]/30 group"
-                            >
-                              <td className="px-4 py-2 w-20">
-                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                  <button
-                                    className="p-1 hover:text-blue-400"
-                                    onClick={() => startEdit(row)}
-                                  >
-                                    <Code2 size={14} />
-                                  </button>
-                                  <button
-                                    className="p-1 hover:text-red-400 disabled:opacity-30"
-                                    disabled={!pkCol}
-                                    onClick={() => handleDeleteRow(row)}
+                        {filteredRows.map((row: any, i: number) => (
+                          <tr
+                            key={i}
+                            className="hover:bg-[var(--muted)]/30 group"
+                          >
+                            <td className="px-4 py-2 w-20">
+                              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button
+                                  className="p-1 hover:text-blue-400"
+                                  onClick={() => startEdit(row)}
+                                >
+                                  <Code2 size={14} />
+                                </button>
+                                <button
+                                  className="p-1 hover:text-red-400 disabled:opacity-30"
+                                  disabled={!pkCol}
+                                  onClick={() => handleDeleteRow(row)}
+                                  title={
+                                    !pkCol
+                                      ? "No Primary Key found"
+                                      : "Delete Row"
+                                  }
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
+                            </td>
+                            {(searchResults || tableData).columns?.map(
+                              (col: any) => {
+                                const colName =
+                                  typeof col === "string" ? col : col.name;
+                                const val = getValue(row, colName);
+                                const isEditing =
+                                  editingCell?.rowIndex === i &&
+                                  editingCell?.colName === colName;
+
+                                return (
+                                  <td
+                                    key={colName}
+                                    className={`px-4 py-2 whitespace-nowrap max-w-[300px] ${
+                                      isEditing
+                                        ? ""
+                                        : "truncate cursor-pointer hover:bg-[var(--muted)]/30"
+                                    }`}
+                                    onClick={() => {
+                                      if (!isEditing && pkCol) {
+                                        startInlineEdit(i, colName, val, row);
+                                      }
+                                    }}
                                     title={
-                                      !pkCol
-                                        ? "No Primary Key found"
-                                        : "Delete Row"
+                                      pkCol
+                                        ? "Click to edit"
+                                        : "No primary key - cannot edit"
                                     }
                                   >
-                                    <Trash2 size={14} />
-                                  </button>
-                                </div>
-                              </td>
-                              {(searchResults || tableData).columns?.map(
-                                (col: any) => {
-                                  const colName =
-                                    typeof col === "string" ? col : col.name;
-                                  return (
-                                    <td
-                                      key={colName}
-                                      className="px-4 py-2 whitespace-nowrap max-w-[300px] truncate"
-                                    >
-                                      <span>
-                                        {(() => {
-                                          const val = getValue(row, colName);
-                                          if (val === null) return "NULL";
-                                          if (val === undefined)
-                                            return (
-                                              <span className="text-red-400 text-[10px]">
-                                                (missing)
-                                              </span>
-                                            );
-                                          return String(val);
-                                        })()}
+                                    {isEditing ? (
+                                      <input
+                                        type="text"
+                                        value={editingCell.value}
+                                        onChange={(e) =>
+                                          setEditingCell({
+                                            ...editingCell,
+                                            value: e.target.value,
+                                          })
+                                        }
+                                        onKeyDown={handleInlineKeyDown}
+                                        onBlur={saveInlineEdit}
+                                        autoFocus
+                                        className="w-full bg-[var(--background)] border border-[var(--primary)] rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
+                                      />
+                                    ) : (
+                                      <span
+                                        className={
+                                          val === null
+                                            ? "text-[var(--muted-foreground)] italic"
+                                            : ""
+                                        }
+                                      >
+                                        {val === null ? (
+                                          "NULL"
+                                        ) : val === undefined ? (
+                                          <span className="text-red-400 text-[10px]">
+                                            (missing)
+                                          </span>
+                                        ) : (
+                                          String(val)
+                                        )}
                                       </span>
-                                    </td>
-                                  );
-                                }
-                              )}
-                            </tr>
-                          )
-                        )}
-                        {((searchResults || tableData).rows || []).length ===
-                          0 && (
+                                    )}
+                                  </td>
+                                );
+                              }
+                            )}
+                          </tr>
+                        ))}
+                        {filteredRows.length === 0 && (
                           <tr>
                             <td
                               colSpan={
@@ -746,7 +1110,9 @@ export default function Database() {
                               }
                               className="px-4 py-8 text-center text-[var(--muted-foreground)] italic"
                             >
-                              No data found
+                              {filterText
+                                ? "No matching rows"
+                                : "No data found"}
                             </td>
                           </tr>
                         )}
@@ -762,12 +1128,13 @@ export default function Database() {
                           >
                             <div className="flex justify-between items-center">
                               <span>
-                                Showing{" "}
-                                {
-                                  ((searchResults || tableData).rows || [])
-                                    .length
-                                }{" "}
-                                rows
+                                Showing {filteredRows.length} of{" "}
+                                {tableData?.total || 0} rows
+                                {filterText && (
+                                  <span className="ml-1 text-blue-400">
+                                    (filtered by "{filterText}")
+                                  </span>
+                                )}
                                 {searchResults && (
                                   <span className="ml-2 text-blue-400 font-medium whitespace-nowrap">
                                     (Filtered results)
@@ -780,27 +1147,79 @@ export default function Database() {
                                   </span>
                                 )}
                               </span>
-                              <div className="flex gap-2">
-                                <Button
-                                  variant="secondary"
-                                  size="sm"
-                                  disabled={searchResults || page <= 1}
-                                  onClick={() => setPage((p) => p - 1)}
-                                >
-                                  Previous
-                                </Button>
-                                <Button
-                                  variant="secondary"
-                                  size="sm"
-                                  disabled={
-                                    searchResults ||
-                                    page >=
-                                      (searchResults || tableData).total_pages
-                                  }
-                                  onClick={() => setPage((p) => p + 1)}
-                                >
-                                  Next
-                                </Button>
+                              <div className="flex items-center gap-2">
+                                {!showAll &&
+                                  !searchResults &&
+                                  (tableData?.total_pages ?? 1) > 1 && (
+                                    <>
+                                      <Button
+                                        variant="secondary"
+                                        size="sm"
+                                        disabled={page <= 1}
+                                        onClick={() => setPage(1)}
+                                        className="px-2"
+                                      >
+                                        First
+                                      </Button>
+                                      <Button
+                                        variant="secondary"
+                                        size="sm"
+                                        disabled={page <= 1}
+                                        onClick={() => setPage((p) => p - 1)}
+                                        className="px-2"
+                                      >
+                                        <ChevronLeft size={14} />
+                                      </Button>
+                                      <span className="flex items-center gap-1 text-xs">
+                                        Page
+                                        <input
+                                          type="number"
+                                          value={page}
+                                          onChange={(e) => {
+                                            const val = parseInt(
+                                              e.target.value,
+                                              10
+                                            );
+                                            if (
+                                              val >= 1 &&
+                                              val <=
+                                                (tableData?.total_pages || 1)
+                                            ) {
+                                              setPage(val);
+                                            }
+                                          }}
+                                          className="w-12 text-center bg-[var(--background)] border border-[var(--border)] rounded px-1 py-0.5"
+                                          min={1}
+                                          max={tableData?.total_pages || 1}
+                                        />
+                                        of {tableData?.total_pages || 1}
+                                      </span>
+                                      <Button
+                                        variant="secondary"
+                                        size="sm"
+                                        disabled={
+                                          page >= (tableData?.total_pages || 1)
+                                        }
+                                        onClick={() => setPage((p) => p + 1)}
+                                        className="px-2"
+                                      >
+                                        <ChevronRight size={14} />
+                                      </Button>
+                                      <Button
+                                        variant="secondary"
+                                        size="sm"
+                                        disabled={
+                                          page >= (tableData?.total_pages || 1)
+                                        }
+                                        onClick={() =>
+                                          setPage(tableData?.total_pages || 1)
+                                        }
+                                        className="px-2"
+                                      >
+                                        Last
+                                      </Button>
+                                    </>
+                                  )}
                               </div>
                             </div>
                           </td>
@@ -1809,6 +2228,88 @@ export default function Database() {
           )}
         </div>
       </div>
+
+      {/* Explain SQL Modal */}
+      {showExplainModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-[var(--card)] rounded-lg shadow-xl max-w-2xl w-full m-4 max-h-[80vh] overflow-hidden">
+            <div className="flex items-center justify-between p-4 border-b border-[var(--border)]">
+              <h3 className="font-semibold">Explain SQL</h3>
+              <button
+                onClick={() => setShowExplainModal(false)}
+                className="text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="p-4 overflow-auto max-h-[60vh]">
+              <div className="mb-3 p-2 bg-[var(--muted)]/50 rounded font-mono text-sm">
+                {currentQuery}
+              </div>
+              {explainData?.rows?.length > 0 ? (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-[var(--border)]">
+                      {explainData.columns?.map((col: string) => (
+                        <th key={col} className="px-2 py-1 text-left text-xs">
+                          {col}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {explainData.rows.map((row: any, i: number) => (
+                      <tr key={i} className="border-b border-[var(--border)]">
+                        {explainData.columns?.map((col: string) => (
+                          <td key={col} className="px-2 py-1 text-xs">
+                            {row[col] ?? "-"}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <p className="text-[var(--muted-foreground)]">
+                  No EXPLAIN data available
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create PHP Code Modal */}
+      {showPhpModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-[var(--card)] rounded-lg shadow-xl max-w-2xl w-full m-4 max-h-[80vh] overflow-hidden">
+            <div className="flex items-center justify-between p-4 border-b border-[var(--border)]">
+              <h3 className="font-semibold">PHP Code</h3>
+              <button
+                onClick={() => setShowPhpModal(false)}
+                className="text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="p-4 overflow-auto max-h-[60vh]">
+              <div className="flex justify-end mb-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => copyToClipboard(generatePhpCode())}
+                  className="gap-1"
+                >
+                  <Copy size={14} /> Copy
+                </Button>
+              </div>
+              <pre className="bg-[var(--muted)]/50 p-4 rounded text-sm font-mono overflow-x-auto whitespace-pre-wrap">
+                {generatePhpCode()}
+              </pre>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -46,6 +46,7 @@ type TableData struct {
 	Page       int                      `json:"page"`
 	PerPage    int                      `json:"per_page"`
 	TotalPages int                      `json:"total_pages"`
+	QueryTime  float64                  `json:"query_time,omitempty"` // Query execution time in seconds
 }
 
 // Snapshot represents a database snapshot
@@ -384,6 +385,140 @@ func (d *DatabaseService) GetTableData(database, table string, page, perPage int
 		Page:       page,
 		PerPage:    perPage,
 		TotalPages: totalPages,
+	}, nil
+}
+
+// GetTableDataEx returns paginated data with sorting and optional profiling
+func (d *DatabaseService) GetTableDataEx(database, table string, page, perPage int, sortCol, sortOrder string, profile bool) (*TableData, error) {
+	if err := d.ensureConnected(); err != nil {
+		return nil, err
+	}
+
+	if _, err := d.db.Exec("USE " + database); err != nil {
+		return nil, err
+	}
+
+	// Get columns for validation and response
+	columns, err := d.GetTableColumns(database, table)
+	if err != nil {
+		return nil, err
+	}
+
+	// Validate sort column against schema to prevent SQL injection
+	validSortCol := ""
+	if sortCol != "" {
+		for _, col := range columns {
+			if col.Name == sortCol {
+				validSortCol = sortCol
+				break
+			}
+		}
+	}
+
+	// Validate sort order
+	if sortOrder != "DESC" {
+		sortOrder = "ASC"
+	}
+
+	// Get total count
+	var total int64
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM `%s`", table)
+	if err := d.db.QueryRow(countQuery).Scan(&total); err != nil {
+		return nil, err
+	}
+
+	// Calculate pagination
+	if perPage <= 0 {
+		perPage = 50
+	}
+	if page <= 0 {
+		page = 1
+	}
+	offset := (page - 1) * perPage
+	totalPages := int((total + int64(perPage) - 1) / int64(perPage))
+
+	// Build data query
+	dataQuery := fmt.Sprintf("SELECT * FROM `%s`", table)
+	if validSortCol != "" {
+		dataQuery += fmt.Sprintf(" ORDER BY `%s` %s", validSortCol, sortOrder)
+	}
+	dataQuery += fmt.Sprintf(" LIMIT %d OFFSET %d", perPage, offset)
+
+	var queryTime float64
+
+	// Enable profiling if requested
+	if profile {
+		d.db.Exec("SET profiling = 1")
+	}
+
+	// Execute query
+	rows, err := d.db.Query(dataQuery)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	// Get profiling data
+	if profile {
+		var profileRows *sql.Rows
+		profileRows, err = d.db.Query("SHOW PROFILE")
+		if err == nil {
+			defer profileRows.Close()
+			for profileRows.Next() {
+				var status string
+				var duration float64
+				if err := profileRows.Scan(&status, &duration); err == nil {
+					queryTime += duration
+				}
+			}
+		}
+		d.db.Exec("SET profiling = 0")
+	}
+
+	// Get column names
+	colNames, err := rows.Columns()
+	if err != nil {
+		return nil, err
+	}
+
+	// Scan rows into maps
+	var data []map[string]interface{}
+	for rows.Next() {
+		values := make([]interface{}, len(colNames))
+		valuePtrs := make([]interface{}, len(colNames))
+		for i := range values {
+			valuePtrs[i] = &values[i]
+		}
+
+		if err := rows.Scan(valuePtrs...); err != nil {
+			continue
+		}
+
+		row := make(map[string]interface{})
+		for i, col := range colNames {
+			key := col
+			if i < len(columns) {
+				key = columns[i].Name
+			}
+
+			val := values[i]
+			if b, ok := val.([]byte); ok {
+				row[key] = string(b)
+			} else {
+				row[key] = val
+			}
+		}
+		data = append(data, row)
+	}
+
+	return &TableData{
+		Columns:    columns,
+		Rows:       data,
+		Total:      total,
+		Page:       page,
+		PerPage:    perPage,
+		TotalPages: totalPages,
+		QueryTime:  queryTime,
 	}, nil
 }
 

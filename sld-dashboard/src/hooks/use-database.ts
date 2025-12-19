@@ -8,8 +8,26 @@ export const dbKeys = {
   tables: (db: string) => [...dbKeys.all, "tables", db] as const,
   columns: (db: string, table: string) =>
     [...dbKeys.all, "columns", db, table] as const,
-  data: (db: string, table: string, page: number) =>
-    [...dbKeys.all, "data", db, table, page] as const,
+  data: (
+    db: string,
+    table: string,
+    page: number,
+    perPage: number,
+    sortCol: string,
+    sortOrder: string,
+    profile: boolean
+  ) =>
+    [
+      ...dbKeys.all,
+      "data",
+      db,
+      table,
+      page,
+      perPage,
+      sortCol,
+      sortOrder,
+      profile,
+    ] as const,
   snapshots: () => [...dbKeys.all, "snapshots"] as const,
 };
 
@@ -28,14 +46,42 @@ export function useTables(database: string | null) {
   });
 }
 
+export interface TableDataOptions {
+  perPage?: number;
+  sortCol?: string;
+  sortOrder?: "ASC" | "DESC";
+  profile?: boolean;
+}
+
 export function useTableData(
   database: string | null,
   table: string | null,
-  page: number
+  page: number,
+  options: TableDataOptions = {}
 ) {
+  const {
+    perPage = 50,
+    sortCol = "",
+    sortOrder = "ASC",
+    profile = false,
+  } = options;
   return useQuery({
-    queryKey: dbKeys.data(database || "", table || "", page),
-    queryFn: () => api.getTableData(database!, table!, page),
+    queryKey: dbKeys.data(
+      database || "",
+      table || "",
+      page,
+      perPage,
+      sortCol,
+      sortOrder,
+      profile
+    ),
+    queryFn: () =>
+      api.getTableData(database!, table!, page, {
+        perPage,
+        sortCol,
+        sortOrder,
+        profile,
+      }),
     enabled: !!database && !!table,
   });
 }

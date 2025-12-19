@@ -84,6 +84,7 @@ export interface TableData {
   page: number;
   per_page: number;
   total_pages: number;
+  query_time?: number; // Query execution time in seconds (when profiling enabled)
 }
 
 export interface Snapshot {
@@ -140,11 +141,25 @@ class DaemonApi {
   async getTableData(
     database: string,
     table: string,
-    page: number = 1
+    page: number = 1,
+    options: {
+      perPage?: number;
+      sortCol?: string;
+      sortOrder?: "ASC" | "DESC";
+      profile?: boolean;
+    } = {}
   ): Promise<TableData> {
-    return this.request<TableData>(
-      `/db/table?db=${database}&table=${table}&page=${page}`
-    );
+    const params = new URLSearchParams({
+      db: database,
+      table: table,
+      limit: String(options.perPage || 50),
+      offset: String((page - 1) * (options.perPage || 50)),
+    });
+    if (options.sortCol) params.set("sort", options.sortCol);
+    if (options.sortOrder) params.set("order", options.sortOrder);
+    if (options.profile) params.set("profile", "true");
+
+    return this.request<TableData>(`/db/table?${params.toString()}`);
   }
 
   async getTableSchema(database: string, table: string): Promise<ColumnInfo[]> {
