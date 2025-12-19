@@ -37,11 +37,22 @@ type ProjectOptions struct {
 // Editors supported for detection
 var supportedEditors = []Editor{
 	{ID: "vscode", Name: "VS Code", Bin: "code", Icon: "vscode"},
+	{ID: "cursor", Name: "Cursor", Bin: "cursor", Icon: "cursor"},
+	{ID: "vscodium", Name: "VSCodium", Bin: "codium", Icon: "vscode"},
+	{ID: "zed", Name: "Zed", Bin: "zed", Icon: "terminal"},
 	{ID: "phpstorm", Name: "PhpStorm", Bin: "phpstorm", Icon: "phpstorm"},
+	{ID: "webstorm", Name: "WebStorm", Bin: "webstorm", Icon: "terminal"},
+	{ID: "intellij", Name: "IntelliJ IDEA", Bin: "idea", Icon: "terminal"},
+	{ID: "goland", Name: "GoLand", Bin: "goland", Icon: "terminal"},
+	{ID: "pycharm", Name: "PyCharm", Bin: "charm", Icon: "terminal"},
+	{ID: "clion", Name: "CLion", Bin: "clion", Icon: "terminal"},
+	{ID: "rider", Name: "Rider", Bin: "rider", Icon: "terminal"},
 	{ID: "sublime", Name: "Sublime Text", Bin: "subl", Icon: "sublime"},
 	{ID: "atom", Name: "Atom", Bin: "atom", Icon: "atom"},
 	{ID: "nvim", Name: "Neovim", Bin: "nvim", Icon: "terminal"},
-	{ID: "cursor", Name: "Cursor", Bin: "cursor", Icon: "cursor"}, // Adding Cursor!
+	{ID: "vim", Name: "Vim", Bin: "vim", Icon: "terminal"},
+	{ID: "nano", Name: "Nano", Bin: "nano", Icon: "terminal"},
+	{ID: "emacs", Name: "Emacs", Bin: "emacs", Icon: "terminal"},
 }
 
 // DetectEditors scans path for available editors
