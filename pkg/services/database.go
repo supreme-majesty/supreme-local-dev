@@ -769,8 +769,14 @@ func (d *DatabaseService) ImportSQL(database, sqlFilePath string) error {
 	return nil
 }
 
-// GetForeignValues returns distinct values from a referenced table
-func (d *DatabaseService) GetForeignValues(database, table, column string) ([]string, error) {
+// ForeignValue represents a value-label pair for foreign keys
+type ForeignValue struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
+}
+
+// GetForeignValues returns distinct values from a referenced table with labels
+func (d *DatabaseService) GetForeignValues(database, table, column string) ([]ForeignValue, error) {
 	if err := d.ensureConnected(); err != nil {
 		return nil, err
 	}
@@ -778,20 +784,89 @@ func (d *DatabaseService) GetForeignValues(database, table, column string) ([]st
 		return nil, err
 	}
 
+	// 1. Get columns to find a likely label
+	cols, err := d.GetTableColumns(database, table)
+	if err != nil {
+		return nil, err
+	}
+
+	labelCol := column // Default to ID itself
+
+	// Heuristic: Look for name, title, email, slug, code
+	candidates := []string{"name", "title", "label", "email", "username", "slug", "code"}
+	found := false
+
+	// First pass: exact match
+	for _, cand := range candidates {
+		for _, c := range cols {
+			if strings.EqualFold(c.Name, cand) {
+				labelCol = c.Name
+				found = true
+				break
+			}
+		}
+		if found {
+			break
+		}
+	}
+
+	// Second pass: contains match (e.g., full_name, article_title)
+	if !found {
+		for _, cand := range candidates {
+			for _, c := range cols {
+				if strings.Contains(strings.ToLower(c.Name), cand) {
+					labelCol = c.Name
+					found = true
+					break
+				}
+			}
+			if found {
+				break
+			}
+		}
+	}
+
 	// Safety check: quote identifiers
-	query := fmt.Sprintf("SELECT DISTINCT `%s` FROM `%s` ORDER BY `%s` LIMIT 100", column, table, column)
+	query := fmt.Sprintf("SELECT DISTINCT `%s`, `%s` FROM `%s` ORDER BY `%s` LIMIT 100", column, labelCol, table, labelCol)
+	// If labelCol is same as column, we only select once to avoid ambiguity in scan?
+	// Actually SQL handles `SELECT id, id ...` fine, but let's be clean.
+	if labelCol == column {
+		query = fmt.Sprintf("SELECT DISTINCT `%s` FROM `%s` ORDER BY `%s` LIMIT 100", column, table, column)
+	}
+
 	rows, err := d.db.Query(query)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var values []string
+	var results []ForeignValue
 	for rows.Next() {
-		var val sql.NullString
-		if err := rows.Scan(&val); err == nil && val.Valid {
-			values = append(values, val.String)
+		var val string
+		var label string
+
+		if labelCol == column {
+			if err := rows.Scan(&val); err != nil {
+				return nil, err
+			}
+			label = val
+		} else {
+			if err := rows.Scan(&val, &label); err != nil {
+				return nil, err
+			}
 		}
+
+		// Create composite label if different
+		displayLabel := val
+		if label != val {
+			displayLabel = fmt.Sprintf("%s - %s", val, label)
+		}
+
+		results = append(results, ForeignValue{
+			Value: val,
+			Label: displayLabel,
+		})
 	}
-	return values, nil
+
+	return results, nil
 }

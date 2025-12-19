@@ -99,7 +99,9 @@ export default function Database() {
     value: string;
     originalRow: Record<string, any>;
   } | null>(null);
-  const [fkOptions, setFkOptions] = useState<string[] | null>(null);
+  const [fkOptions, setFkOptions] = useState<
+    { value: string; label: string }[] | null
+  >(null);
 
   // Persist perPage to localStorage
   useEffect(() => {
@@ -1129,8 +1131,11 @@ $mysqli->close();
                                                   Select...
                                                 </option>
                                                 {fkOptions.map((opt) => (
-                                                  <option key={opt} value={opt}>
-                                                    {opt}
+                                                  <option
+                                                    key={opt.value}
+                                                    value={opt.value}
+                                                  >
+                                                    {opt.label}
                                                   </option>
                                                 ))}
                                               </select>
@@ -1242,9 +1247,11 @@ $mysqli->close();
                                         </span>
                                         {!isEditing && isFK && val && (
                                           <button
-                                            className="opacity-0 group-hover/cell:opacity-100 p-0.5 text-[var(--muted-foreground)] hover:text-[var(--primary)] transition-opacity bg-[var(--card)] rounded shadow-sm border border-[var(--border)] absolute right-0 top-1/2 -translate-y-1/2"
+                                            className="opacity-0 group-hover/cell:opacity-100 p-0.5 text-[var(--muted-foreground)] hover:text-[var(--primary)] transition-opacity bg-[var(--card)] rounded shadow-sm border border-[var(--border)] absolute right-0 top-1/2 -translate-y-1/2 z-10 cursor-pointer"
                                             onClick={(e) => {
+                                              e.preventDefault(); // Ensure prevent default
                                               e.stopPropagation();
+
                                               setSelectedDB(selectedDB!);
                                               setSelectedTable(
                                                 col.foreign_key!.table

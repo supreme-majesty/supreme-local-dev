@@ -176,9 +176,11 @@ class DaemonApi {
     database: string,
     table: string,
     column: string
-  ): Promise<string[]> {
+  ): Promise<{ value: string; label: string }[]> {
     const params = new URLSearchParams({ database, table, column });
-    return this.request<string[]>(`/db/foreign-values?${params.toString()}`);
+    return this.request<{ value: string; label: string }[]>(
+      `/db/foreign-values?${params.toString()}`
+    );
   }
   // Actually, wait, let's optimize. The backend `ExecuteQuery` can run `DESCRIBE`.
   // But let's keep it simple. Using `getTableData` is fine for now.
