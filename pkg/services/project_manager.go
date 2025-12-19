@@ -43,8 +43,13 @@ var supportedEditors = []Editor{
 	{ID: "phpstorm", Name: "PhpStorm", Bin: "phpstorm", Icon: "phpstorm"},
 	{ID: "webstorm", Name: "WebStorm", Bin: "webstorm", Icon: "terminal"},
 	{ID: "intellij", Name: "IntelliJ IDEA", Bin: "idea", Icon: "terminal"},
+	{ID: "intellij-ult", Name: "IntelliJ IDEA (Ultimate)", Bin: "intellij-idea-ultimate", Icon: "terminal"},
+	{ID: "intellij-ce", Name: "IntelliJ IDEA (CE)", Bin: "intellij-idea-community", Icon: "terminal"},
 	{ID: "goland", Name: "GoLand", Bin: "goland", Icon: "terminal"},
 	{ID: "pycharm", Name: "PyCharm", Bin: "charm", Icon: "terminal"},
+	{ID: "pycharm-pro", Name: "PyCharm (Pro)", Bin: "pycharm-professional", Icon: "terminal"},
+	{ID: "pycharm-ce", Name: "PyCharm (CE)", Bin: "pycharm-community", Icon: "terminal"},
+	{ID: "android-studio", Name: "Android Studio", Bin: "android-studio", Icon: "terminal"},
 	{ID: "clion", Name: "CLion", Bin: "clion", Icon: "terminal"},
 	{ID: "rider", Name: "Rider", Bin: "rider", Icon: "terminal"},
 	{ID: "sublime", Name: "Sublime Text", Bin: "subl", Icon: "sublime"},
@@ -53,17 +58,53 @@ var supportedEditors = []Editor{
 	{ID: "vim", Name: "Vim", Bin: "vim", Icon: "terminal"},
 	{ID: "nano", Name: "Nano", Bin: "nano", Icon: "terminal"},
 	{ID: "emacs", Name: "Emacs", Bin: "emacs", Icon: "terminal"},
+	{ID: "antigravity", Name: "Antigravity", Bin: "antigravity", Icon: "terminal"},
 }
 
 // DetectEditors scans path for available editors
 func (pm *ProjectManager) DetectEditors() []Editor {
 	var available []Editor
+	// Common paths to check beyond just PATH
+	extraPaths := []string{
+		"/snap/bin",
+		"/usr/local/bin",
+		"/usr/bin",
+		"/opt/bin",
+	}
+
+	// Add ~/.local/bin
+	if home, err := os.UserHomeDir(); err == nil {
+		extraPaths = append(extraPaths, filepath.Join(home, ".local", "bin"))
+		extraPaths = append(extraPaths, filepath.Join(home, "Applications")) // Common for AppImages
+	}
+
 	for _, ed := range supportedEditors {
+		found := false
+
+		// 1. Check PATH
 		if path, err := exec.LookPath(ed.Bin); err == nil && path != "" {
+			// Update binary path to absolute if found
+			ed.Bin = path
 			available = append(available, ed)
-		} else if runtime.GOOS == "darwin" {
-			// Mac specific checks for common app locations if not in PATH
-			// This is a basic fallback, better to rely on `open -a` on Mac, but knowing what's installed is good.
+			found = true
+		}
+
+		// 2. Check explicit paths if not found
+		if !found {
+			for _, searchPath := range extraPaths {
+				fullPath := filepath.Join(searchPath, ed.Bin)
+				if _, err := os.Stat(fullPath); err == nil {
+					ed.Bin = fullPath
+					available = append(available, ed)
+					found = true
+					break
+				}
+			}
+		}
+
+		// 3. MacOS specific checks (optional, keeping placeholder)
+		if !found && runtime.GOOS == "darwin" {
+			// ...
 		}
 	}
 	return available

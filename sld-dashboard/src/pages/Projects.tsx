@@ -321,9 +321,6 @@ export default function Projects() {
                   <div className="font-medium text-sm text-[var(--foreground)]">
                     {editor.name}
                   </div>
-                  <div className="text-xs text-[var(--muted-foreground)] font-mono">
-                    {editor.bin}
-                  </div>
                 </div>
               </button>
             ))}
