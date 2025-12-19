@@ -19,6 +19,8 @@ import {
   Download as DownloadIcon,
   FileDown,
   FileUp,
+  X,
+  ChevronsRight,
 } from "lucide-react";
 import { formatBytes, formatDate } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
@@ -67,6 +69,7 @@ export default function Database() {
   const [restoreAfterImport, setRestoreAfterImport] = useState(true);
   const [triggers, setTriggers] = useState<any[]>([]);
   const [loadingTriggers, setLoadingTriggers] = useState(false);
+  const [quickFilter, setQuickFilter] = useState("");
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
