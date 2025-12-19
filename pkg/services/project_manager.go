@@ -118,7 +118,7 @@ func (pm *ProjectManager) ListDirectories(path string) ([]string, error) {
 
 	entries, err := os.ReadDir(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to list directories in %s: %w", path, err)
 	}
 
 	var dirs []string

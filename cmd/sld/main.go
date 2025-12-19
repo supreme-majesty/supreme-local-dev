@@ -192,6 +192,7 @@ After=network.target nginx.service
 
 [Service]
 Type=simple
+Environment=SUDO_USER=%s
 ExecStart=%s daemon
 Restart=on-failure
 RestartSec=5
@@ -200,7 +201,7 @@ StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
-`, exePath)
+`, os.Getenv("SUDO_USER"), exePath)
 
 	servicePath := "/etc/systemd/system/sld-daemon.service"
 	if err := os.WriteFile(servicePath, []byte(serviceContent), 0644); err != nil {
@@ -680,6 +681,7 @@ After=network.target nginx.service
 
 [Service]
 Type=simple
+Environment=SUDO_USER=%s
 ExecStart=%s daemon
 Restart=on-failure
 RestartSec=5
@@ -688,7 +690,7 @@ StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
-`, exePath)
+`, os.Getenv("SUDO_USER"), exePath)
 
 		servicePath := "/etc/systemd/system/sld-daemon.service"
 		if err := os.WriteFile(servicePath, []byte(serviceContent), 0644); err != nil {
