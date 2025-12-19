@@ -149,6 +149,19 @@ function DatabaseParamsNode({
             className="flex items-center justify-end gap-2 px-2 py-1 mb-1"
             onClick={(e) => e.stopPropagation()}
           >
+            <div className="flex gap-1">
+              <span
+                className={cn(
+                  "text-xs tracking-widest cursor-pointer",
+                  page > 1
+                    ? "text-[var(--muted-foreground)] hover:text-[var(--primary)]"
+                    : "text-[var(--muted)] cursor-not-allowed"
+                )}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                {"<<<"}
+              </span>
+            </div>
             <div className="flex items-center gap-1">
               <select
                 value={safePage}
@@ -166,12 +179,15 @@ function DatabaseParamsNode({
             </div>
             <div className="flex gap-1">
               <span
-                className="text-xs text-[var(--muted-foreground)] tracking-widest cursor-pointer hover:text-[var(--primary)]"
-                onClick={() =>
-                  setPage((p) => (p === totalPages ? p - 1 : p + 1))
-                }
+                className={cn(
+                  "text-xs tracking-widest cursor-pointer",
+                  page < totalPages
+                    ? "text-[var(--muted-foreground)] hover:text-[var(--primary)]"
+                    : "text-[var(--muted)] cursor-not-allowed"
+                )}
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
               >
-                {page === totalPages ? "<<<" : ">>>"}
+                {">>>"}
               </span>
             </div>
           </div>
