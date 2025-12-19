@@ -7,7 +7,7 @@ import { Checkbox } from "@/components/ui/Checkbox";
 interface DataFormProps {
   columns: ColumnInfo[];
   initialData?: Record<string, any>;
-  onSubmit: (data: Record<string, any>) => void;
+  onSubmit: (data: Record<string, any>, mode: "save" | "save_and_add") => void;
   isLoading?: boolean;
 }
 
@@ -56,22 +56,22 @@ export function DataForm({
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = (
+    e: React.FormEvent,
+    mode: "save" | "save_and_add" = "save"
+  ) => {
     e.preventDefault();
     const finalData: Record<string, any> = {};
     columns.forEach((col) => {
       if (nulls[col.name]) {
         finalData[col.name] = null;
       } else {
-        // Only include if defined in formData (or empty string if handled)
-        // For Insert, if it's undefined and has default, we might want to skip it?
-        // For now, let's send what we have.
         if (formData[col.name] !== undefined) {
           finalData[col.name] = formData[col.name];
         }
       }
     });
-    onSubmit(finalData);
+    onSubmit(finalData, mode);
   };
 
   return (
@@ -101,17 +101,49 @@ export function DataForm({
                   {col.type}
                 </td>
                 <td className="px-4 py-3">
-                  <Input
-                    value={
-                      formData[col.name] === null
-                        ? ""
-                        : formData[col.name] || ""
+                  {(() => {
+                    const type = col.type.toLowerCase();
+                    let inputType = "text";
+                    if (
+                      type.includes("int") ||
+                      type.includes("decimal") ||
+                      type.includes("float") ||
+                      type.includes("double")
+                    ) {
+                      inputType = "number";
+                    } else if (
+                      type.includes("datetime") ||
+                      type.includes("timestamp")
+                    ) {
+                      inputType = "datetime-local";
+                    } else if (type.includes("date")) {
+                      inputType = "date";
                     }
-                    onChange={(e) => handleChange(col.name, e.target.value)}
-                    disabled={nulls[col.name]}
-                    className="h-8 font-mono text-sm max-w-md"
-                    placeholder={col.default ? `Default: ${col.default}` : ""}
-                  />
+
+                    return (
+                      <Input
+                        type={inputType}
+                        value={
+                          formData[col.name] === null
+                            ? ""
+                            : formData[col.name] || ""
+                        }
+                        onChange={(e) => handleChange(col.name, e.target.value)}
+                        disabled={nulls[col.name]}
+                        className="h-8 font-mono text-sm w-full"
+                        placeholder={
+                          col.default ? `Default: ${col.default}` : ""
+                        }
+                        step={
+                          type.includes("decimal") ||
+                          type.includes("float") ||
+                          type.includes("double")
+                            ? "any"
+                            : undefined
+                        }
+                      />
+                    );
+                  })()}
                 </td>
                 <td className="px-4 py-3 text-center">
                   {col.nullable && (
@@ -135,9 +167,25 @@ export function DataForm({
         <Button type="button" variant="ghost">
           Cancel
         </Button>
-        <Button type="submit" loading={isLoading}>
-          Save
-        </Button>
+        <div className="flex gap-2">
+          {!initialData && (
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={(e) => handleSubmit(e, "save_and_add")}
+              loading={isLoading}
+            >
+              Save & Add Another
+            </Button>
+          )}
+          <Button
+            type="button"
+            onClick={(e) => handleSubmit(e, "save")}
+            loading={isLoading}
+          >
+            {initialData ? "Update Row" : "Save"}
+          </Button>
+        </div>
       </div>
     </form>
   );

@@ -55,6 +55,7 @@ export default function Database() {
   const [editingRow, setEditingRow] = useState<Record<string, any> | null>(
     null
   );
+  const [insertFormKey, setInsertFormKey] = useState(0);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -186,7 +187,10 @@ export default function Database() {
     executeQueryMutation.mutate({ database: selectedDB, query });
   };
 
-  const handleSaveRow = (data: Record<string, any>) => {
+  const handleSaveRow = (
+    data: Record<string, any>,
+    mode: "save" | "save_and_add" = "save"
+  ) => {
     if (!selectedDB || !selectedTable) return;
 
     let query = "";
@@ -220,8 +224,12 @@ export default function Database() {
       { database: selectedDB, query },
       {
         onSuccess: () => {
-          setActiveTab("browse");
-          setEditingRow(null);
+          if (mode === "save_and_add") {
+            setInsertFormKey((k) => k + 1);
+          } else {
+            setActiveTab("browse");
+            setEditingRow(null);
+          }
         },
       }
     );
@@ -626,7 +634,7 @@ export default function Database() {
 
           {/* Context: Table, Tab: Insert */}
           {activeTab === "insert" && selectedTable && tableSchema && (
-            <div className="max-w-4xl mx-auto mt-8">
+            <div className="max-w-6xl mx-auto mt-8">
               <Card>
                 <CardHeader>
                   <CardTitle className="text-lg flex items-center gap-2">
@@ -637,81 +645,12 @@ export default function Database() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <form
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      const formData = new FormData(e.currentTarget);
-                      const data: Record<string, any> = {};
-                      tableSchema.forEach((col) => {
-                        const val = formData.get(col.name);
-                        if (val !== "" && val !== null) {
-                          data[col.name] = val;
-                        } else if (col.nullable || col.default) {
-                          // Skip sending empty string for nullable/default cols to let DB handle it
-                          // Or strictly send null? Let's skip to allow defaults.
-                        } else {
-                          // Send empty string if not nullable and no default (strict mode?)
-                          data[col.name] = "";
-                        }
-                      });
-                      handleSaveRow(data);
-                    }}
-                    className="space-y-4"
-                  >
-                    <div className="grid grid-cols-[200px_1fr_100px] gap-4 font-medium text-sm text-[var(--muted-foreground)] px-4 mb-2">
-                      <div>Column</div>
-                      <div>Value</div>
-                      <div>Type</div>
-                    </div>
-
-                    <div className="space-y-2 border-t border-[var(--border)] pt-4">
-                      {tableSchema.map((col) => (
-                        <div
-                          key={col.name}
-                          className="grid grid-cols-[200px_1fr_100px] gap-4 items-center px-4"
-                        >
-                          <Label
-                            htmlFor={`field-${col.name}`}
-                            className="truncate"
-                            title={col.name}
-                          >
-                            {col.name}
-                            {col.key === "PRI" && (
-                              <span className="text-yellow-500 ml-1 text-[10px]">
-                                (PK)
-                              </span>
-                            )}
-                          </Label>
-                          <Input
-                            id={`field-${col.name}`}
-                            name={col.name}
-                            placeholder={
-                              col.default
-                                ? `Default: ${col.default}`
-                                : col.nullable
-                                ? "NULL"
-                                : ""
-                            }
-                          />
-                          <div
-                            className="text-xs text-[var(--muted-foreground)] truncate"
-                            title={col.type}
-                          >
-                            {col.type}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-
-                    <div className="flex justify-end pt-4 border-t border-[var(--border)]">
-                      <Button
-                        type="submit"
-                        loading={executeQueryMutation.isPending}
-                      >
-                        <Plus size={16} className="mr-2" /> Insert
-                      </Button>
-                    </div>
-                  </form>
+                  <DataForm
+                    key={`insert-${insertFormKey}`}
+                    columns={tableSchema}
+                    onSubmit={handleSaveRow}
+                    isLoading={executeQueryMutation.isPending}
+                  />
                 </CardContent>
               </Card>
             </div>
@@ -850,37 +789,27 @@ export default function Database() {
             </div>
           )}
 
-          {/* Context: Insert / Edit */}
-          {(activeTab === "insert" || activeTab === "edit") &&
-            selectedTable &&
-            tableSchema && (
-              <div className="max-w-4xl mx-auto">
-                <Card>
-                  <CardHeader>
-                    <CardTitle>
-                      {activeTab === "edit" ? "Edit Row" : "Insert Row"}
-                    </CardTitle>
-                    <CardDescription>
-                      {activeTab === "edit"
-                        ? `Editing row in table ${selectedTable}`
-                        : `Insert new row into ${selectedTable}`}
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <DataForm
-                      columns={tableSchema}
-                      initialData={
-                        activeTab === "edit"
-                          ? editingRow || undefined
-                          : undefined
-                      }
-                      onSubmit={handleSaveRow}
-                      isLoading={executeQueryMutation.isPending}
-                    />
-                  </CardContent>
-                </Card>
-              </div>
-            )}
+          {/* Context: Edit */}
+          {activeTab === "edit" && selectedTable && tableSchema && (
+            <div className="max-w-4xl mx-auto">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Edit Row</CardTitle>
+                  <CardDescription>
+                    Editing row in table <strong>{selectedTable}</strong>
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <DataForm
+                    columns={tableSchema}
+                    initialData={editingRow || undefined}
+                    onSubmit={handleSaveRow}
+                    isLoading={executeQueryMutation.isPending}
+                  />
+                </CardContent>
+              </Card>
+            </div>
+          )}
 
           {/* Context: Import */}
           {activeTab === "import" && selectedDB && (
