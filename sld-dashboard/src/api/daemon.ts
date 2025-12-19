@@ -156,10 +156,10 @@ class DaemonApi {
     return this.request<Snapshot[]>("/db/snapshots");
   }
 
-  async createSnapshot(database: string): Promise<Snapshot> {
+  async createSnapshot(database: string, table?: string): Promise<Snapshot> {
     return this.request<Snapshot>("/db/snapshots", {
       method: "POST",
-      body: JSON.stringify({ database }),
+      body: JSON.stringify({ database, table }),
     });
   }
 
@@ -184,9 +184,14 @@ class DaemonApi {
     });
   }
 
-  async importDatabase(file: File, restore: boolean = true): Promise<void> {
+  async importDatabase(
+    file: File,
+    database: string,
+    restore: boolean = true
+  ): Promise<void> {
     const formData = new FormData();
     formData.append("file", file);
+    formData.append("database", database);
 
     const res = await fetch(`${API_BASE}/db/import?restore=${restore}`, {
       method: "POST",

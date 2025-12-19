@@ -453,7 +453,7 @@ func (d *DatabaseService) ExecuteQuery(database, query string) (*QueryResult, er
 }
 
 // CreateSnapshot creates a database snapshot using mysqldump
-func (d *DatabaseService) CreateSnapshot(database string) (*Snapshot, error) {
+func (d *DatabaseService) CreateSnapshot(database, table string) (*Snapshot, error) {
 	// Ensure snapshots directory exists
 	if err := os.MkdirAll(d.SnapDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create snapshots directory: %w", err)
@@ -461,10 +461,17 @@ func (d *DatabaseService) CreateSnapshot(database string) (*Snapshot, error) {
 
 	timestamp := time.Now().Format("20060102_150405")
 	filename := fmt.Sprintf("%s_%s.sql", database, timestamp)
+	if table != "" {
+		filename = fmt.Sprintf("%s_%s_%s.sql", database, table, timestamp)
+	}
 	filepath := filepath.Join(d.SnapDir, filename)
 
 	// Run mysqldump
-	cmd := exec.Command("mysqldump", "-u", "root", database)
+	args := []string{"-u", "root", database}
+	if table != "" {
+		args = append(args, table)
+	}
+	cmd := exec.Command("mysqldump", args...)
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("mysqldump failed: %w", err)
@@ -565,4 +572,22 @@ func (d *DatabaseService) RestoreSnapshot(filename string) error {
 func (d *DatabaseService) DeleteSnapshot(filename string) error {
 	filepath := filepath.Join(d.SnapDir, filename)
 	return os.Remove(filepath)
+}
+
+// ImportSQL imports a SQL file into a specific database
+func (d *DatabaseService) ImportSQL(database, sqlFilePath string) error {
+	file, err := os.Open(sqlFilePath)
+	if err != nil {
+		return fmt.Errorf("failed to open SQL file: %w", err)
+	}
+	defer file.Close()
+
+	cmd := exec.Command("mysql", "-u", "root", database)
+	cmd.Stdin = file
+
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("mysql import failed: %s", string(output))
+	}
+
+	return nil
 }

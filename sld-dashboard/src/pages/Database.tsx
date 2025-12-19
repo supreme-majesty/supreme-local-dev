@@ -7,19 +7,22 @@ import {
   Plus,
   Trash2,
   HardDrive,
-  Code2,
-  Settings,
-  ArrowRight,
-  FileDown,
-  FileUp,
   Camera,
   RotateCcw,
+  ArrowRight,
+  Code2,
+  Settings,
   Columns,
   Search,
   Zap,
+  History as HistoryIcon,
+  Download as DownloadIcon,
+  FileDown,
+  FileUp,
 } from "lucide-react";
 import { formatBytes, formatDate } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
+import { Checkbox } from "@/components/ui/Checkbox";
 import {
   Card,
   CardHeader,
@@ -61,6 +64,7 @@ export default function Database() {
   >({});
   const [searchResults, setSearchResults] = useState<any>(null);
   const [isSearching, setIsSearching] = useState(false);
+  const [restoreAfterImport, setRestoreAfterImport] = useState(true);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -104,9 +108,13 @@ export default function Database() {
 
   const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      importDatabaseMutation.mutate(file);
-      // Reset input?
+    if (file && selectedDB) {
+      importDatabaseMutation.mutate({
+        file,
+        database: selectedDB,
+        restore: restoreAfterImport,
+      });
+      // Reset input
       e.target.value = "";
     }
   };
@@ -839,7 +847,9 @@ export default function Database() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               <Card
                 className="col-span-full w-full border-dashed border-2 flex items-center justify-center p-6 cursor-pointer hover:border-[var(--primary)] transition-colors"
-                onClick={() => createSnapshotMutation.mutate(selectedDB)}
+                onClick={() =>
+                  createSnapshotMutation.mutate({ database: selectedDB })
+                }
               >
                 <div className="text-center">
                   <div className="mx-auto w-12 h-12 bg-[var(--muted)] rounded-full flex items-center justify-center mb-3">
@@ -935,7 +945,7 @@ export default function Database() {
 
           {/* Context: Import */}
           {activeTab === "import" && selectedDB && (
-            <div className="max-w-2xl mx-auto mt-8">
+            <div className="w-full mt-8">
               <Card>
                 <CardHeader>
                   <CardTitle>Import Database</CardTitle>
@@ -946,10 +956,14 @@ export default function Database() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="flex flex-col gap-4">
-                    <div className="border-2 border-dashed border-[var(--border)] rounded-lg p-8 text-center hover:bg-[var(--muted)]/20 transition-colors">
-                      <FileUp className="mx-auto h-12 w-12 text-[var(--muted-foreground)] mb-4" />
-                      <p className="text-sm text-[var(--muted-foreground)] mb-4">
+                  <div className="flex flex-col gap-6">
+                    <div
+                      className="border-2 border-dashed border-[var(--border)] rounded-lg p-10 text-center hover:bg-[var(--muted)]/20 transition-all cursor-pointer group"
+                      onClick={() => fileInputRef.current?.click()}
+                    >
+                      <FileUp className="mx-auto h-12 w-12 text-[var(--muted-foreground)] group-hover:text-[var(--primary)] mb-4 transition-colors" />
+                      <p className="font-medium mb-1">Select SQL File</p>
+                      <p className="text-sm text-[var(--muted-foreground)] mb-6">
                         Click to select or drag and drop a SQL file here
                       </p>
                       <input
@@ -961,16 +975,37 @@ export default function Database() {
                         disabled={importDatabaseMutation.isPending}
                       />
                       <Button
-                        onClick={() => fileInputRef.current?.click()}
                         variant="secondary"
                         loading={importDatabaseMutation.isPending}
                       >
-                        Select SQL File
+                        Choose File
                       </Button>
                     </div>
-                    <div className="text-xs text-[var(--muted-foreground)] text-center">
-                      Supported formats: .sql, .sql.gz (uncompressed only for
-                      now)
+
+                    <div className="flex items-center gap-3 p-4 bg-[var(--muted)]/30 rounded-lg">
+                      <Checkbox
+                        id="restore-after-import"
+                        checked={restoreAfterImport}
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                          setRestoreAfterImport(e.target.checked)
+                        }
+                      />
+                      <label
+                        htmlFor="restore-after-import"
+                        className="text-sm cursor-pointer select-none"
+                      >
+                        <span className="font-medium">
+                          Restore after upload
+                        </span>
+                        <p className="text-xs text-[var(--muted-foreground)]">
+                          Database contents will be replaced with the SQL file
+                          data.
+                        </p>
+                      </label>
+                    </div>
+
+                    <div className="text-xs text-[var(--muted-foreground)] text-center italic">
+                      Note: Large files might take a few moments to process.
                     </div>
                   </div>
                 </CardContent>
@@ -1416,8 +1451,185 @@ export default function Database() {
             </div>
           )}
 
+          {/* Context: Export */}
+          {activeTab === "export" && selectedDB && (
+            <div className="w-full mt-8">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                <Card
+                  className="hover:border-[var(--primary)] transition-colors cursor-pointer"
+                  onClick={() =>
+                    createSnapshotMutation.mutate({ database: selectedDB })
+                  }
+                >
+                  <CardHeader>
+                    <div className="w-10 h-10 rounded-full bg-[var(--primary)]/10 flex items-center justify-center text-[var(--primary)] mb-2">
+                      <DatabaseIcon size={20} />
+                    </div>
+                    <CardTitle className="text-lg">Database Snapshot</CardTitle>
+                    <CardDescription>
+                      Export the entire <strong>{selectedDB}</strong> database
+                      structure and data.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <Button
+                      variant="secondary"
+                      className="w-full"
+                      loading={
+                        createSnapshotMutation.isPending && !selectedTable
+                      }
+                    >
+                      Create Full Backup
+                    </Button>
+                  </CardContent>
+                </Card>
+
+                {selectedTable && (
+                  <Card
+                    className="hover:border-[var(--primary)] transition-colors cursor-pointer"
+                    onClick={() =>
+                      createSnapshotMutation.mutate({
+                        database: selectedDB,
+                        table: selectedTable,
+                      })
+                    }
+                  >
+                    <CardHeader>
+                      <div className="w-10 h-10 rounded-full bg-[var(--secondary)]/10 flex items-center justify-center text-[var(--secondary)] mb-2">
+                        <TableIcon size={20} />
+                      </div>
+                      <CardTitle className="text-lg">Table Export</CardTitle>
+                      <CardDescription>
+                        Export only the <strong>{selectedTable}</strong> table
+                        from {selectedDB}.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <Button
+                        variant="secondary"
+                        className="w-full"
+                        loading={
+                          createSnapshotMutation.isPending && !!selectedTable
+                        }
+                      >
+                        Export Table
+                      </Button>
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <HistoryIcon size={18} /> Recent Exports
+                  </CardTitle>
+                  <CardDescription>
+                    Manage and download your database snapshots.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="border border-[var(--border)] rounded-md overflow-hidden">
+                    <table className="w-full text-sm text-left">
+                      <thead className="bg-[var(--muted)]/50 border-b border-[var(--border)] text-xs uppercase text-[var(--muted-foreground)]">
+                        <tr>
+                          <th className="px-4 py-3 font-medium">Filename</th>
+                          <th className="px-4 py-3 font-medium">Size</th>
+                          <th className="px-4 py-3 font-medium">Created</th>
+                          <th className="px-4 py-3 font-medium text-right">
+                            Actions
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[var(--border)] bg-[var(--card)]">
+                        {!snapshots ||
+                        snapshots.filter((s) => s.database === selectedDB)
+                          .length === 0 ? (
+                          <tr>
+                            <td
+                              colSpan={4}
+                              className="px-4 py-8 text-center text-[var(--muted-foreground)] italic"
+                            >
+                              No snapshots found for this database.
+                            </td>
+                          </tr>
+                        ) : (
+                          snapshots
+                            .filter((s) => s.database === selectedDB)
+                            .map((s) => (
+                              <tr
+                                key={s.id}
+                                className="hover:bg-[var(--muted)]/10 transition-colors"
+                              >
+                                <td className="px-4 py-3 font-mono text-xs">
+                                  {s.filename}
+                                </td>
+                                <td className="px-4 py-3 text-xs text-[var(--muted-foreground)]">
+                                  {(s.size / 1024).toFixed(1)} KB
+                                </td>
+                                <td className="px-4 py-3 text-xs text-[var(--muted-foreground)]">
+                                  {new Date(s.created_at).toLocaleString()}
+                                </td>
+                                <td className="px-4 py-3 text-right">
+                                  <div className="flex justify-end gap-1">
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-8 w-8 p-0"
+                                      title="Download"
+                                      onClick={() =>
+                                        window.open(
+                                          `/api/db/snapshots/download?id=${s.id}`
+                                        )
+                                      }
+                                    >
+                                      <DownloadIcon size={14} />
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-8 w-8 p-0 text-[var(--secondary)]"
+                                      title="Restore"
+                                      onClick={() => {
+                                        if (
+                                          confirm(
+                                            "Restore this snapshot? Current database data will be overwritten!"
+                                          )
+                                        ) {
+                                          restoreSnapshotMutation.mutate(s.id);
+                                        }
+                                      }}
+                                    >
+                                      <RotateCcw size={14} />
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-8 w-8 p-0 text-red-500"
+                                      title="Delete"
+                                      onClick={() => {
+                                        if (confirm("Delete this snapshot?")) {
+                                          deleteSnapshotMutation.mutate(s.id);
+                                        }
+                                      }}
+                                    >
+                                      <Trash2 size={14} />
+                                    </Button>
+                                  </div>
+                                </td>
+                              </tr>
+                            ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
           {/* Context: Other Tabs Placeholders */}
-          {["export", "triggers"].includes(activeTab) && (
+          {["triggers"].includes(activeTab) && (
             <div className="text-center py-12 text-[var(--muted-foreground)]">
               {activeTab.charAt(0).toUpperCase() + activeTab.slice(1)} coming
               soon...

@@ -595,6 +595,7 @@ func (s *Server) handleDBSnapshots(w http.ResponseWriter, r *http.Request) {
 	case "POST":
 		var req struct {
 			Database string `json:"database"`
+			Table    string `json:"table"`
 			Name     string `json:"name"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -602,7 +603,7 @@ func (s *Server) handleDBSnapshots(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		snapshot, err := d.DatabaseService.CreateSnapshot(req.Database)
+		snapshot, err := d.DatabaseService.CreateSnapshot(req.Database, req.Table)
 		if err != nil {
 			jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
 			return
@@ -712,8 +713,17 @@ func (s *Server) handleDBImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 10MB limit
-	r.ParseMultipartForm(10 << 20)
+	// 100MB limit with proper 413 response when exceeded
+	const maxUploadSize = 100 << 20 // 100MB
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
+	if err := r.ParseMultipartForm(maxUploadSize); err != nil {
+		if err.Error() == "http: request body too large" {
+			jsonResponse(w, ErrorResponse{Error: "File too large. Maximum size is 100MB"}, 413)
+			return
+		}
+		jsonResponse(w, ErrorResponse{Error: "Error parsing form: " + err.Error()}, 400)
+		return
+	}
 
 	file, handler, err := r.FormFile("file")
 	if err != nil {
@@ -751,7 +761,18 @@ func (s *Server) handleDBImport(w http.ResponseWriter, r *http.Request) {
 
 	// Check if we should restore
 	if r.URL.Query().Get("restore") == "true" {
-		if err := d.DatabaseService.RestoreSnapshot(filename); err != nil {
+		// Get target database from form field or query param
+		dbName := r.FormValue("database")
+		if dbName == "" {
+			dbName = r.URL.Query().Get("database")
+		}
+		if dbName == "" {
+			jsonResponse(w, ErrorResponse{Error: "database parameter required for restore"}, 400)
+			return
+		}
+
+		// Run mysql import directly
+		if err := d.DatabaseService.ImportSQL(dbName, destPath); err != nil {
 			jsonResponse(w, ErrorResponse{Error: "Upload successful but restore failed: " + err.Error()}, 500)
 			return
 		}

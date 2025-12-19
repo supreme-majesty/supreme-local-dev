@@ -60,7 +60,8 @@ export function useCreateSnapshotMutation() {
   const addToast = useAppStore((s) => s.addToast);
 
   return useMutation({
-    mutationFn: (database: string) => api.createSnapshot(database),
+    mutationFn: (vars: { database: string; table?: string }) =>
+      api.createSnapshot(vars.database, vars.table),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: dbKeys.snapshots() });
       addToast({ type: "success", title: "Snapshot created" });
@@ -152,7 +153,8 @@ export function useImportDatabaseMutation() {
   const addToast = useAppStore((s) => s.addToast);
 
   return useMutation({
-    mutationFn: (file: File) => api.importDatabase(file),
+    mutationFn: (vars: { file: File; database: string; restore?: boolean }) =>
+      api.importDatabase(vars.file, vars.database, vars.restore),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: dbKeys.all });
       addToast({ type: "success", title: "Database imported successfully" });
