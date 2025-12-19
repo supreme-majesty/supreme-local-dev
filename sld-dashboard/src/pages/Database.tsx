@@ -56,6 +56,11 @@ export default function Database() {
     null
   );
   const [insertFormKey, setInsertFormKey] = useState(0);
+  const [searchCriteria, setSearchCriteria] = useState<
+    Record<string, { value: string; operator: string }>
+  >({});
+  const [searchResults, setSearchResults] = useState<any>(null);
+  const [isSearching, setIsSearching] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -233,6 +238,86 @@ export default function Database() {
         },
       }
     );
+  };
+
+  const handleSearch = () => {
+    if (!selectedDB || !selectedTable || !tableSchema) return;
+
+    const clauses: string[] = [];
+    Object.entries(searchCriteria).forEach(([col, criteria]) => {
+      if (
+        criteria.value === "" &&
+        !["IS NULL", "IS NOT NULL"].includes(criteria.operator)
+      )
+        return;
+
+      let clause = `\`${col}\` `;
+      const val = escapeValue(criteria.value);
+
+      switch (criteria.operator) {
+        case "=":
+        case "!=":
+        case ">":
+        case "<":
+        case ">=":
+        case "<=":
+          clause += `${criteria.operator} ${val}`;
+          break;
+        case "LIKE":
+          clause += `LIKE ${val}`;
+          break;
+        case "LIKE %...%":
+          clause += `LIKE '%${String(criteria.value).replace(/'/g, "\\'")}%'`;
+          break;
+        case "IS NULL":
+          clause += `IS NULL`;
+          break;
+        case "IS NOT NULL":
+          clause += `IS NOT NULL`;
+          break;
+      }
+      clauses.push(clause);
+    });
+
+    if (clauses.length === 0) {
+      setSearchResults(null);
+      setActiveTab("browse");
+      return;
+    }
+
+    const query = `SELECT * FROM \`${selectedTable}\` WHERE ${clauses.join(
+      " AND "
+    )} LIMIT 1000`;
+
+    setIsSearching(true);
+    executeQueryMutation.mutate(
+      { database: selectedDB, query },
+      {
+        onSuccess: (data) => {
+          // Enrich query results with schema info for Browse tab
+          const enriched = {
+            ...data,
+            columns: tableSchema.map((col) => ({
+              name: col.name,
+              type: col.type,
+            })),
+            total: data.rowCount,
+            total_pages: 1, // Simple result set for now
+          };
+          setSearchResults(enriched);
+          setActiveTab("browse");
+          setIsSearching(false);
+        },
+        onError: () => {
+          setIsSearching(false);
+        },
+      }
+    );
+  };
+
+  const clearSearch = () => {
+    setSearchCriteria({});
+    setSearchResults(null);
   };
 
   const startEdit = (row: Record<string, any>) => {
@@ -504,84 +589,102 @@ export default function Database() {
           {/* Context: Table, Tab: Browse */}
           {activeTab === "browse" && selectedTable && (
             <div className="space-y-4">
-              {loadingData ? (
+              {loadingData || isSearching ? (
                 <div className="flex justify-center py-10">
                   <RefreshCw className="animate-spin text-[var(--muted-foreground)]" />
                 </div>
-              ) : tableData ? (
+              ) : !(searchResults || tableData) ? (
+                <div className="text-center py-12 text-[var(--muted-foreground)]">
+                  Select a table to browse
+                </div>
+              ) : (
                 <div className="border border-[var(--border)] rounded-md overflow-hidden bg-[var(--card)]">
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm text-left">
                       <thead className="text-xs text-[var(--muted-foreground)] uppercase bg-[var(--muted)]/50 border-b border-[var(--border)]">
                         <tr>
                           <th className="px-4 py-3 font-medium">Actions</th>
-                          {tableData.columns?.map((col) => (
-                            <th
-                              key={col.name}
-                              className="px-4 py-3 font-medium whitespace-nowrap"
-                            >
-                              {col.name}
-                              <span className="ml-1 text-[10px] text-[var(--muted-foreground)] normal-case">
-                                {col.type}
-                              </span>
-                            </th>
-                          ))}
+                          {(searchResults || tableData).columns?.map(
+                            (col: any) => (
+                              <th
+                                key={typeof col === "string" ? col : col.name}
+                                className="px-4 py-3 font-medium whitespace-nowrap"
+                              >
+                                {typeof col === "string" ? col : col.name}
+                                <span className="ml-1 text-[10px] text-[var(--muted-foreground)] normal-case">
+                                  {typeof col === "string" ? "" : col.type}
+                                </span>
+                              </th>
+                            )
+                          )}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-[var(--border)]">
-                        {tableData.rows?.map((row, i) => (
-                          <tr
-                            key={i}
-                            className="hover:bg-[var(--muted)]/30 group"
-                          >
-                            <td className="px-4 py-2 w-20">
-                              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <button
-                                  className="p-1 hover:text-blue-400"
-                                  onClick={() => startEdit(row)}
-                                >
-                                  <Code2 size={14} />
-                                </button>
-                                <button
-                                  className="p-1 hover:text-red-400 disabled:opacity-30"
-                                  disabled={!pkCol}
-                                  onClick={() => handleDeleteRow(row)}
-                                  title={
-                                    !pkCol
-                                      ? "No Primary Key found"
-                                      : "Delete Row"
-                                  }
-                                >
-                                  <Trash2 size={14} />
-                                </button>
-                              </div>
-                            </td>
-                            {tableData.columns?.map((col) => (
-                              <td
-                                key={col.name}
-                                className="px-4 py-2 whitespace-nowrap max-w-[300px] truncate"
-                              >
-                                <span>
-                                  {(() => {
-                                    const val = getValue(row, col.name);
-                                    if (val === null) return "NULL";
-                                    if (val === undefined)
-                                      return (
-                                        <span className="text-red-400 text-[10px]">
-                                          (missing)
-                                        </span>
-                                      );
-                                    return String(val);
-                                  })()}
-                                </span>
+                        {((searchResults || tableData).rows || []).map(
+                          (row: any, i: number) => (
+                            <tr
+                              key={i}
+                              className="hover:bg-[var(--muted)]/30 group"
+                            >
+                              <td className="px-4 py-2 w-20">
+                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <button
+                                    className="p-1 hover:text-blue-400"
+                                    onClick={() => startEdit(row)}
+                                  >
+                                    <Code2 size={14} />
+                                  </button>
+                                  <button
+                                    className="p-1 hover:text-red-400 disabled:opacity-30"
+                                    disabled={!pkCol}
+                                    onClick={() => handleDeleteRow(row)}
+                                    title={
+                                      !pkCol
+                                        ? "No Primary Key found"
+                                        : "Delete Row"
+                                    }
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                </div>
                               </td>
-                            ))}
-                          </tr>
-                        ))}
-                        {(tableData.rows || []).length === 0 && (
+                              {(searchResults || tableData).columns?.map(
+                                (col: any) => {
+                                  const colName =
+                                    typeof col === "string" ? col : col.name;
+                                  return (
+                                    <td
+                                      key={colName}
+                                      className="px-4 py-2 whitespace-nowrap max-w-[300px] truncate"
+                                    >
+                                      <span>
+                                        {(() => {
+                                          const val = getValue(row, colName);
+                                          if (val === null) return "NULL";
+                                          if (val === undefined)
+                                            return (
+                                              <span className="text-red-400 text-[10px]">
+                                                (missing)
+                                              </span>
+                                            );
+                                          return String(val);
+                                        })()}
+                                      </span>
+                                    </td>
+                                  );
+                                }
+                              )}
+                            </tr>
+                          )
+                        )}
+                        {((searchResults || tableData).rows || []).length ===
+                          0 && (
                           <tr>
                             <td
-                              colSpan={(tableData.columns || []).length + 1}
+                              colSpan={
+                                ((searchResults || tableData).columns || [])
+                                  .length + 1
+                              }
                               className="px-4 py-8 text-center text-[var(--muted-foreground)] italic"
                             >
                               No data found
@@ -592,18 +695,37 @@ export default function Database() {
                         {/* Pagination / Status */}
                         <tr>
                           <td
-                            colSpan={(tableData.columns || []).length + 1}
+                            colSpan={
+                              ((searchResults || tableData).columns || [])
+                                .length + 1
+                            }
                             className="px-4 py-2 text-xs text-[var(--muted-foreground)] border-t border-[var(--border)]"
                           >
                             <div className="flex justify-between items-center">
                               <span>
-                                Showing {(tableData.rows || []).length} rows
+                                Showing{" "}
+                                {
+                                  ((searchResults || tableData).rows || [])
+                                    .length
+                                }{" "}
+                                rows
+                                {searchResults && (
+                                  <span className="ml-2 text-blue-400 font-medium whitespace-nowrap">
+                                    (Filtered results)
+                                    <button
+                                      onClick={clearSearch}
+                                      className="ml-2 hover:underline"
+                                    >
+                                      Clear
+                                    </button>
+                                  </span>
+                                )}
                               </span>
                               <div className="flex gap-2">
                                 <Button
                                   variant="secondary"
                                   size="sm"
-                                  disabled={page <= 1}
+                                  disabled={searchResults || page <= 1}
                                   onClick={() => setPage((p) => p - 1)}
                                 >
                                   Previous
@@ -611,7 +733,11 @@ export default function Database() {
                                 <Button
                                   variant="secondary"
                                   size="sm"
-                                  disabled={page >= tableData.total_pages}
+                                  disabled={
+                                    searchResults ||
+                                    page >=
+                                      (searchResults || tableData).total_pages
+                                  }
                                   onClick={() => setPage((p) => p + 1)}
                                 >
                                   Next
@@ -623,10 +749,6 @@ export default function Database() {
                       </tbody>
                     </table>
                   </div>
-                </div>
-              ) : (
-                <div className="text-center py-12 text-[var(--muted-foreground)]">
-                  Select a table to browse
                 </div>
               )}
             </div>
@@ -1122,7 +1244,180 @@ export default function Database() {
           )}
 
           {/* Placeholders */}
-          {["export", "import", "search", "triggers"].includes(activeTab) && (
+          {/* Context: Table, Tab: Search */}
+          {activeTab === "search" && selectedTable && tableSchema && (
+            <div className="max-w-6xl mx-auto mt-8">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <Search size={18} /> Search Table
+                  </CardTitle>
+                  <CardDescription>
+                    Filter results from <strong>{selectedTable}</strong> using
+                    column criteria.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="border border-[var(--border)] rounded-md overflow-hidden mb-6">
+                    <table className="w-full text-sm text-left">
+                      <thead className="bg-[var(--muted)]/50 border-b border-[var(--border)] text-xs uppercase text-[var(--muted-foreground)]">
+                        <tr>
+                          <th className="px-4 py-3 font-medium w-1/4">
+                            Column
+                          </th>
+                          <th className="px-4 py-3 font-medium w-1/6">Type</th>
+                          <th className="px-4 py-3 font-medium w-1/4">
+                            Operator
+                          </th>
+                          <th className="px-4 py-3 font-medium">Value</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[var(--border)] bg-[var(--card)]">
+                        {tableSchema.map((col) => (
+                          <tr
+                            key={col.name}
+                            className="hover:bg-[var(--muted)]/20"
+                          >
+                            <td className="px-4 py-3">
+                              <div className="font-medium">{col.name}</div>
+                            </td>
+                            <td className="px-4 py-3 text-xs font-mono text-[var(--muted-foreground)]">
+                              {col.type}
+                            </td>
+                            <td className="px-4 py-3">
+                              <select
+                                className="w-full h-8 px-2 bg-[var(--card)] border border-[var(--border)] rounded text-sm focus:outline-none focus:ring-1 focus:ring-[var(--primary)] text-[var(--foreground)]"
+                                value={
+                                  searchCriteria[col.name]?.operator || "="
+                                }
+                                onChange={(e) =>
+                                  setSearchCriteria((prev) => ({
+                                    ...prev,
+                                    [col.name]: {
+                                      ...prev[col.name],
+                                      operator: e.target.value,
+                                    },
+                                  }))
+                                }
+                              >
+                                <option
+                                  value="="
+                                  className="bg-[var(--card)] text-[var(--foreground)]"
+                                >
+                                  =
+                                </option>
+                                <option
+                                  value="!="
+                                  className="bg-[var(--card)] text-[var(--foreground)]"
+                                >
+                                  !=
+                                </option>
+                                <option
+                                  value="LIKE"
+                                  className="bg-[var(--card)] text-[var(--foreground)]"
+                                >
+                                  LIKE
+                                </option>
+                                <option
+                                  value="LIKE %...%"
+                                  className="bg-[var(--card)] text-[var(--foreground)]"
+                                >
+                                  LIKE %...%
+                                </option>
+                                <option
+                                  value=">"
+                                  className="bg-[var(--card)] text-[var(--foreground)]"
+                                >
+                                  &gt;
+                                </option>
+                                <option
+                                  value="<"
+                                  className="bg-[var(--card)] text-[var(--foreground)]"
+                                >
+                                  &lt;
+                                </option>
+                                <option
+                                  value=">="
+                                  className="bg-[var(--card)] text-[var(--foreground)]"
+                                >
+                                  &gt;=
+                                </option>
+                                <option
+                                  value="<="
+                                  className="bg-[var(--card)] text-[var(--foreground)]"
+                                >
+                                  &lt;=
+                                </option>
+                                <option
+                                  value="IS NULL"
+                                  className="bg-[var(--card)] text-[var(--foreground)]"
+                                >
+                                  IS NULL
+                                </option>
+                                <option
+                                  value="IS NOT NULL"
+                                  className="bg-[var(--card)] text-[var(--foreground)]"
+                                >
+                                  IS NOT NULL
+                                </option>
+                              </select>
+                            </td>
+                            <td className="px-4 py-3">
+                              <Input
+                                type={
+                                  col.type.toLowerCase().includes("int")
+                                    ? "number"
+                                    : "text"
+                                }
+                                placeholder="Search value..."
+                                className="h-8 text-sm"
+                                disabled={searchCriteria[
+                                  col.name
+                                ]?.operator?.includes("NULL")}
+                                value={searchCriteria[col.name]?.value || ""}
+                                onChange={(e) =>
+                                  setSearchCriteria((prev) => ({
+                                    ...prev,
+                                    [col.name]: {
+                                      ...prev[col.name],
+                                      value: e.target.value,
+                                      operator: prev[col.name]?.operator || "=",
+                                    },
+                                  }))
+                                }
+                              />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="flex justify-end gap-3">
+                    <Button
+                      variant="ghost"
+                      onClick={() => {
+                        clearSearch();
+                        setActiveTab("browse");
+                      }}
+                    >
+                      Reset
+                    </Button>
+                    <Button
+                      onClick={handleSearch}
+                      loading={isSearching}
+                      className="gap-2"
+                    >
+                      <Search size={16} /> Search
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
+          {/* Context: Other Tabs Placeholders */}
+          {["export", "triggers"].includes(activeTab) && (
             <div className="text-center py-12 text-[var(--muted-foreground)]">
               {activeTab.charAt(0).toUpperCase() + activeTab.slice(1)} coming
               soon...
