@@ -65,6 +65,8 @@ export default function Database() {
   const [searchResults, setSearchResults] = useState<any>(null);
   const [isSearching, setIsSearching] = useState(false);
   const [restoreAfterImport, setRestoreAfterImport] = useState(true);
+  const [triggers, setTriggers] = useState<any[]>([]);
+  const [loadingTriggers, setLoadingTriggers] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -370,6 +372,62 @@ export default function Database() {
     );
   };
 
+  // Load triggers for the current database/table
+  const loadTriggers = async () => {
+    if (!selectedDB) return;
+
+    setLoadingTriggers(true);
+    try {
+      // If table is selected, filter by table, otherwise show all for DB
+      const query = selectedTable
+        ? `SHOW TRIGGERS FROM \`${selectedDB}\` WHERE \`Table\` = '${selectedTable}'`
+        : `SHOW TRIGGERS FROM \`${selectedDB}\``;
+
+      const result = await executeQueryMutation.mutateAsync({
+        database: selectedDB,
+        query,
+      });
+
+      setTriggers(result.rows || []);
+    } catch (err) {
+      console.error("Failed to load triggers:", err);
+      setTriggers([]);
+    } finally {
+      setLoadingTriggers(false);
+    }
+  };
+
+  // Drop a trigger
+  const handleDropTrigger = async (triggerName: string) => {
+    if (!selectedDB) return;
+    if (
+      !confirm(
+        `Are you sure you want to DROP trigger "${triggerName}"? This action is IRREVERSIBLE!`
+      )
+    )
+      return;
+
+    executeQueryMutation.mutate(
+      {
+        database: selectedDB,
+        query: `DROP TRIGGER \`${triggerName}\``,
+      },
+      {
+        onSuccess: () => {
+          // Reload triggers list
+          loadTriggers();
+        },
+      }
+    );
+  };
+
+  // Auto-load triggers when triggers tab is active
+  useEffect(() => {
+    if (activeTab === "triggers" && selectedDB) {
+      loadTriggers();
+    }
+  }, [activeTab, selectedDB, selectedTable]);
+
   const currentSnapshotList =
     snapshots?.filter((s) => s.database === selectedDB) || [];
 
@@ -558,14 +616,6 @@ export default function Database() {
                   className="gap-2 rounded-b-none border-b-2 border-transparent data-[variant=primary]:border-[var(--primary)]"
                 >
                   <FileDown size={14} /> Import
-                </Button>
-                <Button
-                  variant={activeTab === "create-table" ? "primary" : "ghost"}
-                  size="sm"
-                  onClick={() => setActiveTab("create-table")}
-                  className="gap-2 rounded-b-none border-b-2 border-transparent data-[variant=primary]:border-[var(--primary)]"
-                >
-                  <Plus size={14} /> Create Table
                 </Button>
               </>
             ) : (
@@ -1027,10 +1077,10 @@ export default function Database() {
 
           {/* Context: Operations */}
           {activeTab === "operations" && selectedDB && (
-            <div className="max-w-2xl mx-auto mt-8 flex flex-col gap-6">
+            <div className="w-full flex flex-col gap-6">
               {/* Context: Table, Tab: Operations */}
               {activeTab === "operations" && selectedTable && (
-                <div className="space-y-6 max-w-2xl">
+                <div className="space-y-6 w-full">
                   <Card>
                     <CardHeader>
                       <CardTitle className="text-lg flex items-center gap-2">
@@ -1629,10 +1679,105 @@ export default function Database() {
           )}
 
           {/* Context: Other Tabs Placeholders */}
-          {["triggers"].includes(activeTab) && (
-            <div className="text-center py-12 text-[var(--muted-foreground)]">
-              {activeTab.charAt(0).toUpperCase() + activeTab.slice(1)} coming
-              soon...
+          {activeTab === "triggers" && selectedTable && (
+            <div className="space-y-4">
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between">
+                  <div>
+                    <CardTitle className="text-lg flex items-center gap-2">
+                      <Zap size={18} /> Triggers
+                    </CardTitle>
+                    <CardDescription>
+                      Triggers for table <strong>{selectedTable}</strong>
+                    </CardDescription>
+                  </div>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={loadTriggers}
+                    disabled={loadingTriggers}
+                  >
+                    <RefreshCw
+                      size={14}
+                      className={loadingTriggers ? "animate-spin" : ""}
+                    />
+                    Refresh
+                  </Button>
+                </CardHeader>
+                <CardContent>
+                  {loadingTriggers ? (
+                    <div className="flex justify-center py-10">
+                      <RefreshCw className="animate-spin text-[var(--muted-foreground)]" />
+                    </div>
+                  ) : triggers.length === 0 ? (
+                    <div className="text-center py-12 text-[var(--muted-foreground)]">
+                      No triggers found for this table
+                    </div>
+                  ) : (
+                    <div className="border border-[var(--border)] rounded-md overflow-hidden">
+                      <table className="w-full text-sm text-left">
+                        <thead className="text-xs text-[var(--muted-foreground)] uppercase bg-[var(--muted)]/50 border-b border-[var(--border)]">
+                          <tr>
+                            <th className="px-4 py-3 font-medium">Name</th>
+                            <th className="px-4 py-3 font-medium">Event</th>
+                            <th className="px-4 py-3 font-medium">Timing</th>
+                            <th className="px-4 py-3 font-medium">Table</th>
+                            <th className="px-4 py-3 font-medium">Statement</th>
+                            <th className="px-4 py-3 font-medium w-24">
+                              Actions
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[var(--border)]">
+                          {triggers.map((trigger: any, idx: number) => (
+                            <tr
+                              key={idx}
+                              className="hover:bg-[var(--muted)]/30"
+                            >
+                              <td className="px-4 py-3 font-medium">
+                                {trigger.Trigger}
+                              </td>
+                              <td className="px-4 py-3">
+                                <Badge variant="secondary">
+                                  {trigger.Event}
+                                </Badge>
+                              </td>
+                              <td className="px-4 py-3">
+                                <Badge
+                                  variant={
+                                    trigger.Timing === "BEFORE"
+                                      ? "secondary"
+                                      : "outline"
+                                  }
+                                >
+                                  {trigger.Timing}
+                                </Badge>
+                              </td>
+                              <td className="px-4 py-3">{trigger.Table}</td>
+                              <td className="px-4 py-3 max-w-[300px] truncate font-mono text-xs">
+                                {trigger.Statement}
+                              </td>
+                              <td className="px-4 py-3">
+                                <Button
+                                  variant="danger"
+                                  size="sm"
+                                  onClick={() =>
+                                    handleDropTrigger(trigger.Trigger)
+                                  }
+                                  disabled={executeQueryMutation.isPending}
+                                >
+                                  <Trash2 size={14} />
+                                  Drop
+                                </Button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
             </div>
           )}
         </div>
