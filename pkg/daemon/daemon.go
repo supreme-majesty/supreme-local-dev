@@ -29,6 +29,7 @@ type Daemon struct {
 	TunnelManager   *services.TunnelManager
 	XRayService     *services.XRayService
 	DatabaseService *services.DatabaseService
+	ProjectManager  *services.ProjectManager
 }
 
 var instance *Daemon
@@ -58,6 +59,15 @@ func Initialize() (*Daemon, error) {
 	tunnelManager := services.NewTunnelManager("/var/lib/sld")
 	xrayService := services.NewXRayService(eventBus)
 	databaseService := services.NewDatabaseService()
+	// Use user's home/Developments as default base?
+	// We need a sensible default.
+	home, _ := os.UserHomeDir()
+	if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" {
+		home = filepath.Join("/home", sudoUser)
+	}
+	baseDir := filepath.Join(home, "Developments")
+	// Ensure it exists? Or let create handle it.
+	projectManager := services.NewProjectManager(baseDir)
 
 	// Start X-Ray immediately
 	go xrayService.Start()
@@ -88,6 +98,7 @@ func Initialize() (*Daemon, error) {
 		TunnelManager:   tunnelManager,
 		XRayService:     xrayService,
 		DatabaseService: databaseService,
+		ProjectManager:  projectManager,
 	}
 
 	return instance, nil

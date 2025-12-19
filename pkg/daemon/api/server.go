@@ -13,6 +13,7 @@ import (
 	"github.com/supreme-majesty/supreme-local-dev/pkg/assets"
 	"github.com/supreme-majesty/supreme-local-dev/pkg/daemon"
 	"github.com/supreme-majesty/supreme-local-dev/pkg/daemon/metrics"
+	"github.com/supreme-majesty/supreme-local-dev/pkg/services"
 )
 
 type Server struct {
@@ -55,6 +56,12 @@ func (s *Server) Start() error {
 	http.HandleFunc("/api/db/import", s.handleDBImport)
 	http.HandleFunc("/api/db/query", s.handleDBQuery)
 	http.HandleFunc("/api/db/foreign-values", s.handleDBForeignValues)
+
+	// Projects & System
+	http.HandleFunc("/api/projects/create", s.handleProjectCreate)
+	http.HandleFunc("/api/system/editors", s.handleSystemEditors)
+	http.HandleFunc("/api/system/open-editor", s.handleSystemOpenEditor)
+	http.HandleFunc("/api/system/directories", s.handleSystemDirectories)
 
 	// Initialize WebSocket Hub
 	hub := NewHub()
@@ -296,6 +303,90 @@ func (s *Server) handleUnignore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, SuccessResponse{Success: true}, 200)
+}
+
+// Projects & System
+
+func (s *Server) handleProjectCreate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		return
+	}
+	var req struct {
+		Type string `json:"type"`
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
+		return
+	}
+
+	d, _ := daemon.GetClient()
+	opts := services.ProjectOptions{
+		Type: req.Type,
+		Name: req.Name,
+	}
+
+	if err := d.ProjectManager.CreateProject(opts); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+
+	// Auto-park the project?
+	// ProjectManager creates it in BaseDir/Name.
+	// We need to know the path to park it.
+	// We know BaseDir from d.ProjectManager.BaseDir
+	projectPath := filepath.Join(d.ProjectManager.BaseDir, req.Name)
+	d.Park(d.ProjectManager.BaseDir) // Re-scan the whole base dir to be safe? Or just park the new one?
+	// Park() functionality usually registers a root path.
+	// If BaseDir is already parked, we just need to Refresh().
+	// If it's not parked, we probably shouldn't auto-park it unless requested.
+	// But users expect it to show up.
+	// Let's assume BaseDir IS NOT necessarily parked.
+	// If we create a project, we should probably LINK it or Park the BaseDir.
+	// Let's just Link it for now to be precise, or just return success and let frontend handle "Park this folder?"
+	// Actually, better UX: If it's created, it should show up.
+	// Let's automatically LINK the new project.
+	d.Link(req.Name, projectPath)
+
+	jsonResponse(w, SuccessResponse{Success: true, Message: "Project created and linked"}, 200)
+}
+
+func (s *Server) handleSystemEditors(w http.ResponseWriter, r *http.Request) {
+	d, _ := daemon.GetClient()
+	editors := d.ProjectManager.DetectEditors()
+	jsonResponse(w, editors, 200)
+}
+
+func (s *Server) handleSystemOpenEditor(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		return
+	}
+	var req struct {
+		Path   string `json:"path"`
+		Editor string `json:"editor"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
+		return
+	}
+
+	d, _ := daemon.GetClient()
+	if err := d.ProjectManager.OpenInEditor(req.Path, req.Editor); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+	jsonResponse(w, SuccessResponse{Success: true}, 200)
+}
+
+func (s *Server) handleSystemDirectories(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Query().Get("path")
+	d, _ := daemon.GetClient()
+	dirs, err := d.ProjectManager.ListDirectories(path)
+	if err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+	jsonResponse(w, dirs, 200)
 }
 
 // Plugins

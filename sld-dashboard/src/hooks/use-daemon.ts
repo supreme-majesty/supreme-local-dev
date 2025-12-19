@@ -5,6 +5,8 @@ import {
   type Project,
   type ServiceStatus,
   type Plugin,
+  type Editor,
+  type ProjectOptions,
 } from "@/api/daemon";
 import { useAppStore } from "@/stores/useAppStore";
 
@@ -273,5 +275,55 @@ export function useTogglePluginMutation() {
         description: err.message,
       });
     },
+  });
+}
+
+export function useEditors() {
+  return useQuery<Editor[]>({
+    queryKey: ["editors"],
+    queryFn: () => api.getEditors(),
+  });
+}
+
+export function useCreateProjectMutation() {
+  const queryClient = useQueryClient();
+  const addToast = useAppStore((s) => s.addToast);
+
+  return useMutation({
+    mutationFn: (options: ProjectOptions) => api.createProject(options),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.sites });
+      addToast({ type: "success", title: "Project created successfully" });
+    },
+    onError: (err: Error) => {
+      addToast({
+        type: "error",
+        title: "Failed to create project",
+        description: err.message,
+      });
+    },
+  });
+}
+
+export function useOpenInEditorMutation() {
+  const addToast = useAppStore((s) => s.addToast);
+  return useMutation({
+    mutationFn: ({ path, editor }: { path: string; editor: string }) =>
+      api.openInEditor(path, editor),
+    onError: (err: Error) => {
+      addToast({
+        type: "error",
+        title: "Failed to open editor",
+        description: err.message,
+      });
+    },
+  });
+}
+
+export function useDirectories(path?: string) {
+  return useQuery<string[]>({
+    queryKey: ["directories", path],
+    queryFn: () => api.getDirectories(path),
+    staleTime: 1000 * 60,
   });
 }

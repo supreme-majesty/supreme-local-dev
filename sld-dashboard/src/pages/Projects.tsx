@@ -14,17 +14,39 @@ import {
   useSites,
   useIgnoreMutation,
   useUnlinkMutation,
+  useEditors,
+  useOpenInEditorMutation,
 } from "@/hooks/use-daemon";
 import { Modal } from "@/components/ui/Modal";
+import { CreateProjectModal } from "@/components/CreateProjectModal";
+import { Code } from "lucide-react";
 
 export default function Projects() {
   const { data: projects = [], isLoading } = useSites();
+  const { data: editors = [] } = useEditors();
   const ignoreMutation = useIgnoreMutation();
   const unlinkMutation = useUnlinkMutation();
+  const openEditorMutation = useOpenInEditorMutation();
 
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "parked" | "linked">("all");
   const [projectToRemove, setProjectToRemove] = useState<Project | null>(null);
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [isEditorModalOpen, setIsEditorModalOpen] = useState(false);
+  const [selectedProjectPath, setSelectedProjectPath] = useState<string | null>(
+    null
+  );
+
+  // Determine default editor (e.g. VS Code if available)
+  const defaultEditor =
+    editors.find((e: any) => e.id === "vscode") || editors[0];
+
+  const handleOpenInEditor = (path: string, editorId?: string) => {
+    const id = editorId || defaultEditor?.id;
+    if (id) {
+      openEditorMutation.mutate({ path, editor: id });
+    }
+  };
 
   const filteredProjects = useMemo(() => {
     return projects.filter((project) => {
@@ -72,6 +94,13 @@ export default function Projects() {
             {projects.length} projects registered
           </p>
         </div>
+        <button
+          onClick={() => setIsCreateModalOpen(true)}
+          className="bg-[var(--primary)] hover:bg-[var(--primary)]/90 text-white px-4 py-2 rounded-lg font-medium shadow-lg shadow-[var(--primary)]/20 transition-all flex items-center gap-2"
+        >
+          <FolderGit2 size={18} />
+          Create Project
+        </button>
       </div>
 
       {/* Search and Filter */}
@@ -176,21 +205,38 @@ export default function Projects() {
                 </div>
               </div>
 
-              <a
-                href={`http://${project.domain}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center justify-center gap-2 w-full py-2.5 bg-[var(--primary)]/10 text-[var(--primary)] hover:bg-[var(--primary)] hover:text-white rounded-lg font-medium transition-all group-hover:shadow-md"
-              >
-                <Globe size={16} />
-                Visit {project.domain}
-                <ExternalLink size={14} className="opacity-50" />
-              </a>
+              <div className="flex flex-col gap-2">
+                <a
+                  href={`http://${project.domain}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center justify-center gap-2 w-full py-2.5 bg-[var(--primary)]/10 text-[var(--primary)] hover:bg-[var(--primary)] hover:text-white rounded-lg font-medium transition-all group-hover:shadow-md"
+                >
+                  <Globe size={16} />
+                  Visit {project.domain}
+                  <ExternalLink size={14} className="opacity-50" />
+                </a>
+
+                {/* Editor Button */}
+                {editors.length > 0 && (
+                  <button
+                    onClick={() => {
+                      setSelectedProjectPath(project.path);
+                      setIsEditorModalOpen(true);
+                    }}
+                    className="flex items-center justify-center gap-2 w-full py-2.5 bg-[var(--card)] border border-[var(--border)] hover:bg-[var(--muted)] hover:border-[var(--primary)]/30 text-[var(--foreground)] rounded-lg font-medium transition-all"
+                  >
+                    <Code size={16} />
+                    Open in Editor
+                  </button>
+                )}
+              </div>
             </div>
           ))}
         </div>
       )}
 
+      {/* Remove Project Modal */}
       <Modal
         isOpen={!!projectToRemove}
         onClose={() => setProjectToRemove(null)}
@@ -235,6 +281,63 @@ export default function Projects() {
           </div>
         </div>
       </Modal>
+
+      {/* Editor Selection Modal */}
+      <Modal
+        isOpen={isEditorModalOpen}
+        onClose={() => setIsEditorModalOpen(false)}
+        title="Select Editor"
+        footer={
+          <div className="flex justify-end">
+            <button
+              onClick={() => setIsEditorModalOpen(false)}
+              className="px-4 py-2 rounded-lg text-sm font-medium hover:bg-[var(--muted)] transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        }
+      >
+        <div className="space-y-2">
+          <p className="text-sm text-[var(--muted-foreground)] mb-4">
+            Select an editor to open the project with:
+          </p>
+          <div className="grid grid-cols-1 gap-2">
+            {editors.map((editor: any) => (
+              <button
+                key={editor.id}
+                onClick={() => {
+                  if (selectedProjectPath) {
+                    handleOpenInEditor(selectedProjectPath, editor.id);
+                    setIsEditorModalOpen(false);
+                  }
+                }}
+                className="flex items-center gap-3 p-3 rounded-lg border border-[var(--border)] hover:border-[var(--primary)] hover:bg-[var(--primary)]/5 transition-all text-left group"
+              >
+                <div className="p-2 rounded-md bg-[var(--muted)] group-hover:bg-[var(--background)] transition-colors">
+                  <Code size={20} className="text-[var(--foreground)]" />
+                </div>
+                <div>
+                  <div className="font-medium text-sm text-[var(--foreground)]">
+                    {editor.name}
+                  </div>
+                  <div className="text-xs text-[var(--muted-foreground)] font-mono">
+                    {editor.bin}
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      </Modal>
+
+      <CreateProjectModal
+        isOpen={isCreateModalOpen}
+        onClose={() => setIsCreateModalOpen(false)}
+        onCreated={() => {
+          // useSites hooks automatically invalidates, so list should refresh
+        }}
+      />
     </div>
   );
 }

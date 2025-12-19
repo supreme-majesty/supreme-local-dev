@@ -107,6 +107,19 @@ export interface QueryResult {
   error?: string;
 }
 
+export interface Editor {
+  id: string;
+  name: string;
+  bin: string;
+  icon: string;
+}
+
+export interface ProjectOptions {
+  type: "laravel" | "react" | "vue" | "nextjs" | "nodejs";
+  name: string;
+  directory?: string;
+}
+
 // API Client
 class DaemonApi {
   private async request<T>(
@@ -321,6 +334,31 @@ class DaemonApi {
     return this.request<ApiResponse>("/secure", {
       method: "POST",
     });
+  }
+
+  // Projects & System
+  async createProject(options: ProjectOptions): Promise<ApiResponse> {
+    return this.request<ApiResponse>("/projects/create", {
+      method: "POST",
+      body: JSON.stringify(options),
+    });
+  }
+
+  async getEditors(): Promise<Editor[]> {
+    return this.request<Editor[]>("/system/editors");
+  }
+
+  async openInEditor(path: string, editor: string): Promise<ApiResponse> {
+    return this.request<ApiResponse>("/system/open-editor", {
+      method: "POST",
+      body: JSON.stringify({ path, editor }),
+    });
+  }
+
+  async getDirectories(path?: string): Promise<string[]> {
+    const params = new URLSearchParams();
+    if (path) params.set("path", path);
+    return this.request<string[]>(`/system/directories?${params.toString()}`);
   }
 
   // Service Management (to be implemented in daemon)
