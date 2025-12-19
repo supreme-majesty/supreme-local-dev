@@ -1062,20 +1062,105 @@ $mysqli->close();
                                     }
                                   >
                                     {isEditing ? (
-                                      <input
-                                        type="text"
-                                        value={editingCell.value}
-                                        onChange={(e) =>
-                                          setEditingCell({
-                                            ...editingCell,
-                                            value: e.target.value,
-                                          })
-                                        }
-                                        onKeyDown={handleInlineKeyDown}
-                                        onBlur={saveInlineEdit}
-                                        autoFocus
-                                        className="w-full bg-[var(--background)] border border-[var(--primary)] rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
-                                      />
+                                      <div className="flex items-center gap-1 w-full min-w-[200px]">
+                                        {(() => {
+                                          const type =
+                                            typeof col === "string"
+                                              ? ""
+                                              : col.type?.toLowerCase() || "";
+                                          const isDate =
+                                            type.includes("datetime") ||
+                                            type.includes("timestamp");
+
+                                          // Format for datetime-local: YYYY-MM-DDThh:mm:ss
+                                          const displayValue =
+                                            isDate && editingCell.value
+                                              ? editingCell.value.replace(
+                                                  " ",
+                                                  "T"
+                                                )
+                                              : editingCell.value;
+
+                                          return (
+                                            <>
+                                              <input
+                                                type={
+                                                  isDate
+                                                    ? "datetime-local"
+                                                    : "text"
+                                                }
+                                                value={displayValue}
+                                                onChange={(e) => {
+                                                  let newVal = e.target.value;
+                                                  if (isDate) {
+                                                    // Convert back to MySQL format: YYYY-MM-DD hh:mm:ss
+                                                    newVal = newVal.replace(
+                                                      "T",
+                                                      " "
+                                                    );
+                                                  }
+                                                  setEditingCell({
+                                                    ...editingCell,
+                                                    value: newVal,
+                                                  });
+                                                }}
+                                                onKeyDown={(e) => {
+                                                  // Prevent Enter from interfering with native picker if needed,
+                                                  // but generally we want Enter to save
+                                                  handleInlineKeyDown(e);
+                                                }}
+                                                // Remove onBlur for dates because clicking the picker/Now button triggers blur
+                                                onBlur={
+                                                  isDate
+                                                    ? undefined
+                                                    : saveInlineEdit
+                                                }
+                                                autoFocus
+                                                step="1"
+                                                className="w-full bg-[var(--background)] border border-[var(--primary)] rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
+                                              />
+                                              {isDate && (
+                                                <>
+                                                  <button
+                                                    onClick={(e) => {
+                                                      e.stopPropagation(); // Prevent row click
+                                                      const now = new Date();
+                                                      // We need YYYY-MM-DD hh:mm:ss (local time ideally, but simple ISO works for now, or construct manually)
+
+                                                      // Construct local YYYY-MM-DD hh:mm:ss
+                                                      const localIso = new Date(
+                                                        now.getTime() -
+                                                          now.getTimezoneOffset() *
+                                                            60000
+                                                      )
+                                                        .toISOString()
+                                                        .slice(0, 19)
+                                                        .replace("T", " ");
+
+                                                      setEditingCell({
+                                                        ...editingCell,
+                                                        value: localIso,
+                                                      });
+                                                      // Focus back on input?
+                                                    }}
+                                                    className="p-1 text-[var(--muted-foreground)] hover:text-[var(--primary)] bg-[var(--muted)] rounded border border-[var(--border)]"
+                                                    title="Set to NOW"
+                                                  >
+                                                    <Clock size={14} />
+                                                  </button>
+                                                  <button
+                                                    onClick={saveInlineEdit}
+                                                    className="p-1 hover:text-green-500 bg-[var(--muted)] rounded border border-[var(--border)]"
+                                                    title="Save"
+                                                  >
+                                                    <ArrowRight size={14} />
+                                                  </button>
+                                                </>
+                                              )}
+                                            </>
+                                          );
+                                        })()}
+                                      </div>
                                     ) : (
                                       <span
                                         className={
