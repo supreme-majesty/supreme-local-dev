@@ -77,6 +77,7 @@ export default function Database() {
   const [restoreAfterImport, setRestoreAfterImport] = useState(true);
   const [triggers, setTriggers] = useState<any[]>([]);
   const [loadingTriggers, setLoadingTriggers] = useState(false);
+  const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
 
   // Table controls state - load from localStorage
   const [perPage, setPerPage] = useState(() => {
@@ -201,6 +202,101 @@ export default function Database() {
         },
       }
     );
+  };
+
+  const handleBulkDropTables = (tables: string[]) => {
+    if (!selectedDB || tables.length === 0) return;
+    if (
+      !confirm(
+        `Are you sure you want to DROP ${tables.length} tables? This is IRREVERSIBLE!`
+      )
+    )
+      return;
+
+    const query = `DROP TABLE ${tables.map((t) => `\`${t}\``).join(", ")}`;
+
+    executeQueryMutation.mutate({ database: selectedDB, query });
+  };
+
+  const handleBulkEmptyTables = async (tables: string[]) => {
+    if (!selectedDB || tables.length === 0) return;
+    if (
+      !confirm(
+        `Are you sure you want to TRUNCATE ${tables.length} tables? This will delete ALL data in them!`
+      )
+    )
+      return;
+
+    for (const t of tables) {
+      try {
+        await executeQueryMutation.mutateAsync({
+          database: selectedDB,
+          query: `TRUNCATE TABLE \`${t}\``,
+        });
+      } catch (e) {
+        console.error(`Failed to truncate ${t}`, e);
+      }
+    }
+  };
+
+  const handleBulkTableAction = async (tables: string[], action: string) => {
+    if (!selectedDB || tables.length === 0) return;
+
+    const tableList = tables.map((t) => `\`${t}\``).join(", ");
+    let query = "";
+
+    switch (action) {
+      case "analyze":
+        query = `ANALYZE TABLE ${tableList}`;
+        break;
+      case "check":
+        query = `CHECK TABLE ${tableList}`;
+        break;
+      case "checksum":
+        query = `CHECKSUM TABLE ${tableList}`;
+        break;
+      case "optimize":
+        query = `OPTIMIZE TABLE ${tableList}`;
+        break;
+      case "repair":
+        query = `REPAIR TABLE ${tableList}`;
+        break;
+      case "show_create":
+        // Show CREATE statements for each table
+        for (const t of tables) {
+          try {
+            const result = await executeQueryMutation.mutateAsync({
+              database: selectedDB,
+              query: `SHOW CREATE TABLE \`${t}\``,
+            });
+            alert(
+              `CREATE TABLE for ${t}:\n\n${
+                result.rows?.[0]?.["Create Table"] || "N/A"
+              }`
+            );
+          } catch (e) {
+            console.error(`Failed to get CREATE for ${t}`, e);
+          }
+        }
+        return;
+      default:
+        alert(`Action "${action}" is not yet implemented.`);
+        return;
+    }
+
+    try {
+      const result = await executeQueryMutation.mutateAsync({
+        database: selectedDB,
+        query,
+      });
+      alert(
+        `${action.toUpperCase()} completed successfully.\n\nRows affected: ${
+          result.rowCount || 0
+        }`
+      );
+    } catch (e) {
+      console.error(`Failed to ${action}`, e);
+    }
   };
 
   const handleDropDatabase = () => {
@@ -383,12 +479,18 @@ export default function Database() {
   // Reset page when table changes
   useEffect(() => {
     setPage(1);
+    setSelectedRows(new Set());
     if (!selectedTable && selectedDB) {
       setActiveTab("structure"); // DB view default
     } else if (selectedTable) {
       setActiveTab("browse"); // Table view default
     }
   }, [selectedDB, selectedTable]);
+
+  // Clear selection on filter/page change
+  useEffect(() => {
+    setSelectedRows(new Set());
+  }, [page, filterText, sortCol, sortOrder, showAll, searchResults]);
 
   const handleSelectDb = (db: string) => {
     setSelectedDB(db);
@@ -627,6 +729,58 @@ $mysqli->close();
     } else if (e.key === "Escape") {
       cancelInlineEdit();
     }
+  };
+
+  // Bulk Selection Logic
+  const allSelected = useMemo(() => {
+    if (!pkCol || filteredRows.length === 0) return false;
+    return filteredRows.every((row: any) => {
+      const val = getValue(row, pkCol);
+      return val !== undefined && selectedRows.has(String(val));
+    });
+  }, [filteredRows, selectedRows, pkCol]);
+
+  const handleSelectAll = (checked: boolean) => {
+    if (!pkCol) return;
+    const newSelected = new Set(selectedRows);
+    filteredRows.forEach((row: any) => {
+      const val = getValue(row, pkCol);
+      if (val !== undefined) {
+        const strVal = String(val);
+        if (checked) newSelected.add(strVal);
+        else newSelected.delete(strVal);
+      }
+    });
+    setSelectedRows(newSelected);
+  };
+
+  const handleSelectRow = (pk: string, checked: boolean) => {
+    const newSelected = new Set(selectedRows);
+    if (checked) newSelected.add(pk);
+    else newSelected.delete(pk);
+    setSelectedRows(newSelected);
+  };
+
+  const handleBulkDelete = () => {
+    if (!selectedDB || !selectedTable || selectedRows.size === 0 || !pkCol)
+      return;
+    if (!confirm(`Are you sure you want to delete ${selectedRows.size} rows?`))
+      return;
+
+    const ids = Array.from(selectedRows)
+      .map((id) => `'${id.replace(/'/g, "\\'")}'`)
+      .join(", ");
+    const query = `DELETE FROM \`${selectedTable}\` WHERE \`${pkCol}\` IN (${ids})`;
+
+    executeQueryMutation.mutate(
+      { database: selectedDB, query },
+      {
+        onSuccess: () => {
+          setSelectedRows(new Set());
+          refetchTableData();
+        },
+      }
+    );
   };
 
   return (
@@ -883,6 +1037,37 @@ $mysqli->close();
                   )}
                 </label>
 
+                {selectedRows.size > 0 && pkCol && (
+                  <>
+                    <div className="h-4 w-px bg-[var(--border)]" />
+                    <div className="flex items-center gap-2 text-sm">
+                      <span className="font-medium text-[var(--primary)]">
+                        {selectedRows.size} selected
+                      </span>
+                      <select
+                        className="bg-[var(--background)] border border-[var(--border)] rounded px-2 py-1 text-sm text-[var(--foreground)]"
+                        value=""
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val === "delete") handleBulkDelete();
+                          else if (val === "export") {
+                            alert(
+                              `Export functionality for ${selectedRows.size} rows is not yet implemented.`
+                            );
+                          }
+                          e.target.value = "";
+                        }}
+                      >
+                        <option value="">With selected:</option>
+                        <option value="edit">Edit</option>
+                        <option value="copy">Copy</option>
+                        <option value="delete">Delete</option>
+                        <option value="export">Export</option>
+                      </select>
+                    </div>
+                  </>
+                )}
+
                 <div className="h-4 w-px bg-[var(--border)]" />
 
                 {/* Show All */}
@@ -998,6 +1183,16 @@ $mysqli->close();
                     <table className="w-full text-sm text-left">
                       <thead className="text-xs text-[var(--muted-foreground)] uppercase bg-[var(--muted)]/50 border-b border-[var(--border)]">
                         <tr>
+                          {pkCol && (
+                            <th className="w-8 px-4 py-3 text-center">
+                              <Checkbox
+                                checked={allSelected}
+                                onChange={(e) =>
+                                  handleSelectAll(e.target.checked)
+                                }
+                              />
+                            </th>
+                          )}
                           <th className="px-4 py-3 font-medium">Actions</th>
                           {(searchResults || tableData).columns?.map(
                             (col: any) => {
@@ -1042,6 +1237,27 @@ $mysqli->close();
                             key={i}
                             className="hover:bg-[var(--muted)]/30 group"
                           >
+                            {pkCol && (
+                              <td className="px-4 py-2 w-8 text-center">
+                                <Checkbox
+                                  checked={(() => {
+                                    const val = getValue(row, pkCol);
+                                    return (
+                                      val !== undefined &&
+                                      selectedRows.has(String(val))
+                                    );
+                                  })()}
+                                  onChange={(e) => {
+                                    const val = getValue(row, pkCol);
+                                    if (val !== undefined)
+                                      handleSelectRow(
+                                        String(val),
+                                        e.target.checked
+                                      );
+                                  }}
+                                />
+                              </td>
+                            )}
                             <td className="px-4 py-2 w-20">
                               <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                 <button
@@ -1296,7 +1512,7 @@ $mysqli->close();
                           <td
                             colSpan={
                               ((searchResults || tableData).columns || [])
-                                .length + 1
+                                .length + (pkCol ? 2 : 1)
                             }
                             className="px-4 py-2 text-xs text-[var(--muted-foreground)] border-t border-[var(--border)]"
                           >
@@ -1588,6 +1804,9 @@ $mysqli->close();
                   });
                 }
               }}
+              onBulkDrop={handleBulkDropTables}
+              onBulkEmpty={handleBulkEmptyTables}
+              onBulkAction={handleBulkTableAction}
             />
           )}
 

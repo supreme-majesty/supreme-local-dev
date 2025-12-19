@@ -11,12 +11,16 @@ import {
   Minimize2,
   Table as TableIcon,
 } from "lucide-react";
+import { Checkbox } from "@/components/ui/Checkbox";
 
 interface DatabaseStructureProps {
   database: string;
-  onSelectTable: (table: string) => void; // For Browse/Structure/Search/Insert
+  onSelectTable: (table: string) => void;
   onDropTable: (table: string) => void;
   onEmptyTable: (table: string) => void;
+  onBulkDrop: (tables: string[]) => void;
+  onBulkEmpty: (tables: string[]) => void;
+  onBulkAction: (tables: string[], action: string) => void;
 }
 
 export function DatabaseStructure({
@@ -24,13 +28,36 @@ export function DatabaseStructure({
   onSelectTable,
   onDropTable,
   onEmptyTable,
+  onBulkDrop,
+  onBulkEmpty,
+  onBulkAction,
 }: DatabaseStructureProps) {
   const { data: tables = [], isLoading } = useTables(database);
   const [filter, setFilter] = useState("");
+  const [selectedTables, setSelectedTables] = useState<Set<string>>(new Set());
 
   const filteredTables = tables.filter((t) =>
     t.name.toLowerCase().includes(filter.toLowerCase())
   );
+
+  const allSelected =
+    filteredTables.length > 0 &&
+    filteredTables.every((t) => selectedTables.has(t.name));
+
+  const handleSelectAll = (checked: boolean) => {
+    if (checked) {
+      setSelectedTables(new Set(filteredTables.map((t) => t.name)));
+    } else {
+      setSelectedTables(new Set());
+    }
+  };
+
+  const handleSelectTable = (table: string, checked: boolean) => {
+    const newSet = new Set(selectedTables);
+    if (checked) newSet.add(table);
+    else newSet.delete(table);
+    setSelectedTables(newSet);
+  };
 
   if (isLoading) {
     return (
@@ -68,7 +95,10 @@ export function DatabaseStructure({
             <thead className="bg-[var(--muted)]/50 text-xs font-medium text-[var(--muted-foreground uppercase">
               <tr className="border-b border-[var(--border)]">
                 <th className="w-8 p-2 text-center">
-                  <input type="checkbox" />
+                  <Checkbox
+                    checked={allSelected}
+                    onChange={(e) => handleSelectAll(e.target.checked)}
+                  />
                 </th>
                 <th className="p-2 font-bold text-[var(--foreground)]">
                   Table
@@ -93,7 +123,12 @@ export function DatabaseStructure({
                   className="border-b border-[var(--border)] hover:bg-[var(--muted)]/20 group"
                 >
                   <td className="p-2 text-center">
-                    <input type="checkbox" />
+                    <Checkbox
+                      checked={selectedTables.has(t.name)}
+                      onChange={(e) =>
+                        handleSelectTable(t.name, e.target.checked)
+                      }
+                    />
                   </td>
                   <td
                     className="p-2 font-medium text-[var(--primary)] hover:underline cursor-pointer"
@@ -193,8 +228,56 @@ export function DatabaseStructure({
               )}
             </tbody>
           </table>
-          <div className="p-2 text-xs text-[var(--muted-foreground)] border-t border-[var(--border)] bg-[var(--muted)]/20">
-            {filteredTables.length} tables
+          <div className="p-2 text-xs text-[var(--muted-foreground)] border-t border-[var(--border)] bg-[var(--muted)]/20 flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <Checkbox
+                  checked={allSelected}
+                  onChange={(e) => handleSelectAll(e.target.checked)}
+                />
+                <span>Check all</span>
+              </label>
+
+              <select
+                className="bg-[var(--background)] border border-[var(--border)] rounded px-2 py-1 text-sm text-[var(--foreground)]"
+                value=""
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (!val) return;
+                  const tables = Array.from(selectedTables);
+                  if (val === "drop") onBulkDrop(tables);
+                  else if (val === "empty") onBulkEmpty(tables);
+                  else onBulkAction(tables, val);
+                  setSelectedTables(new Set());
+                  e.target.value = "";
+                }}
+                disabled={selectedTables.size === 0}
+              >
+                <option value="">With selected:</option>
+                <option value="copy">Copy table</option>
+                <option value="show_create">Show create</option>
+                <option value="export">Export</option>
+                <optgroup label="Delete data or table">
+                  <option value="empty">Empty</option>
+                  <option value="drop">Drop</option>
+                </optgroup>
+                <optgroup label="Table maintenance">
+                  <option value="analyze">Analyze table</option>
+                  <option value="check">Check table</option>
+                  <option value="checksum">Checksum table</option>
+                  <option value="optimize">Optimize table</option>
+                  <option value="repair">Repair table</option>
+                </optgroup>
+                <optgroup label="Prefix">
+                  <option value="add_prefix">Add prefix to table</option>
+                  <option value="replace_prefix">Replace table prefix</option>
+                  <option value="copy_with_prefix">
+                    Copy table with prefix
+                  </option>
+                </optgroup>
+              </select>
+            </div>
+            <span>{filteredTables.length} tables</span>
           </div>
         </div>
       </div>
