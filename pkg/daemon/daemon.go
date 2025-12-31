@@ -343,6 +343,8 @@ server {
         fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
         include fastcgi_params;
         fastcgi_param PHP_VALUE "error_reporting=E_ALL & ~E_DEPRECATED";
+        fastcgi_buffers 16 16k;
+        fastcgi_buffer_size 32k;
     }
 }
 `, port, domain, webRoot, socket)
@@ -375,6 +377,9 @@ server {
         fastcgi_index index.php;
         fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
         include fastcgi_params;
+        fastcgi_param HTTPS on;
+        fastcgi_buffers 16 16k;
+        fastcgi_buffer_size 32k;
     }
 }
 `, domain, webRoot, certPath, keyPath, socket)

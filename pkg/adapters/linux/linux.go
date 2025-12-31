@@ -63,10 +63,14 @@ func (l *LinuxAdapter) InstallDependencies() error {
 		// bind-interfaces: listen only on specified address (crucial for systemd-resolved coexistence)
 		// listen-address: 127.0.0.1 (avoid binding specific interface or 0.0.0.0)
 		// resolv-file: usage of real upstream to avoid loop with systemd-resolved stub
+		// Use static upstream DNS servers instead of /run/systemd/resolve/resolv.conf
+		// This allows .test domains to resolve even when offline
 		dnsConf := `address=/.test/127.0.0.1
 bind-interfaces
 listen-address=127.0.0.1
-resolv-file=/run/systemd/resolve/resolv.conf
+no-resolv
+server=8.8.8.8
+server=1.1.1.1
 `
 		tmpFile := "/tmp/sld-dnsmasq.conf"
 		os.WriteFile(tmpFile, []byte(dnsConf), 0644)
@@ -86,9 +90,51 @@ Domains=~test
 		exec.Command("sudo", "mv", tmpResolved, "/etc/systemd/resolved.conf.d/sld.conf").Run()
 		exec.Command("sudo", "systemctl", "restart", "systemd-resolved").Run()
 
+		// Add sld.test to /etc/hosts for reliable offline access
+		// /etc/hosts is consulted first, bypassing DNS entirely
+		if err := l.ensureHostsEntry("sld.test"); err != nil {
+			fmt.Printf("Warning: Failed to add sld.test to /etc/hosts: %v\n", err)
+		}
+
 		return nil
 	}
 	return fmt.Errorf("package manager not supported (only apt-get implemented for now)")
+}
+
+// ensureHostsEntry adds a hostname to /etc/hosts if not already present
+func (l *LinuxAdapter) ensureHostsEntry(hostname string) error {
+	hostsPath := "/etc/hosts"
+	entry := fmt.Sprintf("127.0.0.1 %s", hostname)
+
+	// Read current hosts file
+	data, err := os.ReadFile(hostsPath)
+	if err != nil {
+		return fmt.Errorf("failed to read hosts file: %w", err)
+	}
+
+	// Check if entry already exists
+	if strings.Contains(string(data), hostname) {
+		return nil // Already present
+	}
+
+	// Append entry using sudo
+	tmpFile := "/tmp/sld-hosts-entry"
+	newContent := string(data)
+	if !strings.HasSuffix(newContent, "\n") {
+		newContent += "\n"
+	}
+	newContent += entry + "\n"
+
+	if err := os.WriteFile(tmpFile, []byte(newContent), 0644); err != nil {
+		return fmt.Errorf("failed to write temp hosts file: %w", err)
+	}
+
+	if err := exec.Command("sudo", "mv", tmpFile, hostsPath).Run(); err != nil {
+		return fmt.Errorf("failed to update hosts file: %w", err)
+	}
+
+	fmt.Printf("Added %s to /etc/hosts for offline access\n", hostname)
+	return nil
 }
 
 func (l *LinuxAdapter) InstallCertificates() error {
@@ -310,7 +356,9 @@ func (l *LinuxAdapter) GenerateCert(homeDir string, domains []string) error {
 	keyPath := filepath.Join(tempDir, keyName)
 
 	// Base domains
-	args := []string{"-cert-file", certPath, "-key-file", keyPath, "*.test", "test.test", "localhost", "127.0.0.1", "::1"}
+	// Note: *.test wildcard doesn't match "sld.test" itself, only subdomains like "app.test"
+	// We must explicitly include sld.test for the dashboard to work over HTTPS
+	args := []string{"-cert-file", certPath, "-key-file", keyPath, "*.test", "sld.test", "test.test", "localhost", "127.0.0.1", "::1"}
 
 	// Append custom domains
 	args = append(args, domains...)
