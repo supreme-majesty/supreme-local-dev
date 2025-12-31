@@ -326,21 +326,25 @@ func (l *LinuxAdapter) InstallMkcert() error {
 }
 
 func (l *LinuxAdapter) GenerateCert(homeDir string, domains []string) error {
-	// 1. Install CA if needed (mkcert -install checks itself, but good to run)
-	installCmd := exec.Command("mkcert", "-install")
+	sudoUser := os.Getenv("SUDO_USER")
+
+	// 1. Install CA if needed (mkcert -install checks itself)
+	// Run as user if possible to hit user's browsers
+	var installCmd *exec.Cmd
+	if sudoUser != "" {
+		installCmd = exec.Command("sudo", "-u", sudoUser, "mkcert", "-install")
+	} else {
+		installCmd = exec.Command("mkcert", "-install")
+		if os.Getuid() != 0 {
+			installCmd.Stdin = os.Stdin
+		}
+	}
+
 	installCmd.Stdout = os.Stdout
 	installCmd.Stderr = os.Stderr
-	// Use sudo for install if not root
-	if os.Getuid() != 0 {
-		// mkcert handle sudo internally? No, usually not.
-		// Actually mkcert -install might require sudo.
-		// But let's assume user has rights or mkcert prompts.
-		// Wait, if mkcert prompts for sudo password, we need interactive.
-		installCmd.Stdin = os.Stdin
-	}
+
 	if err := installCmd.Run(); err != nil {
-		fmt.Printf("Warning: mkcert -install failed (might specific permissions): %v\n", err)
-		// Enable to continue even if install fails (user might have CA setup)
+		fmt.Printf("Warning: mkcert -install failed: %v\n", err)
 	}
 
 	// 2. Generate certs to temporary location
@@ -350,6 +354,11 @@ func (l *LinuxAdapter) GenerateCert(homeDir string, domains []string) error {
 	}
 	defer os.RemoveAll(tempDir) // cleanup
 
+	// Fix ownership of tempDir so user can write to it
+	if sudoUser != "" {
+		exec.Command("chown", "-R", sudoUser, tempDir).Run()
+	}
+
 	certName := "dev.pem"
 	keyName := "dev-key.pem"
 	certPath := filepath.Join(tempDir, certName)
@@ -358,12 +367,22 @@ func (l *LinuxAdapter) GenerateCert(homeDir string, domains []string) error {
 	// Base domains
 	// Note: *.test wildcard doesn't match "sld.test" itself, only subdomains like "app.test"
 	// We must explicitly include sld.test for the dashboard to work over HTTPS
-	args := []string{"-cert-file", certPath, "-key-file", keyPath, "*.test", "sld.test", "test.test", "localhost", "127.0.0.1", "::1"}
-
+	args := []string{"mkcert", "-cert-file", certPath, "-key-file", keyPath, "*.test", "sld.test", "test.test", "localhost", "127.0.0.1", "::1"}
 	// Append custom domains
 	args = append(args, domains...)
 
-	genCmd := exec.Command("mkcert", args...)
+	var genCmd *exec.Cmd
+	if sudoUser != "" {
+		// Prepend sudo -u user
+		genArgs := append([]string{"-u", sudoUser}, args...)
+		genCmd = exec.Command("sudo", genArgs...)
+	} else {
+		// args included "mkcert", remove it for direct call?
+		// exec.Command takes (name, args...). "mkcert" is in args[0].
+		// wait, args defined above has "mkcert" as first element? Yes.
+		genCmd = exec.Command(args[0], args[1:]...)
+	}
+
 	genCmd.Stdout = os.Stdout
 	genCmd.Stderr = os.Stderr
 	genCmd.Stdin = os.Stdin
