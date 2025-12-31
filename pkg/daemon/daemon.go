@@ -325,7 +325,17 @@ func (d *Daemon) refreshNginxConfig() error {
 					}
 
 					// Basic Server Block Template for Isolation
-					block := fmt.Sprintf(`
+					var block string
+					if d.State.Data.Secure {
+						block = fmt.Sprintf(`
+server {
+    listen %s;
+    server_name %s;
+    return 301 https://$host$request_uri;
+}
+`, port, domain)
+					} else {
+						block = fmt.Sprintf(`
 server {
     listen %s;
     server_name %s;
@@ -349,6 +359,7 @@ server {
     }
 }
 `, port, domain, webRoot, socket)
+					}
 
 					// If secure, add SSL block too (using snakeoil for simplicity or same certs)
 					// But wait, the wildcard cert works for these!
