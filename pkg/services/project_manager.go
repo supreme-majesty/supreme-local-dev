@@ -67,6 +67,8 @@ var supportedEditors = []Editor{
 // DetectEditors scans path for available editors
 func (pm *ProjectManager) DetectEditors() []Editor {
 	var available []Editor
+	seenBins := make(map[string]bool)
+
 	// Common paths to check beyond just PATH
 	extraPaths := []string{
 		"/snap/bin",
@@ -81,36 +83,218 @@ func (pm *ProjectManager) DetectEditors() []Editor {
 		extraPaths = append(extraPaths, filepath.Join(home, "Applications")) // Common for AppImages
 	}
 
+	// 1. Check supported editors list first (curated)
 	for _, ed := range supportedEditors {
+		// Explicitly exclude Android Studio as requested
+		if ed.ID == "android-studio" {
+			continue
+		}
+
 		found := false
 
-		// 1. Check PATH
+		// Check PATH
 		if path, err := exec.LookPath(ed.Bin); err == nil && path != "" {
-			// Update binary path to absolute if found
 			ed.Bin = path
+
+			// Resolve symlinks to avoid duplicates
+			if resolved, err := filepath.EvalSymlinks(path); err == nil {
+				if seenBins[resolved] {
+					continue
+				}
+				seenBins[resolved] = true
+			} else {
+				if seenBins[path] {
+					continue
+				}
+				seenBins[path] = true
+			}
+
 			available = append(available, ed)
 			found = true
 		}
 
-		// 2. Check explicit paths if not found
+		// Check explicit paths if not found
 		if !found {
 			for _, searchPath := range extraPaths {
 				fullPath := filepath.Join(searchPath, ed.Bin)
 				if _, err := os.Stat(fullPath); err == nil {
 					ed.Bin = fullPath
+
+					// Resolve symlinks
+					if resolved, err := filepath.EvalSymlinks(fullPath); err == nil {
+						if seenBins[resolved] {
+							continue
+						}
+						seenBins[resolved] = true
+					} else {
+						if seenBins[fullPath] {
+							continue
+						}
+						seenBins[fullPath] = true
+					}
+
 					available = append(available, ed)
 					found = true
 					break
 				}
 			}
 		}
+	}
 
-		// 3. MacOS specific checks (optional, keeping placeholder)
-		if !found && runtime.GOOS == "darwin" {
-			// ...
+	// 2. Scan desktop files for other editors (Linux only)
+	if runtime.GOOS == "linux" {
+		desktopEditors := pm.scanDesktopFiles()
+		for _, ed := range desktopEditors {
+			// Also exclude Android Studio if found via desktop file
+			if ed.ID == "android-studio" || strings.Contains(strings.ToLower(ed.Name), "android studio") {
+				continue
+			}
+
+			// Check against seen binaries
+			path := ed.Bin
+			if resolved, err := filepath.EvalSymlinks(path); err == nil {
+				path = resolved
+			}
+
+			if !seenBins[path] {
+				available = append(available, ed)
+				seenBins[path] = true
+			}
 		}
 	}
+
 	return available
+}
+
+// scanDesktopFiles looks for editor .desktop files in standard locations
+func (pm *ProjectManager) scanDesktopFiles() []Editor {
+	dirs := []string{
+		"/usr/share/applications",
+		"/var/lib/snapd/desktop/applications",
+	}
+
+	if home, err := os.UserHomeDir(); err == nil {
+		dirs = append(dirs, filepath.Join(home, ".local", "share", "applications"))
+	}
+
+	var found []Editor
+
+	for _, dir := range dirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+
+		for _, entry := range entries {
+			if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".desktop") {
+				path := filepath.Join(dir, entry.Name())
+				if ed, ok := pm.parseDesktopFile(path); ok {
+					found = append(found, ed)
+				}
+			}
+		}
+	}
+	return found
+}
+
+// parseDesktopFile attempts to read a .desktop file and identify if it's an editor
+func (pm *ProjectManager) parseDesktopFile(path string) (Editor, bool) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return Editor{}, false
+	}
+
+	lines := strings.Split(string(content), "\n")
+
+	var name, execCmd, icon, categories string
+	var isApp bool
+
+	inDesktopEntry := false
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "[Desktop Entry]" {
+			inDesktopEntry = true
+			continue
+		}
+		if !inDesktopEntry || strings.HasPrefix(line, "[") {
+			continue
+		}
+
+		if strings.HasPrefix(line, "Type=") {
+			if line == "Type=Application" {
+				isApp = true
+			}
+		} else if strings.HasPrefix(line, "Name=") {
+			name = strings.TrimPrefix(line, "Name=")
+		} else if strings.HasPrefix(line, "Exec=") {
+			execCmd = strings.TrimPrefix(line, "Exec=")
+		} else if strings.HasPrefix(line, "Icon=") {
+			icon = strings.TrimPrefix(line, "Icon=")
+		} else if strings.HasPrefix(line, "Categories=") {
+			categories = strings.TrimPrefix(line, "Categories=")
+		}
+	}
+
+	// Validations
+	if !isApp {
+		return Editor{}, false
+	}
+
+	// Must be an editor/IDE
+	isEditor := strings.Contains(categories, "TextEditor") ||
+		strings.Contains(categories, "IDE") ||
+		strings.Contains(categories, "Development")
+
+	// Filter out false positives if just "Development"
+	if strings.Contains(categories, "Development") && !strings.Contains(categories, "TextEditor") && !strings.Contains(categories, "IDE") {
+		// Example: "Qt Designer" is Development but not an IDE/Editor usually desired
+		// For now, let's include "Development;IDE" or "TextEditor"
+		if !strings.Contains(categories, "IDE") {
+			isEditor = false
+		}
+	}
+	// Always allow explicit TextEditor
+	if strings.Contains(categories, "TextEditor") {
+		isEditor = true
+	}
+
+	if !isEditor || execCmd == "" || name == "" {
+		return Editor{}, false
+	}
+
+	// Clean Exec command (remove placeholders like %F, %U, and arguments)
+	// Simple heuristic: Take first token.
+	// NOTE: Paths with spaces in quotes are tricky, but rare in standardized .desktop Execs
+	// Usually: Exec=/path/to/bin %F
+	fields := strings.Fields(execCmd)
+	if len(fields) > 0 {
+		execCmd = fields[0]
+	}
+
+	// Remove quotes if present
+	execCmd = strings.Trim(execCmd, "\"")
+
+	// Must verify executable exists
+	if _, err := exec.LookPath(execCmd); err != nil {
+		// Try absolute path if it is one
+		if filepath.IsAbs(execCmd) {
+			if _, err := os.Stat(execCmd); err != nil {
+				return Editor{}, false
+			}
+		} else {
+			return Editor{}, false
+		}
+	}
+
+	// Generate ID from name
+	id := strings.ToLower(strings.ReplaceAll(name, " ", "-"))
+
+	return Editor{
+		ID:   id,
+		Name: name,
+		Bin:  execCmd,
+		Icon: icon, // Frontend might not support random icons, but we pass it
+	}, true
 }
 
 // ListDirectories returns subdirectories in the given path
@@ -194,7 +378,8 @@ func (pm *ProjectManager) OpenInEditor(path string, editorID string) error {
 	}
 
 	// If running as root and we have a target user, drop privileges and set display
-	if os.Geteuid() == 0 && targetUser != "" {
+	// This is primarily for Linux systemd services
+	if os.Geteuid() == 0 && targetUser != "" && runtime.GOOS == "linux" {
 		fmt.Printf("[DEBUG] Preparing to launch editor as user: %s\n", targetUser)
 
 		// Get UID for target user
@@ -329,6 +514,7 @@ func (pm *ProjectManager) OpenInEditor(path string, editorID string) error {
 		fmt.Printf("[DEBUG] Executing: sudo %v\n", cmdArgs)
 		cmd = exec.Command("sudo", cmdArgs...)
 	} else {
+		// Non-root or non-Linux execution
 		fmt.Printf("[DEBUG] Executing direct: %s %s\n", bin, path)
 		cmd = exec.Command(bin, path)
 	}
