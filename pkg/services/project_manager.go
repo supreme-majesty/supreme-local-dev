@@ -4,9 +4,12 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"syscall"
 )
 
 type ProjectManager struct {
@@ -138,7 +141,6 @@ func (pm *ProjectManager) OpenInEditor(path string, editorID string) error {
 	var bin string
 
 	// Find the binary for the requested editor
-	// Find the binary for the requested editor
 	available := pm.DetectEditors()
 	for _, ed := range available {
 		if ed.ID == editorID {
@@ -167,37 +169,186 @@ func (pm *ProjectManager) OpenInEditor(path string, editorID string) error {
 	}
 
 	var cmd *exec.Cmd
-	user := os.Getenv("SUDO_USER")
+	targetUser := os.Getenv("SUDO_USER")
 
-	// If running as root and we have a SUDO_USER, drop privileges and set display
-	if os.Geteuid() == 0 && user != "" {
-		// Use runuser to execute as the real user
-		// We set DISPLAY=:0 for GUI support (common default)
-		cmd = exec.Command("runuser", "-u", user, "--", bin, path)
+	fmt.Printf("[DEBUG] Launching editor. Path: %s, EditorID: %s, Bin: %s\n", path, editorID, bin)
 
-		// Set environment variables for the command
-		// We preserve existing envs (like PATH) but add DISPLAY
-		env := os.Environ()
-		hasDisplay := false
-		for _, e := range env {
-			if strings.HasPrefix(e, "DISPLAY=") {
-				hasDisplay = true
-				break
+	// If SUDO_USER is empty (running as pure systemd service), try to detect user from file ownership
+	if targetUser == "" && os.Geteuid() == 0 {
+		info, err := os.Stat(path)
+		if err == nil {
+			if stat, ok := info.Sys().(*syscall.Stat_t); ok {
+				uid := strconv.Itoa(int(stat.Uid))
+				if u, err := user.LookupId(uid); err == nil {
+					targetUser = u.Username
+					fmt.Printf("[DEBUG] Detected owner of %s is %s (uid %s)\n", path, targetUser, uid)
+				} else {
+					fmt.Printf("[DEBUG] Failed to lookup user for uid %s: %v\n", uid, err)
+				}
+			}
+		} else {
+			fmt.Printf("[DEBUG] Failed to stat path %s: %v\n", path, err)
+		}
+	} else {
+		fmt.Printf("[DEBUG] SUDO_USER present: %s\n", targetUser)
+	}
+
+	// If running as root and we have a target user, drop privileges and set display
+	if os.Geteuid() == 0 && targetUser != "" {
+		fmt.Printf("[DEBUG] Preparing to launch editor as user: %s\n", targetUser)
+
+		// Get UID for target user
+		var uid string
+		if u, err := user.Lookup(targetUser); err == nil {
+			uid = u.Uid
+		} else {
+			// Fallback if lookup fails
+			out, _ := exec.Command("id", "-u", targetUser).Output()
+			uid = strings.TrimSpace(string(out))
+			fmt.Printf("[DEBUG] User lookup fallback for %s: %s\n", targetUser, uid)
+		}
+
+		runtimeDir := fmt.Sprintf("/run/user/%s", uid)
+
+		// Dynamically discover GUI environment variables from user's running processes
+		guiEnv := map[string]string{
+			"DISPLAY":         ":0", // Default fallback
+			"XDG_RUNTIME_DIR": runtimeDir,
+		}
+
+		// Attempt to scrape environment from recent user processes
+		// We look for processes owned by the user
+		// Use full path for pgrep as it might not be in PATH for systemd service
+		if pids, err := exec.Command("/usr/bin/pgrep", "-u", targetUser).Output(); err == nil {
+			pidList := strings.Fields(string(pids))
+			// Check recent processes first (reverse order)
+			for i := len(pidList) - 1; i >= 0; i-- {
+				pid := pidList[i]
+				envPath := fmt.Sprintf("/proc/%s/environ", pid)
+				content, err := os.ReadFile(envPath)
+				if err != nil {
+					continue // Skip silently, many processes won't be readable
+				}
+
+				// Parse null-terminated environment
+				envData := string(content)
+
+				// Critical: We should prefer a process that has BOTH DISPLAY and XAUTHORITY.
+				if strings.Contains(envData, "DISPLAY=") {
+					parts := strings.Split(envData, "\x00")
+
+					// Temp map for this process
+					processEnv := make(map[string]string)
+
+					for _, p := range parts {
+						if strings.HasPrefix(p, "DISPLAY=") ||
+							strings.HasPrefix(p, "WAYLAND_DISPLAY=") ||
+							strings.HasPrefix(p, "XAUTHORITY=") ||
+							strings.HasPrefix(p, "DBUS_SESSION_BUS_ADDRESS=") {
+							kv := strings.SplitN(p, "=", 2)
+							if len(kv) == 2 {
+								processEnv[kv[0]] = kv[1]
+							}
+						}
+					}
+
+					// Update guiEnv with what we found
+					for k, v := range processEnv {
+						guiEnv[k] = v
+					}
+
+					// If we found XAUTHORITY, this is the golden ticket. Stop searching.
+					if _, ok := processEnv["XAUTHORITY"]; ok {
+						fmt.Printf("[DEBUG] Inherited valid GUI env (with XAUTHORITY) from PID %s: %v\n", pid, guiEnv)
+						break
+					}
+				}
+			}
+		} else {
+			fmt.Printf("[DEBUG] pgrep failed or no processes found: %v\n", err)
+		}
+
+		// Fallback: If XAUTHORITY wasn't found, try common locations for Wayland/XWayland sessions
+		if _, hasXauth := guiEnv["XAUTHORITY"]; !hasXauth {
+			fmt.Printf("[DEBUG] XAUTHORITY not found via process scan, trying fallback paths...\n")
+
+			// Common XAUTHORITY locations to try
+			xauthPaths := []string{
+				filepath.Join(runtimeDir, ".Xauthority"),
+				filepath.Join("/home", targetUser, ".Xauthority"),
+			}
+
+			// Also check for mutter/XWayland auth files (GNOME/Wayland)
+			if entries, err := os.ReadDir(runtimeDir); err == nil {
+				for _, entry := range entries {
+					name := entry.Name()
+					// Look for .mutter-Xwaylandauth.* files (GNOME on Wayland)
+					if strings.HasPrefix(name, ".mutter-Xwaylandauth.") {
+						xauthPaths = append([]string{filepath.Join(runtimeDir, name)}, xauthPaths...)
+					}
+					// Also check for gdm Xauthority
+					if name == "gdm" {
+						gdmAuth := filepath.Join(runtimeDir, name, "Xauthority")
+						xauthPaths = append([]string{gdmAuth}, xauthPaths...)
+					}
+				}
+			}
+
+			// Try each path until we find a valid one
+			for _, xaPath := range xauthPaths {
+				if info, err := os.Stat(xaPath); err == nil && !info.IsDir() {
+					guiEnv["XAUTHORITY"] = xaPath
+					fmt.Printf("[DEBUG] Found XAUTHORITY via fallback: %s\n", xaPath)
+					break
+				}
+			}
+
+			if _, hasXauth := guiEnv["XAUTHORITY"]; !hasXauth {
+				fmt.Printf("[WARN] Could not find XAUTHORITY - X11 apps may fail to display\n")
 			}
 		}
-		if !hasDisplay {
-			env = append(env, "DISPLAY=:0")
+
+		// Construct environment arguments
+		var envVars []string
+		for k, v := range guiEnv {
+			envVars = append(envVars, fmt.Sprintf("%s=%s", k, v))
 		}
 
-		// Ensure HOME is correct (runuser usually handles this but good to be sure)
-		// env = append(env, fmt.Sprintf("HOME=/home/%s", user)) // Naive, let runuser handle?
+		// Wrap command to run in background with nohup style detachment
+		debugLog := fmt.Sprintf("/tmp/sld-editor-%s.log", targetUser)
+		// Use setsid to fully detach the process from the controlling terminal
+		wrappedCmd := fmt.Sprintf("nohup %s %s > %s 2>&1 &", bin, path, debugLog)
 
-		cmd.Env = env
+		cmdArgs := []string{
+			"-u", targetUser,
+			"env",
+		}
+		cmdArgs = append(cmdArgs, envVars...)
+		cmdArgs = append(cmdArgs, "/bin/sh", "-c", wrappedCmd)
+
+		fmt.Printf("[DEBUG] Executing: sudo %v\n", cmdArgs)
+		cmd = exec.Command("sudo", cmdArgs...)
 	} else {
+		fmt.Printf("[DEBUG] Executing direct: %s %s\n", bin, path)
 		cmd = exec.Command(bin, path)
 	}
 
-	return cmd.Start() // Non-blocking
+	// Use Start() instead of CombinedOutput() to not block waiting for editor to close
+	if err := cmd.Start(); err != nil {
+		fmt.Printf("[ERROR] Editor launch failed: %v\n", err)
+		return fmt.Errorf("editor launch failed: %w", err)
+	}
+
+	// Don't wait for the process to finish - editors are long-running
+	go func() {
+		if err := cmd.Wait(); err != nil {
+			fmt.Printf("[DEBUG] Editor process ended with: %v (this is normal if user closed it)\n", err)
+		}
+	}()
+
+	fmt.Printf("[DEBUG] Editor launched successfully. Check /tmp/sld-editor-*.log\n")
+
+	return nil
 }
 
 // CreateProject creates a new project using npx or composer
@@ -223,7 +374,6 @@ func (pm *ProjectManager) CreateProject(options ProjectOptions) error {
 	switch options.Type {
 	case "laravel":
 		// composer create-project laravel/laravel:^10.0 example-app
-		// We'll default to latest stable
 		cmd = exec.Command("composer", "create-project", "laravel/laravel", options.Name)
 	case "react":
 		// npx create-vite@latest my-vue-app --template react
@@ -232,8 +382,6 @@ func (pm *ProjectManager) CreateProject(options ProjectOptions) error {
 		cmd = exec.Command("npx", "-y", "create-vite@latest", options.Name, "--template", "vue")
 	case "nextjs":
 		// npx create-next-app@latest
-		// This is interactive by default. We need to pass flags to make it non-interactive.
-		// --use-npm, --ts, --tailwind, --eslint, --app, --src-dir, --import-alias "@/*"
 		cmd = exec.Command("npx", "-y", "create-next-app@latest", options.Name,
 			"--ts", "--tailwind", "--eslint", "--app", "--no-src-dir", "--import-alias", "@/*", "--use-npm")
 	case "nodejs":
@@ -252,10 +400,6 @@ func (pm *ProjectManager) CreateProject(options ProjectOptions) error {
 		cmd.Dir = base
 	}
 
-	// Capture output?
-	// For a real app, we'd want to stream this to a websocket.
-	// For now, we'll just run it and return error if it fails.
-	// But `create-next-app` etc might take a while.
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("project creation failed: %s\nOutput: %s", err, string(output))
