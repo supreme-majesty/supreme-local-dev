@@ -556,10 +556,24 @@ func (pm *ProjectManager) CreateProject(options ProjectOptions) error {
 		return fmt.Errorf("invalid project name: must be alphanumeric and no spaces")
 	}
 
-	// Determine target directory
+	// Determine base directory
 	base := pm.BaseDir
 	if options.Directory != "" {
 		base = options.Directory
+	}
+
+	// Determine intended owner from parent
+	uid, gid, _ := getPathOwner(base)
+
+	// Ensure base directory exists (and set ownership)
+	if _, err := os.Stat(base); os.IsNotExist(err) {
+		if err := os.MkdirAll(base, 0755); err != nil {
+			return fmt.Errorf("failed to create base directory %s: %w", base, err)
+		}
+		// Set ownership of the new directory to match parent
+		if uid != 0 {
+			os.Chown(base, int(uid), int(gid))
+		}
 	}
 
 	targetDir := filepath.Join(base, options.Name)
@@ -571,7 +585,7 @@ func (pm *ProjectManager) CreateProject(options ProjectOptions) error {
 
 	switch options.Type {
 	case "laravel":
-		// composer create-project laravel/laravel:^10.0 example-app
+		// composer create-project laravel/laravel example-app --prefer-dist
 		cmd = exec.Command("composer", "create-project", "laravel/laravel", options.Name)
 	case "react":
 		// npx create-vite@latest my-vue-app --template react
@@ -587,10 +601,47 @@ func (pm *ProjectManager) CreateProject(options ProjectOptions) error {
 		if err := os.MkdirAll(targetDir, 0755); err != nil {
 			return err
 		}
+		if uid != 0 {
+			os.Chown(targetDir, int(uid), int(gid))
+		}
 		cmd = exec.Command("npm", "init", "-y")
 		cmd.Dir = targetDir // Run INSIDE the dir
 	default:
 		return fmt.Errorf("unsupported project type: %s", options.Type)
+	}
+
+	// Apply User Credentials (Run as User, not Root)
+	if uid != 0 {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+		cmd.SysProcAttr.Credential = &syscall.Credential{Uid: uid, Gid: gid}
+
+		// Build a clean environment for the target user
+		u, err := user.LookupId(strconv.Itoa(int(uid)))
+		if err == nil {
+			// Start with a minimal, clean environment instead of inheriting root's
+			cleanEnv := []string{
+				"HOME=" + u.HomeDir,
+				"USER=" + u.Username,
+				"LOGNAME=" + u.Username,
+				"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:" + filepath.Join(u.HomeDir, ".local/bin") + ":" + filepath.Join(u.HomeDir, ".composer/vendor/bin"),
+				"SHELL=/bin/bash",
+				"TERM=xterm-256color",
+				"LANG=en_US.UTF-8",
+			}
+
+			// For Composer-based projects, set COMPOSER_HOME and allow superuser fallback
+			if options.Type == "laravel" {
+				composerHome := filepath.Join(u.HomeDir, ".config/composer")
+				// Fallback to ~/.composer if .config/composer doesn't exist
+				if _, err := os.Stat(composerHome); os.IsNotExist(err) {
+					composerHome = filepath.Join(u.HomeDir, ".composer")
+				}
+				cleanEnv = append(cleanEnv, "COMPOSER_HOME="+composerHome)
+				cleanEnv = append(cleanEnv, "COMPOSER_ALLOW_SUPERUSER=1") // Safety net
+			}
+
+			cmd.Env = cleanEnv
+		}
 	}
 
 	// If cmd.Dir wasn't set (because the command creates the dir), run in BaseDir
@@ -600,8 +651,32 @@ func (pm *ProjectManager) CreateProject(options ProjectOptions) error {
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("project creation failed: %s\nOutput: %s", err, string(output))
+		return fmt.Errorf("project creation failed: %s Output: %s", err, string(output))
 	}
 
 	return nil
+}
+
+// Helper to find the owner of the nearest existing directory
+func getPathOwner(path string) (uint32, uint32, error) {
+	for {
+		if info, err := os.Stat(path); err == nil {
+			stat := info.Sys().(*syscall.Stat_t)
+			return stat.Uid, stat.Gid, nil
+		}
+		parent := filepath.Dir(path)
+		if parent == path || parent == "." || parent == "/" {
+			// Reach root without success, verify root exists? Root always exists.
+			// If we are here, path doesn't exist.
+			if parent == "/" {
+				// Stat root
+				if info, err := os.Stat("/"); err == nil {
+					stat := info.Sys().(*syscall.Stat_t)
+					return stat.Uid, stat.Gid, nil
+				}
+				return 0, 0, fmt.Errorf("root not accessible")
+			}
+		}
+		path = parent
+	}
 }

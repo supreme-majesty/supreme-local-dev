@@ -1,8 +1,15 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Modal } from "@/components/ui/Modal";
 import { type ProjectOptions, api } from "@/api/daemon";
-import { Loader2, Plus, Folder } from "lucide-react";
-import { useDirectories } from "@/hooks/use-daemon";
+import {
+  Loader2,
+  Plus,
+  Folder,
+  LayoutGrid,
+  HardDrive,
+  Search,
+} from "lucide-react";
+import { useDirectories, useSldState } from "@/hooks/use-daemon";
 
 interface CreateProjectModalProps {
   isOpen: boolean;
@@ -17,12 +24,42 @@ export function CreateProjectModal({
 }: CreateProjectModalProps) {
   const [name, setName] = useState("");
   const [type, setType] = useState<ProjectOptions["type"]>("laravel");
+
+  // Location Management
   const [targetDir, setTargetDir] = useState("");
+  const [locationMode, setLocationMode] = useState<"parked" | "custom">(
+    "parked"
+  );
+  const [isBrowserOpen, setIsBrowserOpen] = useState(false);
+
+  const { data: state } = useSldState();
+  const parkedPaths = state?.paths || [];
+
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Directory navigation
-  const { data: directories = [] } = useDirectories(targetDir || undefined);
+  // Initialize Default Location
+  useEffect(() => {
+    if (isOpen) {
+      if (parkedPaths.length > 0 && locationMode === "parked") {
+        // Only set if not already set to a valid parked path
+        if (!parkedPaths.includes(targetDir)) {
+          setTargetDir(parkedPaths[0]);
+        }
+      } else if (parkedPaths.length === 0 && locationMode === "parked") {
+        // No parked paths, switch to custom
+        setLocationMode("custom");
+      }
+    }
+  }, [isOpen, parkedPaths, locationMode, targetDir]);
+
+  // Directory navigation (custom mode)
+  // Fetch directories only if browser is open and in custom mode
+  const { data: directories = [] } = useDirectories(
+    locationMode === "custom" && isBrowserOpen
+      ? targetDir || undefined
+      : undefined
+  );
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -37,6 +74,14 @@ export function CreateProjectModal({
       onClose();
       setName("");
       setType("laravel");
+      // Reset location to default
+      if (parkedPaths.length > 0) {
+        setLocationMode("parked");
+        setTargetDir(parkedPaths[0]);
+      } else {
+        setTargetDir("");
+      }
+      setIsBrowserOpen(false);
     } catch (err: any) {
       setError(err.message || "Failed to create project");
     } finally {
@@ -69,7 +114,9 @@ export function CreateProjectModal({
           </button>
           <button
             onClick={handleSubmit}
-            disabled={isLoading || !name}
+            disabled={
+              isLoading || !name || (locationMode === "parked" && !targetDir)
+            }
             className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--primary)] hover:bg-[var(--primary)]/90 text-white text-sm font-medium transition-colors shadow-lg shadow-[var(--primary)]/20 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isLoading ? (
@@ -92,6 +139,7 @@ export function CreateProjectModal({
           </div>
         )}
 
+        {/* Project Name */}
         <div className="space-y-2">
           <label className="text-sm font-medium text-[var(--foreground)]">
             Project Name
@@ -109,70 +157,170 @@ export function CreateProjectModal({
           </p>
         </div>
 
-        <div className="space-y-2">
-          <label className="text-sm font-medium text-[var(--foreground)]">
-            Parent Directory (Optional)
-          </label>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={targetDir}
-              onChange={(e) => setTargetDir(e.target.value)}
-              placeholder="Leave empty for default directory"
-              className="flex-1 px-3 py-2 rounded-lg bg-[var(--background)] border border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--primary)] text-sm font-mono"
-            />
+        {/* Location Selection */}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <label className="text-sm font-medium text-[var(--foreground)]">
+              Installation Location
+            </label>
           </div>
-          {/* Simple Directory Suggestions */}
-          {/* Simple Directory Suggestions */}
-          <div className="flex flex-wrap gap-2 mt-2">
-            {(targetDir || "").length > 0 && (
-              <button
-                type="button"
-                onClick={() => {
-                  // Go up one level
-                  if (!targetDir) return;
-                  const isAbsolute = targetDir.startsWith("/");
-                  const parts = targetDir.split("/").filter(Boolean);
-                  parts.pop();
-                  const newPath = parts.join("/");
-                  setTargetDir(isAbsolute ? "/" + newPath : newPath);
-                }}
-                className="flex items-center gap-1 text-xs px-2 py-1 bg-[var(--muted)] hover:bg-[var(--muted)]/80 rounded border border-[var(--border)] font-mono"
-                title="Go to parent directory"
-              >
-                <Folder className="w-3 h-3 rotate-90" /> ..
-              </button>
-            )}
 
-            {/* Quick Root Access if likely at root or needed */}
+          {/* Mode Switch */}
+          <div className="flex gap-1 p-1 bg-[var(--muted)]/50 rounded-lg w-full sm:w-fit">
             <button
               type="button"
-              onClick={() => setTargetDir("/")}
-              className="flex items-center gap-1 text-xs px-2 py-1 bg-[var(--muted)] hover:bg-[var(--muted)]/80 rounded border border-[var(--border)] font-mono opacity-50 hover:opacity-100"
-              title="Go to System Root"
+              onClick={() => {
+                setLocationMode("parked");
+                if (parkedPaths.length > 0) setTargetDir(parkedPaths[0]);
+                setIsBrowserOpen(false);
+              }}
+              className={`flex-1 sm:flex-none px-3 py-1.5 text-xs font-medium rounded-md transition-all flex items-center justify-center gap-2 ${
+                locationMode === "parked"
+                  ? "bg-[var(--background)] shadow-sm text-[var(--foreground)] ring-1 ring-black/5 dark:ring-white/10"
+                  : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              }`}
+              disabled={parkedPaths.length === 0}
+              title={
+                parkedPaths.length === 0
+                  ? "No parked folders found"
+                  : "Install in a parked folder"
+              }
             >
-              /
+              <LayoutGrid size={14} /> Parked Folder
             </button>
-
-            {directories.slice(0, 10).map((dir: string) => (
-              <button
-                key={dir}
-                type="button"
-                onClick={() => {
-                  // Correctly join path
-                  const cleanCurrent = targetDir?.endsWith("/")
-                    ? targetDir.slice(0, -1)
-                    : targetDir;
-                  setTargetDir(cleanCurrent ? `${cleanCurrent}/${dir}` : dir);
-                }}
-                className="flex items-center gap-1 text-xs px-2 py-1 bg-[var(--muted)] hover:bg-[var(--muted)]/80 rounded"
-              >
-                <Folder size={10} /> {dir}
-              </button>
-            ))}
+            <button
+              type="button"
+              onClick={() => setLocationMode("custom")}
+              className={`flex-1 sm:flex-none px-3 py-1.5 text-xs font-medium rounded-md transition-all flex items-center justify-center gap-2 ${
+                locationMode === "custom"
+                  ? "bg-[var(--background)] shadow-sm text-[var(--foreground)] ring-1 ring-black/5 dark:ring-white/10"
+                  : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              }`}
+            >
+              <HardDrive size={14} /> Custom Path
+            </button>
           </div>
+
+          {/* Parked Mode UI */}
+          {locationMode === "parked" && (
+            <div className="relative">
+              <Folder className="absolute left-3 top-2.5 w-4 h-4 text-[var(--muted-foreground)]" />
+              <select
+                value={targetDir}
+                onChange={(e) => setTargetDir(e.target.value)}
+                className="w-full pl-9 pr-8 py-2 rounded-lg bg-[var(--background)] border border-[var(--border)] text-sm appearance-none focus:outline-none focus:ring-2 focus:ring-[var(--primary)] text-[var(--foreground)]"
+              >
+                {parkedPaths.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+              </select>
+              <div className="absolute right-3 top-3 pointer-events-none">
+                <svg
+                  className="w-4 h-4 text-[var(--muted-foreground)]"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M19 9l-7 7-7-7"
+                  />
+                </svg>
+              </div>
+            </div>
+          )}
+
+          {/* Custom Mode UI */}
+          {locationMode === "custom" && (
+            <div className="space-y-2 animate-in fade-in zoom-in-95 duration-200">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={targetDir}
+                  onChange={(e) => setTargetDir(e.target.value)}
+                  placeholder="/path/to/project"
+                  className="flex-1 px-3 py-2 rounded-lg bg-[var(--background)] border border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--primary)] text-sm font-mono"
+                />
+                <button
+                  type="button"
+                  onClick={() => setIsBrowserOpen(!isBrowserOpen)}
+                  className={`px-3 py-2 rounded-lg border flex items-center gap-2 text-sm font-medium transition-colors ${
+                    isBrowserOpen
+                      ? "bg-[var(--muted)] border-[var(--border)]"
+                      : "bg-[var(--background)] border-[var(--border)] hover:bg-[var(--muted)]"
+                  }`}
+                >
+                  <Search className="w-4 h-4" />{" "}
+                  {isBrowserOpen ? "Hide" : "Browse"}
+                </button>
+              </div>
+
+              {/* Directory Browser - Conditional */}
+              {isBrowserOpen && (
+                <div className="p-3 rounded-lg border border-[var(--border)] bg-[var(--muted)]/20 animate-in slide-in-from-top-2 duration-200">
+                  <div className="flex flex-wrap gap-2">
+                    {(targetDir || "").length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!targetDir) return;
+                          const isAbsolute = targetDir.startsWith("/");
+                          const parts = targetDir.split("/").filter(Boolean);
+                          parts.pop();
+                          const newPath = parts.join("/");
+                          setTargetDir(isAbsolute ? "/" + newPath : newPath);
+                        }}
+                        className="flex items-center gap-1 text-xs px-2 py-1 bg-[var(--background)] hover:bg-[var(--background)]/80 rounded border border-[var(--border)] font-mono shadow-sm"
+                        title="Go to parent directory"
+                      >
+                        <Folder className="w-3 h-3 rotate-90" /> ..
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => setTargetDir("/")}
+                      className="flex items-center gap-1 text-xs px-2 py-1 bg-[var(--background)] hover:bg-[var(--background)]/80 rounded border border-[var(--border)] font-mono shadow-sm opacity-70 hover:opacity-100"
+                      title="Go to System Root"
+                    >
+                      /
+                    </button>
+
+                    {directories.map((dir: string) => (
+                      <button
+                        key={dir}
+                        type="button"
+                        onClick={() => {
+                          const cleanCurrent = targetDir?.endsWith("/")
+                            ? targetDir.slice(0, -1)
+                            : targetDir;
+                          setTargetDir(
+                            cleanCurrent ? `${cleanCurrent}/${dir}` : dir
+                          );
+                        }}
+                        className="flex items-center gap-1 text-xs px-2 py-1 bg-[var(--background)] hover:bg-[var(--background)]/80 rounded border border-[var(--border)] shadow-sm"
+                      >
+                        <Folder size={10} /> {dir}
+                      </button>
+                    ))}
+
+                    {directories.length === 0 && (
+                      <span className="text-xs text-[var(--muted-foreground)] italic">
+                        No subdirectories found
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
+        {/* Project Type */}
         <div className="space-y-2">
           <label className="text-sm font-medium text-[var(--foreground)]">
             Project Type
