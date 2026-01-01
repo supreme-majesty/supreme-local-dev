@@ -13,16 +13,14 @@ export function PendingProjects() {
     if (!sites || pendingProjects.length === 0) return;
 
     pendingProjects.forEach((project) => {
-      // Check if project name exists in sites list (site.name or just name match)
-      // Sites are usually returned as objects with 'name' property but the useSites hook might return raw list
-      // Let's verify what useSites returns.
-      // Assuming it returns array of objects with { name: string } or similar.
-      // Based on server.go handleSites: returns list of Site structs.
-
-      const isComplete = sites.some(
-        (site: any) =>
-          site.name === project.name || site.path?.endsWith("/" + project.name)
+      // Find the site matching this project
+      const site = sites.find(
+        (s: any) =>
+          s.name === project.name || s.path?.endsWith("/" + project.name)
       );
+
+      // Only consider complete if site exists AND is not still being created
+      const isComplete = site && !site.creating;
 
       if (isComplete) {
         success(

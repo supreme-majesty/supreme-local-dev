@@ -655,9 +655,20 @@ func (pm *ProjectManager) CreateProject(options ProjectOptions) error {
 		cmd.Env = cleanEnv
 	}
 
+	// Create marker file to indicate project is being created (used by frontend)
+	markerFile := filepath.Join(targetDir, ".sld-creating")
+
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("project creation failed: %s Output: %s", err, string(output))
+	}
+
+	// Create marker file now that target directory exists (after main command)
+	if f, err := os.Create(markerFile); err == nil {
+		f.Close()
+		if uid != 0 {
+			os.Chown(markerFile, int(uid), int(gid))
+		}
 	}
 
 	// Post-Creation Steps (Laravel NPM)
@@ -745,6 +756,9 @@ func (pm *ProjectManager) CreateProject(options ProjectOptions) error {
 			fmt.Printf("[INFO] Migrations ran successfully\n")
 		}
 	}
+
+	// Remove marker file to signal project creation is complete
+	os.Remove(markerFile)
 
 	return nil
 }

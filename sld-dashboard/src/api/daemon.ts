@@ -37,6 +37,7 @@ export interface Project {
   phpVersion?: string;
   secure: boolean;
   type: "parked" | "linked";
+  creating?: boolean; // true if project is still being created in background
 }
 
 export interface HealthCheck {

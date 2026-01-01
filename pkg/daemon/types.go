@@ -7,5 +7,6 @@ type Site struct {
 	Domain     string `json:"domain"`
 	PHPVersion string `json:"phpVersion,omitempty"`
 	Secure     bool   `json:"secure"`
-	Type       string `json:"type"` // "parked" or "linked"
+	Type       string `json:"type"`     // "parked" or "linked"
+	Creating   bool   `json:"creating"` // true if project is still being created
 }
