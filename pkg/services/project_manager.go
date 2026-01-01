@@ -85,8 +85,8 @@ func (pm *ProjectManager) DetectEditors() []Editor {
 
 	// 1. Check supported editors list first (curated)
 	for _, ed := range supportedEditors {
-		// Explicitly exclude Android Studio as requested
-		if ed.ID == "android-studio" {
+		// Explicitly exclude non-web-dev editors as requested
+		if ed.ID == "android-studio" || ed.ID == "arduino-ide" || ed.ID == "clion" {
 			continue
 		}
 
@@ -145,8 +145,16 @@ func (pm *ProjectManager) DetectEditors() []Editor {
 	if runtime.GOOS == "linux" {
 		desktopEditors := pm.scanDesktopFiles()
 		for _, ed := range desktopEditors {
-			// Also exclude Android Studio if found via desktop file
-			if ed.ID == "android-studio" || strings.Contains(strings.ToLower(ed.Name), "android studio") {
+			// Also exclude non-web-dev editors if found via desktop file
+			nameLower := strings.ToLower(ed.Name)
+			if ed.ID == "android-studio" || strings.Contains(nameLower, "android studio") {
+				continue
+			}
+			if ed.ID == "arduino-ide" || strings.Contains(nameLower, "arduino") {
+				continue
+			}
+			// Filter out URL handlers which are usually duplicates
+			if strings.Contains(nameLower, "url handler") {
 				continue
 			}
 
@@ -212,11 +220,16 @@ func (pm *ProjectManager) parseDesktopFile(path string) (Editor, bool) {
 	inDesktopEntry := false
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		if line == "[Desktop Entry]" {
-			inDesktopEntry = true
+		if strings.HasPrefix(line, "[") {
+			if line == "[Desktop Entry]" {
+				inDesktopEntry = true
+			} else {
+				inDesktopEntry = false
+			}
 			continue
 		}
-		if !inDesktopEntry || strings.HasPrefix(line, "[") {
+
+		if !inDesktopEntry {
 			continue
 		}
 
