@@ -632,6 +632,14 @@ func (d *Daemon) GetSites() ([]Site, error) {
 		return false
 	}
 
+	// Build a set of linked paths for deduplication
+	// This prevents projects from appearing twice if they are both
+	// in a parked directory AND explicitly linked
+	linkedPaths := make(map[string]bool)
+	for _, linkPath := range d.State.Data.Links {
+		linkedPaths[linkPath] = true
+	}
+
 	// 1. Scan Parked Paths
 	for _, path := range d.State.Data.Paths {
 		entries, err := os.ReadDir(path)
@@ -645,6 +653,11 @@ func (d *Daemon) GetSites() ([]Site, error) {
 				fullPath := filepath.Join(path, name)
 
 				if isIgnored(fullPath) {
+					continue
+				}
+
+				// Skip if this path is also linked (avoid duplicates)
+				if linkedPaths[fullPath] {
 					continue
 				}
 
