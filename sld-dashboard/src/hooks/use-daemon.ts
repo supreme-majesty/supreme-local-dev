@@ -31,6 +31,7 @@ export function useSites() {
   return useQuery<Project[]>({
     queryKey: queryKeys.sites,
     queryFn: () => api.getProjects(),
+    refetchInterval: 5000,
   });
 }
 

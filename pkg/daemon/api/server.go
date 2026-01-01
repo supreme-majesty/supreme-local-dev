@@ -312,8 +312,9 @@ func (s *Server) handleProjectCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Type string `json:"type"`
-		Name string `json:"name"`
+		Type      string `json:"type"`
+		Name      string `json:"name"`
+		Directory string `json:"directory"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
@@ -322,33 +323,30 @@ func (s *Server) handleProjectCreate(w http.ResponseWriter, r *http.Request) {
 
 	d, _ := daemon.GetClient()
 	opts := services.ProjectOptions{
-		Type: req.Type,
-		Name: req.Name,
+		Type:      req.Type,
+		Name:      req.Name,
+		Directory: req.Directory,
 	}
 
-	if err := d.ProjectManager.CreateProject(opts); err != nil {
-		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
-		return
-	}
+	// Run project creation asynchronously to avoid gateway timeout
+	// Creating a Laravel project can take 1-2+ minutes
+	go func() {
+		if err := d.ProjectManager.CreateProject(opts); err != nil {
+			fmt.Printf("[ERROR] Project creation failed for %s: %v\n", req.Name, err)
+			return
+		}
 
-	// Auto-park the project?
-	// ProjectManager creates it in BaseDir/Name.
-	// We need to know the path to park it.
-	// We know BaseDir from d.ProjectManager.BaseDir
-	projectPath := filepath.Join(d.ProjectManager.BaseDir, req.Name)
-	d.Park(d.ProjectManager.BaseDir) // Re-scan the whole base dir to be safe? Or just park the new one?
-	// Park() functionality usually registers a root path.
-	// If BaseDir is already parked, we just need to Refresh().
-	// If it's not parked, we probably shouldn't auto-park it unless requested.
-	// But users expect it to show up.
-	// Let's assume BaseDir IS NOT necessarily parked.
-	// If we create a project, we should probably LINK it or Park the BaseDir.
-	// Let's just Link it for now to be precise, or just return success and let frontend handle "Park this folder?"
-	// Actually, better UX: If it's created, it should show up.
-	// Let's automatically LINK the new project.
-	d.Link(req.Name, projectPath)
+		// Auto-link the project on success
+		base := d.ProjectManager.BaseDir
+		if opts.Directory != "" {
+			base = opts.Directory
+		}
+		projectPath := filepath.Join(base, req.Name)
+		d.Link(req.Name, projectPath)
+		fmt.Printf("[INFO] Project %s created and linked at %s\n", req.Name, projectPath)
+	}()
 
-	jsonResponse(w, SuccessResponse{Success: true, Message: "Project created and linked"}, 200)
+	jsonResponse(w, SuccessResponse{Success: true, Message: "Project creation started in background"}, 202)
 }
 
 func (s *Server) handleSystemEditors(w http.ResponseWriter, r *http.Request) {

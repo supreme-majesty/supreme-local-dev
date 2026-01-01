@@ -10,6 +10,8 @@ import {
   Search,
 } from "lucide-react";
 import { useDirectories, useSldState } from "@/hooks/use-daemon";
+import { useToast } from "@/hooks/useToast";
+import { useAppStore } from "@/stores/useAppStore";
 
 interface CreateProjectModalProps {
   isOpen: boolean;
@@ -37,6 +39,7 @@ export function CreateProjectModal({
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { info } = useToast();
 
   // Initialize Default Location
   useEffect(() => {
@@ -70,6 +73,12 @@ export function CreateProjectModal({
 
     try {
       await api.createProject({ type, name, directory: targetDir });
+      // Track this project as pending
+      useAppStore.getState().addPendingProject(name, type);
+      info(
+        "Project Creation Started",
+        `Creating ${name}... This may take a few minutes.`
+      );
       onCreated();
       onClose();
       setName("");

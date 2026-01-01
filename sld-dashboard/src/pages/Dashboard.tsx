@@ -28,6 +28,7 @@ import { Modal } from "@/components/ui/Modal";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import Metrics from "@/components/Metrics";
+import { PendingProjects } from "@/components/common/PendingProjects";
 
 const Dashboard = () => {
   const { data: state, isLoading: isStateLoading } = useSldState();
@@ -268,6 +269,7 @@ const Dashboard = () => {
           />
         </div>
       </Modal>
+      <PendingProjects />
     </div>
   );
 };
