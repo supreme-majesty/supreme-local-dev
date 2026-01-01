@@ -5,12 +5,14 @@ interface Toast {
   type: "success" | "error" | "info" | "warning";
   title: string;
   description?: string;
+  duration?: number;
 }
 
 interface PendingProject {
   name: string;
   type: string;
   startedAt: number;
+  toastId?: string;
 }
 
 interface AppState {
@@ -27,9 +29,9 @@ interface AppState {
   // UI Actions
   toggleTheme: () => void;
   toggleSidebar: () => void;
-  addToast: (toast: Omit<Toast, "id">) => void;
+  addToast: (toast: Omit<Toast, "id">) => string;
   removeToast: (id: string) => void;
-  addPendingProject: (name: string, type: string) => void;
+  addPendingProject: (name: string, type: string, toastId?: string) => void;
   removePendingProject: (name: string) => void;
 }
 
@@ -56,27 +58,40 @@ export const useAppStore = create<AppState>((set, get) => ({
     const id = Math.random().toString(36).substring(2, 9);
     set({ toasts: [...get().toasts, { ...toast, id }] });
 
-    // Auto-remove after 5 seconds
-    setTimeout(() => {
-      get().removeToast(id);
-    }, 5000);
+    // Auto-remove after custom duration or default 5 seconds
+    // If duration is 0, do not auto-remove (persistent)
+    if (toast.duration !== 0) {
+      setTimeout(() => {
+        get().removeToast(id);
+      }, toast.duration || 5000);
+    }
+
+    return id;
   },
 
   removeToast: (id) => {
     set({ toasts: get().toasts.filter((t) => t.id !== id) });
   },
 
-  addPendingProject: (name, type) => {
+  addPendingProject: (name, type, toastId) => {
     const newPending = [
       ...get().pendingProjects,
-      { name, type, startedAt: Date.now() },
+      { name, type, startedAt: Date.now(), toastId },
     ];
     set({ pendingProjects: newPending });
     localStorage.setItem("pendingProjects", JSON.stringify(newPending));
   },
 
   removePendingProject: (name) => {
-    const newPending = get().pendingProjects.filter((p) => p.name !== name);
+    const projects = get().pendingProjects;
+    const project = projects.find((p) => p.name === name);
+
+    // If we have a linked toast, remove it too
+    if (project?.toastId) {
+      get().removeToast(project.toastId);
+    }
+
+    const newPending = projects.filter((p) => p.name !== name);
     set({ pendingProjects: newPending });
     localStorage.setItem("pendingProjects", JSON.stringify(newPending));
   },

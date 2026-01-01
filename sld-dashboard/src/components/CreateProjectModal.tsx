@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Modal } from "@/components/ui/Modal";
-import { type ProjectOptions, api } from "@/api/daemon";
+import { type ProjectOptions } from "@/api/daemon";
 import {
   Loader2,
   Plus,
@@ -9,9 +9,11 @@ import {
   HardDrive,
   Search,
 } from "lucide-react";
-import { useDirectories, useSldState } from "@/hooks/use-daemon";
-import { useToast } from "@/hooks/useToast";
-import { useAppStore } from "@/stores/useAppStore";
+import {
+  useDirectories,
+  useSldState,
+  useCreateProjectMutation,
+} from "@/hooks/use-daemon";
 
 interface CreateProjectModalProps {
   isOpen: boolean;
@@ -37,9 +39,9 @@ export function CreateProjectModal({
   const { data: state } = useSldState();
   const parkedPaths = state?.paths || [];
 
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const { info } = useToast();
+  const createProjectMutation = useCreateProjectMutation();
+  const error = createProjectMutation.error?.message;
+  const isLoading = createProjectMutation.isPending;
 
   // Initialize Default Location
   useEffect(() => {
@@ -68,34 +70,25 @@ export function CreateProjectModal({
     e.preventDefault();
     if (!name) return;
 
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      await api.createProject({ type, name, directory: targetDir });
-      // Track this project as pending
-      useAppStore.getState().addPendingProject(name, type);
-      info(
-        "Project Creation Started",
-        `Creating ${name}... This may take a few minutes.`
-      );
-      onCreated();
-      onClose();
-      setName("");
-      setType("laravel");
-      // Reset location to default
-      if (parkedPaths.length > 0) {
-        setLocationMode("parked");
-        setTargetDir(parkedPaths[0]);
-      } else {
-        setTargetDir("");
+    createProjectMutation.mutate(
+      { type, name, directory: targetDir },
+      {
+        onSuccess: () => {
+          onCreated();
+          onClose();
+          setName("");
+          setType("laravel");
+          // Reset location to default
+          if (parkedPaths.length > 0) {
+            setLocationMode("parked");
+            setTargetDir(parkedPaths[0]);
+          } else {
+            setTargetDir("");
+          }
+          setIsBrowserOpen(false);
+        },
       }
-      setIsBrowserOpen(false);
-    } catch (err: any) {
-      setError(err.message || "Failed to create project");
-    } finally {
-      setIsLoading(false);
-    }
+    );
   };
 
   const projectTypes = [

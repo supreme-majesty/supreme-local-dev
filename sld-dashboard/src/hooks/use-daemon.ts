@@ -289,12 +289,21 @@ export function useEditors() {
 export function useCreateProjectMutation() {
   const queryClient = useQueryClient();
   const addToast = useAppStore((s) => s.addToast);
+  const addPendingProject = useAppStore((s) => s.addPendingProject);
 
   return useMutation({
     mutationFn: (options: ProjectOptions) => api.createProject(options),
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.sites });
-      addToast({ type: "success", title: "Project created successfully" });
+
+      const toastId = addToast({
+        type: "info",
+        title: "Project Creation Started",
+        description: `Creating ${variables.name}... This may take a few minutes.`,
+        duration: 0, // Persistent until removed
+      });
+
+      addPendingProject(variables.name, variables.type, toastId);
     },
     onError: (err: Error) => {
       addToast({
