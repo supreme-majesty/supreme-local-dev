@@ -59,6 +59,14 @@ func Detect(path string) (*Config, error) {
 		}
 	}
 
+	// 4. Auto-detect "public" directory (common in Laravel/Symfony/Modern Apps)
+	if config.Public == "" {
+		publicPath := filepath.Join(path, "public")
+		if info, err := os.Stat(publicPath); err == nil && info.IsDir() {
+			config.Public = "public"
+		}
+	}
+
 	return config, nil
 }
 

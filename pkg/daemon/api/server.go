@@ -352,6 +352,9 @@ func (s *Server) handleProjectCreate(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		// Ensure project is not ignored (e.g. if user previously removed it)
+		d.Unignore(projectPath)
+
 		if isInParkedPath {
 			// Project is in a parked path, just regenerate certs if secure mode is on
 			if d.State.Data.Secure {

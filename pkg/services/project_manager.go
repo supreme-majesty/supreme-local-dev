@@ -615,7 +615,7 @@ func (pm *ProjectManager) CreateProject(options ProjectOptions) error {
 		}
 	}
 
-	// Construct Command String
+	// Execute via bash wrapper
 	var cmdStr string
 	switch options.Type {
 	case "laravel":
@@ -675,6 +675,74 @@ func (pm *ProjectManager) CreateProject(options ProjectOptions) error {
 		npmOutput, npmErr := npmCmd.CombinedOutput()
 		if npmErr != nil {
 			fmt.Printf("[WARN] npm install/build failed: %s Output: %s\n", npmErr, string(npmOutput))
+		}
+
+		// Automate Database and Permissions Setup
+		fmt.Printf("[INFO] Performing post-creation setup for Laravel project...\n")
+
+		// Determine www-data GID
+		var wwwDataGid int
+		if group, err := user.LookupGroup("www-data"); err == nil {
+			if gid, err := strconv.Atoi(group.Gid); err == nil {
+				wwwDataGid = gid
+			}
+		}
+
+		// 1. Create SQLite database if it doesn't exist
+		dbPath := filepath.Join(targetDir, "database", "database.sqlite")
+		if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+			if f, err := os.Create(dbPath); err == nil {
+				f.Close()
+				if uid != 0 {
+					os.Chown(dbPath, int(uid), int(gid))
+				}
+				os.Chmod(dbPath, 0664)
+				fmt.Printf("[INFO] Created database.sqlite\n")
+			} else {
+				fmt.Printf("[WARN] Failed to create database.sqlite: %v\n", err)
+			}
+		}
+
+		// 2. Fix Permissions (storage, bootstrap/cache, database)
+		dirsToChmod := []string{
+			filepath.Join(targetDir, "storage"),
+			filepath.Join(targetDir, "bootstrap", "cache"),
+			filepath.Join(targetDir, "database"),
+		}
+
+		for _, dir := range dirsToChmod {
+			// Recursive Walk
+			filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+				if err == nil {
+					// Change Group to www-data if found, keeping Owner as user (uid)
+					if wwwDataGid != 0 && uid != 0 {
+						os.Chown(path, int(uid), wwwDataGid)
+					}
+					// Allow Group Write (775)
+					os.Chmod(path, 0775)
+				}
+				return nil
+			})
+		}
+
+		// Also fix database file specifically
+		if wwwDataGid != 0 && uid != 0 {
+			os.Chown(dbPath, int(uid), wwwDataGid)
+		}
+		os.Chmod(dbPath, 0664) // rw-rw-r--
+
+		// 3. Run Migrations
+		migrateCmd := exec.Command(shell, "-c", "php artisan migrate --force")
+		migrateCmd.Dir = targetDir
+		if uid != 0 {
+			migrateCmd.SysProcAttr = &syscall.SysProcAttr{}
+			migrateCmd.SysProcAttr.Credential = &syscall.Credential{Uid: uid, Gid: gid}
+			migrateCmd.Env = cleanEnv
+		}
+		if out, err := migrateCmd.CombinedOutput(); err != nil {
+			fmt.Printf("[WARN] Migration failed: %v Output: %s\n", err, string(out))
+		} else {
+			fmt.Printf("[INFO] Migrations ran successfully\n")
 		}
 	}
 
