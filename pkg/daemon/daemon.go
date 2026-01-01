@@ -661,10 +661,6 @@ func (d *Daemon) GetSites() ([]Site, error) {
 					continue
 				}
 
-				// Check if project is still being created
-				markerFile := filepath.Join(fullPath, ".sld-creating")
-				_, creating := os.Stat(markerFile)
-
 				sites = append(sites, Site{
 					Name:       name,
 					Path:       fullPath,
@@ -672,7 +668,6 @@ func (d *Daemon) GetSites() ([]Site, error) {
 					PHPVersion: d.State.Data.PHPVersion,
 					Secure:     d.State.Data.Secure,
 					Type:       "parked",
-					Creating:   creating == nil, // if marker exists, still creating
 				})
 			}
 		}
@@ -685,10 +680,6 @@ func (d *Daemon) GetSites() ([]Site, error) {
 			continue
 		}
 
-		// Check if project is still being created
-		markerFile := filepath.Join(path, ".sld-creating")
-		_, creating := os.Stat(markerFile)
-
 		sites = append(sites, Site{
 			Name:       name,
 			Path:       path,
@@ -696,7 +687,6 @@ func (d *Daemon) GetSites() ([]Site, error) {
 			PHPVersion: d.State.Data.PHPVersion,
 			Secure:     d.State.Data.Secure,
 			Type:       "linked",
-			Creating:   creating == nil, // if marker exists, still creating
 		})
 	}
 

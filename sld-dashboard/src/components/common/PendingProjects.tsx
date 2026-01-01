@@ -13,14 +13,11 @@ export function PendingProjects() {
     if (!sites || pendingProjects.length === 0) return;
 
     pendingProjects.forEach((project) => {
-      // Find the site matching this project
-      const site = sites.find(
-        (s: any) =>
-          s.name === project.name || s.path?.endsWith("/" + project.name)
+      // Check if project name exists in sites list
+      const isComplete = sites.some(
+        (site: any) =>
+          site.name === project.name || site.path?.endsWith("/" + project.name)
       );
-
-      // Only consider complete if site exists AND is not still being created
-      const isComplete = site && !site.creating;
 
       if (isComplete) {
         success(
