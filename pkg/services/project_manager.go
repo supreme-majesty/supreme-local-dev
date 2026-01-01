@@ -585,8 +585,12 @@ func (pm *ProjectManager) CreateProject(options ProjectOptions) error {
 
 	switch options.Type {
 	case "laravel":
-		// composer create-project laravel/laravel example-app --prefer-dist
-		cmd = exec.Command("composer", "create-project", "laravel/laravel", options.Name)
+		// Prefer Laravel installer if available, fall back to composer create-project
+		if _, err := exec.LookPath("laravel"); err == nil {
+			cmd = exec.Command("laravel", "new", options.Name)
+		} else {
+			cmd = exec.Command("composer", "create-project", "laravel/laravel", options.Name)
+		}
 	case "react":
 		// npx create-vite@latest my-vue-app --template react
 		cmd = exec.Command("npx", "-y", "create-vite@latest", options.Name, "--template", "react")
@@ -652,6 +656,25 @@ func (pm *ProjectManager) CreateProject(options ProjectOptions) error {
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("project creation failed: %s Output: %s", err, string(output))
+	}
+
+	// For Laravel projects, run npm install && npm run build
+	if options.Type == "laravel" {
+		npmCmd := exec.Command("sh", "-c", "npm install && npm run build")
+		npmCmd.Dir = targetDir
+
+		// Apply same user credentials for npm
+		if uid != 0 {
+			npmCmd.SysProcAttr = &syscall.SysProcAttr{}
+			npmCmd.SysProcAttr.Credential = &syscall.Credential{Uid: uid, Gid: gid}
+			npmCmd.Env = cmd.Env // Reuse the clean environment
+		}
+
+		npmOutput, npmErr := npmCmd.CombinedOutput()
+		if npmErr != nil {
+			// Log but don't fail - the Laravel project was created successfully
+			fmt.Printf("[WARN] npm install/build failed: %s Output: %s\n", npmErr, string(npmOutput))
+		}
 	}
 
 	return nil
