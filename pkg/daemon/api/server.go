@@ -336,14 +336,39 @@ func (s *Server) handleProjectCreate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Auto-link the project on success
+		// Determine project path
 		base := d.ProjectManager.BaseDir
 		if opts.Directory != "" {
 			base = opts.Directory
 		}
 		projectPath := filepath.Join(base, req.Name)
-		d.Link(req.Name, projectPath)
-		fmt.Printf("[INFO] Project %s created and linked at %s\n", req.Name, projectPath)
+
+		// Check if the project is in a parked directory (avoid duplicate listing)
+		isInParkedPath := false
+		for _, parkedPath := range d.State.Data.Paths {
+			if strings.HasPrefix(projectPath, parkedPath) {
+				isInParkedPath = true
+				break
+			}
+		}
+
+		if isInParkedPath {
+			// Project is in a parked path, just regenerate certs if secure mode is on
+			if d.State.Data.Secure {
+				if err := d.Refresh(); err != nil {
+					fmt.Printf("[ERROR] Failed to refresh after project creation: %v\n", err)
+					return
+				}
+			}
+			fmt.Printf("[INFO] Project %s created in parked path %s\n", req.Name, projectPath)
+		} else {
+			// Project is NOT in a parked path, link it explicitly
+			if err := d.Link(req.Name, projectPath); err != nil {
+				fmt.Printf("[ERROR] Failed to link project %s: %v\n", req.Name, err)
+				return
+			}
+			fmt.Printf("[INFO] Project %s created and linked at %s\n", req.Name, projectPath)
+		}
 	}()
 
 	jsonResponse(w, SuccessResponse{Success: true, Message: "Project creation started in background"}, 202)

@@ -48,7 +48,7 @@ func (l *LinuxAdapter) InstallDependencies() error {
 	if err == nil && path != "" {
 		// Install nginx, php-fpm, dnsmasq, and essential PHP extensions
 		cmd := exec.Command("sudo", "apt-get", "install", "-y",
-			"nginx", "php-fpm", "dnsmasq",
+			"nginx", "php-fpm", "dnsmasq", "zip", "unzip",
 			"php-mysql", "php-mbstring", "php-xml", "php-curl",
 			"php-zip", "php-sqlite3", "php-bcmath", "php-intl",
 		)

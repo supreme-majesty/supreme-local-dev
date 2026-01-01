@@ -424,21 +424,82 @@ func getRealUserHome() string {
 
 // Project Management
 
-func (d *Daemon) Park(path string) error {
+// HTTPS
+
+func (d *Daemon) regenerateCerts() error {
+	fmt.Println("Regenerating certificates...")
+
+	// Collect domains from state
+	domains := []string{"sld.test", "*.test"} // Explicitly add system domains
+	// Linked sites
+	for name := range d.State.Data.Links {
+		domains = append(domains, name+".test")
+	}
+	// Parked sites (scan directories)
+	for _, p := range d.State.Data.Paths {
+		entries, err := os.ReadDir(p)
+		if err == nil {
+			for _, entry := range entries {
+				if entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") {
+					domains = append(domains, entry.Name()+".test")
+				}
+			}
+		}
+	}
+
+	if err := d.Adapter.GenerateCert("", domains); err != nil {
+		return fmt.Errorf("failed to generate certs: %w", err)
+	}
+
+	return d.refreshNginxConfig()
+}
+
+func (d *Daemon) Secure() error {
+	fmt.Println("Installing mkcert...")
+	if err := d.Adapter.InstallMkcert(); err != nil {
+		return fmt.Errorf("failed to install mkcert: %w", err)
+	}
+
+	d.State.Data.Secure = true
+	d.State.Save()
+
+	if err := d.regenerateCerts(); err != nil {
+		return err
+	}
+
+	// Trust certificates in Snap browsers etc
+	if err := d.Adapter.InstallCertificates(); err != nil {
+		fmt.Printf("Warning: Failed to install certificates to browsers: %v\n", err)
+	}
+
+	fmt.Println("HTTPS Enabled! 🔒")
+	return nil
+}
+
+func (d *Daemon) Unsecure() error {
+	fmt.Println("Disabling HTTPS...")
+
+	d.State.Data.Secure = false
+	d.State.Save()
+
+	fmt.Println("Updating Nginx configuration...")
+	if err := d.refreshNginxConfig(); err != nil {
+		return err
+	}
+
+	// We don't uninstall mkcert, just switch config.
+	fmt.Println("HTTPS Disabled. Switched back to HTTP. 🔓")
+	return nil
+}
+
+// Project Management
+
+func (d *Daemon) scanPath(path string) error {
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return err
 	}
 	d.State.AddPath(absPath)
-
-	// Scan for subdirectories and detect configs (Isolation)
-	// NOTE: Park registers a ROOT. Use Scan logic to find sub-projects?
-	// actually Park is for scanning subfolders.
-	// But we need to configure Nginx for specific subfolders if they have constraints.
-	// The current Park logic relies on wildcard domain matching.
-	// If a specific subfolder needs a specific PHP version, we need to register it as an "Explicit" site config?
-	// Yes. We can scan immediately or on request.
-	// Let's scan immediately for this implementation.
 
 	entries, err := os.ReadDir(absPath)
 	if err == nil {
@@ -458,7 +519,17 @@ func (d *Daemon) Park(path string) error {
 			}
 		}
 	}
-	// Also trigger Nginx reload to apply any new isolation configs
+	return nil
+}
+
+func (d *Daemon) Park(path string) error {
+	if err := d.scanPath(path); err != nil {
+		return err
+	}
+
+	if d.State.Data.Secure {
+		return d.regenerateCerts()
+	}
 	return d.refreshNginxConfig()
 }
 
@@ -468,10 +539,14 @@ func (d *Daemon) Forget(path string) error {
 		return err
 	}
 	d.State.RemovePath(absPath)
-	return nil
+
+	if d.State.Data.Secure {
+		return d.regenerateCerts()
+	}
+	return d.refreshNginxConfig()
 }
 
-func (d *Daemon) Link(name, path string) error {
+func (d *Daemon) linkInternal(name, path string) error {
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return err
@@ -488,7 +563,21 @@ func (d *Daemon) Link(name, path string) error {
 		})
 		fmt.Printf("Detected config for %s: PHP %s\n", domain, conf.PHP)
 	}
+	return nil
+}
 
+func (d *Daemon) Link(name, path string) error {
+	if err := d.linkInternal(name, path); err != nil {
+		return err
+	}
+
+	if d.State.Data.Secure {
+		if err := d.regenerateCerts(); err != nil {
+			return err
+		}
+		// Reload nginx to pick up the new certificate
+		return d.Adapter.ReloadNginx()
+	}
 	return d.refreshNginxConfig()
 }
 
@@ -497,13 +586,12 @@ func (d *Daemon) Unlink(name string) error {
 	// Remove config if any
 	domain := fmt.Sprintf("%s.%s", name, d.State.Data.TLD)
 	if _, ok := d.State.Data.SiteConfigs[domain]; ok {
-		// We have a SetSiteConfig, but no RemoveSiteConfig.
-		// We should add RemoveSiteConfig or just access map directly (State is public-ish)
-		// Let's rely on refreshNginxConfig ignoring it if link is gone?
-		// No, refreshNginxConfig iterates SiteConfigs.
-		// We should cleanup state.
 		delete(d.State.Data.SiteConfigs, domain)
 		d.State.Save()
+	}
+
+	if d.State.Data.Secure {
+		return d.regenerateCerts()
 	}
 	return d.refreshNginxConfig()
 }
@@ -512,14 +600,17 @@ func (d *Daemon) Unlink(name string) error {
 func (d *Daemon) Refresh() error {
 	fmt.Println("Scanning parked paths...")
 	for _, p := range d.State.Data.Paths {
-		d.Park(p) // Re-scan
+		d.scanPath(p) // Re-scan internal
 	}
 
 	fmt.Println("Scanning linked sites...")
 	for name, path := range d.State.Data.Links {
-		d.Link(name, path) // Re-scan
+		d.linkInternal(name, path) // Re-scan internal
 	}
 
+	if d.State.Data.Secure {
+		return d.regenerateCerts()
+	}
 	return d.refreshNginxConfig()
 }
 
@@ -571,6 +662,11 @@ func (d *Daemon) GetSites() ([]Site, error) {
 
 	// 2. Add Linked Sites
 	for name, path := range d.State.Data.Links {
+		// Verify path exists
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			continue
+		}
+
 		sites = append(sites, Site{
 			Name:       name,
 			Path:       path,
@@ -593,75 +689,6 @@ func (d *Daemon) Ignore(path string) error {
 func (d *Daemon) Unignore(path string) error {
 	d.State.RemoveIgnore(path)
 	fmt.Printf("Unignored path: %s\n", path)
-	return nil
-}
-
-// HTTPS
-
-func (d *Daemon) Secure() error {
-	fmt.Println("Installing mkcert...")
-	if err := d.Adapter.InstallMkcert(); err != nil {
-		return fmt.Errorf("failed to install mkcert: %w", err)
-	}
-
-	fmt.Println("Generating wildcard certificate for *.test...")
-
-	// Use global base directory.
-	// Adapter handles system paths internally now.
-	// certBase := "/var/lib/sld"
-
-	// Collect domains from state
-	domains := []string{"sld.test", "*.test"} // Explicitly add system domains
-	// Linked sites
-	for name := range d.State.Data.Links {
-		domains = append(domains, name+".test")
-	}
-	// Parked sites (scan directories)
-	for _, p := range d.State.Data.Paths {
-		entries, err := os.ReadDir(p)
-		if err == nil {
-			for _, entry := range entries {
-				if entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") {
-					domains = append(domains, entry.Name()+".test")
-				}
-			}
-		}
-	}
-
-	if err := d.Adapter.GenerateCert("", domains); err != nil {
-		return fmt.Errorf("failed to generate certs: %w", err)
-	}
-
-	d.State.Data.Secure = true
-	d.State.Save()
-
-	// Trust certificates in Snap browsers etc
-	if err := d.Adapter.InstallCertificates(); err != nil {
-		fmt.Printf("Warning: Failed to install certificates to browsers: %v\n", err)
-	}
-
-	fmt.Println("Updating Nginx configuration...")
-	if err := d.refreshNginxConfig(); err != nil {
-		return err // refreshNginxConfig wraps error
-	}
-
-	fmt.Println("HTTPS Enabled! 🔒")
-	return nil
-}
-
-func (d *Daemon) Unsecure() error {
-	fmt.Println("Disabling HTTPS...")
-
-	d.State.Data.Secure = false
-	d.State.Save()
-
-	fmt.Println("Updating Nginx configuration...")
-	if err := d.refreshNginxConfig(); err != nil {
-		return err
-	}
-
-	// We don't uninstall mkcert, just switch config.
-	fmt.Println("HTTPS Disabled. Switched back to HTTP. 🔓")
 	return nil
 }
 

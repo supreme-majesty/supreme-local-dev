@@ -581,76 +581,78 @@ func (pm *ProjectManager) CreateProject(options ProjectOptions) error {
 		return fmt.Errorf("directory already exists: %s", targetDir)
 	}
 
-	var cmd *exec.Cmd
+	var shell string = "/bin/bash"
+	var cleanEnv []string
 
+	if uid != 0 {
+		u, err := user.LookupId(strconv.Itoa(int(uid)))
+		if err == nil {
+			// Add Herd Lite paths and standard paths
+			pathStr := "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+			pathStr += ":" + filepath.Join(u.HomeDir, ".local/bin")
+			pathStr += ":" + filepath.Join(u.HomeDir, ".composer/vendor/bin")
+			pathStr += ":" + filepath.Join(u.HomeDir, ".config/herd-lite/bin")
+
+			cleanEnv = []string{
+				"HOME=" + u.HomeDir,
+				"USER=" + u.Username,
+				"LOGNAME=" + u.Username,
+				"PATH=" + pathStr,
+				"SHELL=/bin/bash",
+				"TERM=xterm-256color",
+				"LANG=en_US.UTF-8",
+			}
+
+			// Composer settings
+			if options.Type == "laravel" {
+				composerHome := filepath.Join(u.HomeDir, ".config/composer")
+				if _, err := os.Stat(composerHome); os.IsNotExist(err) {
+					composerHome = filepath.Join(u.HomeDir, ".composer")
+				}
+				cleanEnv = append(cleanEnv, "COMPOSER_HOME="+composerHome)
+				cleanEnv = append(cleanEnv, "COMPOSER_ALLOW_SUPERUSER=1")
+			}
+		}
+	}
+
+	// Construct Command String
+	var cmdStr string
 	switch options.Type {
 	case "laravel":
-		// Prefer Laravel installer if available, fall back to composer create-project
-		if _, err := exec.LookPath("laravel"); err == nil {
-			cmd = exec.Command("laravel", "new", options.Name)
-		} else {
-			cmd = exec.Command("composer", "create-project", "laravel/laravel", options.Name)
-		}
+		// Prefer composer explicitly with --no-cache to avoid corruption issues
+		// We use bash to resolve 'composer' from the injected PATH
+		cmdStr = fmt.Sprintf("composer create-project laravel/laravel %s --prefer-dist --no-cache", options.Name)
 	case "react":
-		// npx create-vite@latest my-vue-app --template react
-		cmd = exec.Command("npx", "-y", "create-vite@latest", options.Name, "--template", "react")
+		cmdStr = fmt.Sprintf("npx -y create-vite@latest %s --template react", options.Name)
 	case "vue":
-		cmd = exec.Command("npx", "-y", "create-vite@latest", options.Name, "--template", "vue")
+		cmdStr = fmt.Sprintf("npx -y create-vite@latest %s --template vue", options.Name)
 	case "nextjs":
-		// npx create-next-app@latest
-		cmd = exec.Command("npx", "-y", "create-next-app@latest", options.Name,
-			"--ts", "--tailwind", "--eslint", "--app", "--no-src-dir", "--import-alias", "@/*", "--use-npm")
+		cmdStr = fmt.Sprintf("npx -y create-next-app@latest %s --ts --tailwind --eslint --app --no-src-dir --import-alias @/* --use-npm", options.Name)
 	case "nodejs":
-		// Basic npm init
 		if err := os.MkdirAll(targetDir, 0755); err != nil {
 			return err
 		}
 		if uid != 0 {
 			os.Chown(targetDir, int(uid), int(gid))
 		}
-		cmd = exec.Command("npm", "init", "-y")
-		cmd.Dir = targetDir // Run INSIDE the dir
+		cmdStr = "npm init -y"
 	default:
 		return fmt.Errorf("unsupported project type: %s", options.Type)
 	}
 
-	// Apply User Credentials (Run as User, not Root)
+	// Execute via bash wrapper
+	var cmd *exec.Cmd
+	if options.Type == "nodejs" {
+		cmd = exec.Command(shell, "-c", "cd "+options.Name+" && "+cmdStr)
+	} else {
+		cmd = exec.Command(shell, "-c", cmdStr)
+	}
+
+	cmd.Dir = base
 	if uid != 0 {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
 		cmd.SysProcAttr.Credential = &syscall.Credential{Uid: uid, Gid: gid}
-
-		// Build a clean environment for the target user
-		u, err := user.LookupId(strconv.Itoa(int(uid)))
-		if err == nil {
-			// Start with a minimal, clean environment instead of inheriting root's
-			cleanEnv := []string{
-				"HOME=" + u.HomeDir,
-				"USER=" + u.Username,
-				"LOGNAME=" + u.Username,
-				"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:" + filepath.Join(u.HomeDir, ".local/bin") + ":" + filepath.Join(u.HomeDir, ".composer/vendor/bin"),
-				"SHELL=/bin/bash",
-				"TERM=xterm-256color",
-				"LANG=en_US.UTF-8",
-			}
-
-			// For Composer-based projects, set COMPOSER_HOME and allow superuser fallback
-			if options.Type == "laravel" {
-				composerHome := filepath.Join(u.HomeDir, ".config/composer")
-				// Fallback to ~/.composer if .config/composer doesn't exist
-				if _, err := os.Stat(composerHome); os.IsNotExist(err) {
-					composerHome = filepath.Join(u.HomeDir, ".composer")
-				}
-				cleanEnv = append(cleanEnv, "COMPOSER_HOME="+composerHome)
-				cleanEnv = append(cleanEnv, "COMPOSER_ALLOW_SUPERUSER=1") // Safety net
-			}
-
-			cmd.Env = cleanEnv
-		}
-	}
-
-	// If cmd.Dir wasn't set (because the command creates the dir), run in BaseDir
-	if cmd.Dir == "" {
-		cmd.Dir = base
+		cmd.Env = cleanEnv
 	}
 
 	output, err := cmd.CombinedOutput()
@@ -658,21 +660,20 @@ func (pm *ProjectManager) CreateProject(options ProjectOptions) error {
 		return fmt.Errorf("project creation failed: %s Output: %s", err, string(output))
 	}
 
-	// For Laravel projects, run npm install && npm run build
+	// Post-Creation Steps (Laravel NPM)
 	if options.Type == "laravel" {
-		npmCmd := exec.Command("sh", "-c", "npm install && npm run build")
+		// Run npm install && npm run build
+		npmCmd := exec.Command(shell, "-c", "npm install && npm run build")
 		npmCmd.Dir = targetDir
 
-		// Apply same user credentials for npm
 		if uid != 0 {
 			npmCmd.SysProcAttr = &syscall.SysProcAttr{}
 			npmCmd.SysProcAttr.Credential = &syscall.Credential{Uid: uid, Gid: gid}
-			npmCmd.Env = cmd.Env // Reuse the clean environment
+			npmCmd.Env = cleanEnv
 		}
 
 		npmOutput, npmErr := npmCmd.CombinedOutput()
 		if npmErr != nil {
-			// Log but don't fail - the Laravel project was created successfully
 			fmt.Printf("[WARN] npm install/build failed: %s Output: %s\n", npmErr, string(npmOutput))
 		}
 	}
