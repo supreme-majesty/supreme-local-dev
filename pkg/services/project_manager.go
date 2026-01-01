@@ -52,15 +52,9 @@ var supportedEditors = []Editor{
 	{ID: "pycharm", Name: "PyCharm", Bin: "charm", Icon: "terminal"},
 	{ID: "pycharm-pro", Name: "PyCharm (Pro)", Bin: "pycharm-professional", Icon: "terminal"},
 	{ID: "pycharm-ce", Name: "PyCharm (CE)", Bin: "pycharm-community", Icon: "terminal"},
-	{ID: "android-studio", Name: "Android Studio", Bin: "android-studio", Icon: "terminal"},
-	{ID: "clion", Name: "CLion", Bin: "clion", Icon: "terminal"},
 	{ID: "rider", Name: "Rider", Bin: "rider", Icon: "terminal"},
 	{ID: "sublime", Name: "Sublime Text", Bin: "subl", Icon: "sublime"},
 	{ID: "atom", Name: "Atom", Bin: "atom", Icon: "atom"},
-	{ID: "nvim", Name: "Neovim", Bin: "nvim", Icon: "terminal"},
-	{ID: "vim", Name: "Vim", Bin: "vim", Icon: "terminal"},
-	{ID: "nano", Name: "Nano", Bin: "nano", Icon: "terminal"},
-	{ID: "emacs", Name: "Emacs", Bin: "emacs", Icon: "terminal"},
 	{ID: "antigravity", Name: "Antigravity", Bin: "antigravity", Icon: "terminal"},
 }
 
@@ -85,11 +79,6 @@ func (pm *ProjectManager) DetectEditors() []Editor {
 
 	// 1. Check supported editors list first (curated)
 	for _, ed := range supportedEditors {
-		// Explicitly exclude non-web-dev editors as requested
-		if ed.ID == "android-studio" || ed.ID == "arduino-ide" || ed.ID == "clion" {
-			continue
-		}
-
 		found := false
 
 		// Check PATH
@@ -147,14 +136,24 @@ func (pm *ProjectManager) DetectEditors() []Editor {
 		for _, ed := range desktopEditors {
 			// Also exclude non-web-dev editors if found via desktop file
 			nameLower := strings.ToLower(ed.Name)
-			if ed.ID == "android-studio" || strings.Contains(nameLower, "android studio") {
+			idLower := strings.ToLower(ed.ID)
+
+			// Filters for CLI tools and non-web IDEs
+			if idLower == "text-editor" || strings.Contains(nameLower, "text editor") {
+				continue // Gnome Text Editor doesn't support opening directories directly as projects
+			}
+			if idLower == "nano" || idLower == "vim" || idLower == "nvim" || idLower == "emacs" {
 				continue
 			}
-			if ed.ID == "arduino-ide" || strings.Contains(nameLower, "arduino") {
+			if idLower == "android-studio" || strings.Contains(nameLower, "android studio") {
 				continue
 			}
+			if idLower == "arduino-ide" || strings.Contains(nameLower, "arduino") {
+				continue
+			}
+
 			// Filter out URL handlers which are usually duplicates
-			if strings.Contains(nameLower, "url handler") {
+			if strings.Contains(nameLower, "url handler") || strings.Contains(nameLower, "new window") {
 				continue
 			}
 
