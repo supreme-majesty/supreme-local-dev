@@ -23,3 +23,4 @@ func (m *MacOSAdapter) CheckPHPSocket(version string) (string, error)       { re
 func (m *MacOSAdapter) ReloadNginx() error                                  { return nil }
 func (m *MacOSAdapter) AddWebUserToGroup(group string) error                { return nil }
 func (m *MacOSAdapter) RestartPHP() error                                   { return nil }
+func (m *MacOSAdapter) UpdateHosts(domains []string) error                  { return nil }

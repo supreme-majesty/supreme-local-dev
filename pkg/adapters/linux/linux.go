@@ -66,11 +66,12 @@ func (l *LinuxAdapter) InstallDependencies() error {
 		// Use static upstream DNS servers instead of /run/systemd/resolve/resolv.conf
 		// This allows .test domains to resolve even when offline
 		dnsConf := `address=/.test/127.0.0.1
+address=/.test/::1
 bind-interfaces
 listen-address=127.0.0.1
+listen-address=::1
 no-resolv
-server=8.8.8.8
-server=1.1.1.1
+local=/test/
 `
 		tmpFile := "/tmp/sld-dnsmasq.conf"
 		os.WriteFile(tmpFile, []byte(dnsConf), 0644)
@@ -134,6 +135,66 @@ func (l *LinuxAdapter) ensureHostsEntry(hostname string) error {
 	}
 
 	fmt.Printf("Added %s to /etc/hosts for offline access\n", hostname)
+	return nil
+}
+
+func (l *LinuxAdapter) UpdateHosts(domains []string) error {
+	hostsPath := "/etc/hosts"
+	startMarker := "# SLD-START"
+	endMarker := "# SLD-END"
+
+	// Read current hosts file
+	data, err := os.ReadFile(hostsPath)
+	if err != nil {
+		return fmt.Errorf("failed to read hosts file: %w", err)
+	}
+	content := string(data)
+
+	// Prepare new block
+	var sb strings.Builder
+	sb.WriteString(startMarker + "\n")
+	// Always include sld.test
+	sb.WriteString("127.0.0.1 sld.test\n")
+	sb.WriteString("::1 sld.test\n")
+
+	for _, d := range domains {
+		if d == "sld.test" {
+			continue
+		}
+		sb.WriteString(fmt.Sprintf("127.0.0.1 %s\n", d))
+		sb.WriteString(fmt.Sprintf("::1 %s\n", d))
+	}
+	sb.WriteString(endMarker)
+	newBlock := sb.String()
+
+	// Replace or Append
+	var newContent string
+	startIndex := strings.Index(content, startMarker)
+	endIndex := strings.Index(content, endMarker)
+
+	if startIndex != -1 && endIndex != -1 && endIndex > startIndex {
+		// Replace existing block
+		// We need to look for newline after endMarker to keep it clean
+		suffix := content[endIndex+len(endMarker):]
+		newContent = content[:startIndex] + newBlock + suffix
+	} else {
+		// Append if not found (ensure newline before)
+		if !strings.HasSuffix(content, "\n") {
+			content += "\n"
+		}
+		newContent = content + newBlock + "\n"
+	}
+
+	// Write to temp and mv
+	tmpFile := "/tmp/sld-hosts-update"
+	if err := os.WriteFile(tmpFile, []byte(newContent), 0644); err != nil {
+		return fmt.Errorf("failed to write temp hosts file: %w", err)
+	}
+
+	if err := exec.Command("sudo", "mv", tmpFile, hostsPath).Run(); err != nil {
+		return fmt.Errorf("failed to update hosts file: %w", err)
+	}
+
 	return nil
 }
 

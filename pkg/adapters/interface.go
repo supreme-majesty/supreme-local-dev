@@ -28,4 +28,5 @@ type SystemAdapter interface {
 	// Permissions & User Management
 	AddWebUserToGroup(group string) error
 	RestartPHP() error
+	UpdateHosts(domains []string) error
 }

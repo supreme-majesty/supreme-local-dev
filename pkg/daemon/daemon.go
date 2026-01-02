@@ -231,7 +231,45 @@ func (d *Daemon) EnsureInstalled() error {
 		}
 	}
 
+	// Sync hosts initially
+	if err := instance.syncHosts(); err != nil {
+		fmt.Printf("Warning: Failed to initial sync hosts: %v\n", err)
+	}
+
 	return nil
+}
+
+func (d *Daemon) syncHosts() error {
+	domains := []string{}
+	// Collect linked sites
+	for name := range d.State.Data.Links {
+		domains = append(domains, name+"."+d.State.Data.TLD)
+	}
+
+	// Collect parked sites
+	for _, p := range d.State.Data.Paths {
+		entries, err := os.ReadDir(p)
+		if err == nil {
+			for _, entry := range entries {
+				if entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") {
+					// Check ignore list
+					ignored := false
+					fullPath := filepath.Join(p, entry.Name())
+					for _, ig := range d.State.Data.Ignored {
+						if ig == fullPath {
+							ignored = true
+							break
+						}
+					}
+					if !ignored {
+						domains = append(domains, entry.Name()+"."+d.State.Data.TLD)
+					}
+				}
+			}
+		}
+	}
+
+	return d.Adapter.UpdateHosts(domains)
 }
 
 func replaceSocket(config, newSocket string) string {
@@ -278,7 +316,7 @@ func (d *Daemon) refreshNginxConfig() error {
 	if port == "" {
 		port = "80"
 	}
-	baseConfig = strings.ReplaceAll(baseConfig, "listen 80;", fmt.Sprintf("listen %s;", port))
+	baseConfig = strings.ReplaceAll(baseConfig, "listen 80;", fmt.Sprintf("listen %s;\n    listen [::]:%s;", port, port))
 
 	if d.State.Data.PHPVersion != "" {
 		socketPath, err := d.Adapter.CheckPHPSocket(d.State.Data.PHPVersion)
@@ -330,14 +368,16 @@ func (d *Daemon) refreshNginxConfig() error {
 						block = fmt.Sprintf(`
 server {
     listen %s;
+    listen [::]:%s;
     server_name %s;
     return 301 https://$host$request_uri;
 }
-`, port, domain)
+`, port, port, domain)
 					} else {
 						block = fmt.Sprintf(`
 server {
     listen %s;
+    listen [::]:%s;
     server_name %s;
     root "%s";
     
@@ -358,7 +398,7 @@ server {
         fastcgi_busy_buffers_size 64k;
     }
 }
-`, port, domain, webRoot, socket)
+`, port, port, domain, webRoot, socket)
 					}
 
 					// If secure, add SSL block too (using snakeoil for simplicity or same certs)
@@ -372,6 +412,7 @@ server {
 						block += fmt.Sprintf(`
 server {
     listen 443 ssl;
+    listen [::]:443 ssl;
     server_name %s;
     root "%s";
     
@@ -529,6 +570,10 @@ func (d *Daemon) Park(path string) error {
 
 	d.Events.Publish(events.Event{Type: events.SitesUpdated})
 
+	if err := d.syncHosts(); err != nil {
+		fmt.Printf("Warning: Failed to sync hosts: %v\n", err)
+	}
+
 	if d.State.Data.Secure {
 		return d.regenerateCerts()
 	}
@@ -543,6 +588,10 @@ func (d *Daemon) Forget(path string) error {
 	d.State.RemovePath(absPath)
 
 	d.Events.Publish(events.Event{Type: events.SitesUpdated})
+
+	if err := d.syncHosts(); err != nil {
+		fmt.Printf("Warning: Failed to sync hosts: %v\n", err)
+	}
 
 	if d.State.Data.Secure {
 		return d.regenerateCerts()
@@ -575,6 +624,10 @@ func (d *Daemon) Link(name, path string) error {
 		return err
 	}
 
+	if err := d.syncHosts(); err != nil {
+		fmt.Printf("Warning: Failed to sync hosts: %v\n", err)
+	}
+
 	if d.State.Data.Secure {
 		if err := d.regenerateCerts(); err != nil {
 			return err
@@ -598,6 +651,10 @@ func (d *Daemon) Unlink(name string) error {
 
 	d.Events.Publish(events.Event{Type: events.SitesUpdated})
 
+	if err := d.syncHosts(); err != nil {
+		fmt.Printf("Warning: Failed to sync hosts: %v\n", err)
+	}
+
 	if d.State.Data.Secure {
 		return d.regenerateCerts()
 	}
@@ -614,6 +671,10 @@ func (d *Daemon) Refresh() error {
 	fmt.Println("Scanning linked sites...")
 	for name, path := range d.State.Data.Links {
 		d.linkInternal(name, path) // Re-scan internal
+	}
+
+	if err := d.syncHosts(); err != nil {
+		fmt.Printf("Warning: Failed to sync hosts: %v\n", err)
 	}
 
 	if d.State.Data.Secure {
