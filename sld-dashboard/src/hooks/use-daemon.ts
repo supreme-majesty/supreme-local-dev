@@ -32,6 +32,7 @@ export function useSites() {
     queryKey: queryKeys.sites,
     queryFn: () => api.getProjects(),
     refetchInterval: 5000,
+    refetchIntervalInBackground: true,
   });
 }
 
