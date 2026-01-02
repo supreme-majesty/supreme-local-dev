@@ -527,6 +527,8 @@ func (d *Daemon) Park(path string) error {
 		return err
 	}
 
+	d.Events.Publish(events.Event{Type: events.SitesUpdated})
+
 	if d.State.Data.Secure {
 		return d.regenerateCerts()
 	}
@@ -539,6 +541,8 @@ func (d *Daemon) Forget(path string) error {
 		return err
 	}
 	d.State.RemovePath(absPath)
+
+	d.Events.Publish(events.Event{Type: events.SitesUpdated})
 
 	if d.State.Data.Secure {
 		return d.regenerateCerts()
@@ -578,6 +582,8 @@ func (d *Daemon) Link(name, path string) error {
 		// Reload nginx to pick up the new certificate
 		return d.Adapter.ReloadNginx()
 	}
+
+	d.Events.Publish(events.Event{Type: events.SitesUpdated})
 	return d.refreshNginxConfig()
 }
 
@@ -589,6 +595,8 @@ func (d *Daemon) Unlink(name string) error {
 		delete(d.State.Data.SiteConfigs, domain)
 		d.State.Save()
 	}
+
+	d.Events.Publish(events.Event{Type: events.SitesUpdated})
 
 	if d.State.Data.Secure {
 		return d.regenerateCerts()
@@ -696,12 +704,14 @@ func (d *Daemon) GetSites() ([]Site, error) {
 func (d *Daemon) Ignore(path string) error {
 	d.State.AddIgnore(path)
 	fmt.Printf("Ignored path: %s\n", path)
+	d.Events.Publish(events.Event{Type: events.SitesUpdated})
 	return nil
 }
 
 func (d *Daemon) Unignore(path string) error {
 	d.State.RemoveIgnore(path)
 	fmt.Printf("Unignored path: %s\n", path)
+	d.Events.Publish(events.Event{Type: events.SitesUpdated})
 	return nil
 }
 

@@ -13,6 +13,7 @@ import (
 	"github.com/supreme-majesty/supreme-local-dev/pkg/assets"
 	"github.com/supreme-majesty/supreme-local-dev/pkg/daemon"
 	"github.com/supreme-majesty/supreme-local-dev/pkg/daemon/metrics"
+	"github.com/supreme-majesty/supreme-local-dev/pkg/events"
 	"github.com/supreme-majesty/supreme-local-dev/pkg/services"
 )
 
@@ -66,7 +67,7 @@ func (s *Server) Start() error {
 	// Initialize WebSocket Hub
 	hub := NewHub()
 	go hub.Run()
-	SetupXRayBridge(hub)
+	SetupEventBridge(hub)
 	http.HandleFunc("/api/ws", s.handleWebSocket(hub))
 
 	// Serve GUI static files
@@ -372,6 +373,9 @@ func (s *Server) handleProjectCreate(w http.ResponseWriter, r *http.Request) {
 			}
 			fmt.Printf("[INFO] Project %s created and linked at %s\n", req.Name, projectPath)
 		}
+
+		// Emit event to update UI
+		d.Events.Publish(events.Event{Type: events.SitesUpdated})
 	}()
 
 	jsonResponse(w, SuccessResponse{Success: true, Message: "Project creation started in background"}, 202)

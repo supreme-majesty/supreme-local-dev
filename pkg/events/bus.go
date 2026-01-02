@@ -12,6 +12,7 @@ const (
 	ServiceStarted   EventType = "ServiceStarted"
 	ServiceStopped   EventType = "ServiceStopped"
 	ConfigChanged    EventType = "ConfigChanged"
+	SitesUpdated     EventType = "sites:updated"
 	XRayLog          EventType = "xray:log"
 )
 

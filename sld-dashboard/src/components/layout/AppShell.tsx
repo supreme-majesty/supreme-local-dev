@@ -4,10 +4,12 @@ import { Topbar } from "./Topbar";
 import { Toast } from "@/components/common/Toast";
 import { CommandPalette } from "@/components/CommandPalette";
 import { useAppStore } from "@/stores/useAppStore";
+import { useRealtimeUpdates } from "@/hooks/use-daemon";
 import { cn } from "@/lib/utils";
 
 export function AppShell() {
   const { sidebarCollapsed } = useAppStore();
+  useRealtimeUpdates();
   // React Query handles data fetching automatically via hooks in child components
   // We can add global polling here if needed, but per-component useQuery is better
 

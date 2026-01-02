@@ -93,17 +93,26 @@ func (s *Server) handleWebSocket(hub *Hub) http.HandlerFunc {
 	}
 }
 
-// SetupXRayBridge connects the EventBus to the WebSocket Hub
-func SetupXRayBridge(hub *Hub) {
+// SetupEventBridge connects the EventBus to the WebSocket Hub
+func SetupEventBridge(hub *Hub) {
 	d, err := daemon.GetClient()
 	if err != nil {
-		fmt.Printf("XRayBridge: Failed to get daemon client: %v\n", err)
+		fmt.Printf("EventBridge: Failed to get daemon client: %v\n", err)
 		return
 	}
 
+	// Subscribe to X-Ray logs
 	d.Events.Subscribe(events.XRayLog, func(e events.Event) {
 		hub.broadcast <- map[string]interface{}{
 			"type": "xray:log",
+			"data": e.Payload,
+		}
+	})
+
+	// Subscribe to Sites updates
+	d.Events.Subscribe(events.SitesUpdated, func(e events.Event) {
+		hub.broadcast <- map[string]interface{}{
+			"type": "sites:updated",
 			"data": e.Payload,
 		}
 	})

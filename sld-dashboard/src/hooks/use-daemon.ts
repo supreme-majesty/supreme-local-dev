@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef } from "react";
 import {
   api,
   type SLDState,
@@ -31,7 +32,7 @@ export function useSites() {
   return useQuery<Project[]>({
     queryKey: queryKeys.sites,
     queryFn: () => api.getProjects(),
-    refetchInterval: 5000,
+    refetchInterval: 30000, // Fallback polling (30s)
     refetchIntervalInBackground: true,
   });
 }
@@ -337,4 +338,57 @@ export function useDirectories(path?: string) {
     queryFn: () => api.getDirectories(path),
     staleTime: 1000 * 60,
   });
+}
+
+export function useRealtimeUpdates() {
+  const queryClient = useQueryClient();
+  const ws = useRef<WebSocket | null>(null);
+
+  useEffect(() => {
+    // Determine WS protocol and host
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const host = window.location.host;
+    const url = `${protocol}//${host}/api/ws`;
+    let isMounted = true;
+
+    const connect = () => {
+      if (!isMounted) return;
+
+      ws.current = new WebSocket(url);
+
+      ws.current.onopen = () => {
+        // console.log("SLD: Connected to detailed updates channel");
+      };
+
+      ws.current.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === "sites:updated") {
+            // console.log("SLD: Sites updated event received");
+            queryClient.invalidateQueries({ queryKey: queryKeys.sites });
+          }
+        } catch (e) {
+          console.error("SLD: Failed to parse WS message", e);
+        }
+      };
+
+      ws.current.onclose = () => {
+        if (isMounted) {
+          setTimeout(connect, 3000);
+        }
+      };
+
+      ws.current.onerror = (_err) => {
+        // console.error("SLD: WS error", err);
+        ws.current?.close();
+      };
+    };
+
+    connect();
+
+    return () => {
+      isMounted = false;
+      ws.current?.close();
+    };
+  }, [queryClient]);
 }
