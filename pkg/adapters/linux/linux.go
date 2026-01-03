@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"time"
@@ -185,16 +186,27 @@ func (l *LinuxAdapter) UpdateHosts(domains []string) error {
 		newContent = content + newBlock + "\n"
 	}
 
+	fmt.Printf("Updating hosts file with %d domains...\n", len(domains))
+
 	// Write to temp and mv
 	tmpFile := "/tmp/sld-hosts-update"
 	if err := os.WriteFile(tmpFile, []byte(newContent), 0644); err != nil {
 		return fmt.Errorf("failed to write temp hosts file: %w", err)
 	}
 
-	if err := exec.Command("sudo", "mv", tmpFile, hostsPath).Run(); err != nil {
-		return fmt.Errorf("failed to update hosts file: %w", err)
+	// Move file - check if we are root
+	var cmd *exec.Cmd
+	if os.Getuid() == 0 {
+		cmd = exec.Command("mv", tmpFile, hostsPath)
+	} else {
+		cmd = exec.Command("sudo", "mv", tmpFile, hostsPath)
 	}
 
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to update hosts file: %w (output: %s)", err, string(out))
+	}
+
+	fmt.Println("Hosts file updated successfully.")
 	return nil
 }
 
@@ -208,10 +220,7 @@ func (l *LinuxAdapter) InstallCertificates() error {
 	caFile := filepath.Join(caRoot, "rootCA.pem")
 
 	// 2. Define search paths
-	home, _ := os.UserHomeDir()
-	if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" {
-		home = filepath.Join("/home", sudoUser)
-	}
+	home := l.getRealUserHome()
 
 	searchPaths := []string{
 		filepath.Join(home, ".pki"),
@@ -527,10 +536,7 @@ func (l *LinuxAdapter) Uninstall() error {
 	exec.Command("sudo", "rm", "-rf", "/var/lib/sld").Run()
 
 	// Remove user config
-	home, _ := os.UserHomeDir()
-	if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" {
-		home = filepath.Join("/home", sudoUser)
-	}
+	home := l.getRealUserHome()
 	exec.Command("rm", "-rf", filepath.Join(home, ".sld")).Run()
 
 	fmt.Println("Restarting services to apply changes...")
@@ -557,4 +563,109 @@ func (l *LinuxAdapter) CheckPHPSocket(version string) (string, error) {
 	}
 
 	return socketPath, nil
+}
+
+func (l *LinuxAdapter) getRealUserHome() string {
+	if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" {
+		if u, err := user.Lookup(sudoUser); err == nil {
+			return u.HomeDir
+		}
+		// Fallback for non-standard environments
+		return filepath.Join("/home", sudoUser)
+	}
+	h, _ := os.UserHomeDir()
+	return h
+}
+func (l *LinuxAdapter) CheckWifi() (bool, string) {
+	// 1. Check nmcli for wifi status if available
+	if path, err := exec.LookPath("nmcli"); err == nil && path != "" {
+		out, err := exec.Command("nmcli", "radio", "wifi").Output()
+		if err == nil {
+			status := strings.TrimSpace(string(out))
+			if status == "enabled" {
+				// Check if connected to something
+				out, err = exec.Command("nmcli", "-t", "-f", "ACTIVE,SSID", "dev", "wifi").Output()
+				if err == nil {
+					lines := strings.Split(string(out), "\n")
+					for _, line := range lines {
+						if strings.HasPrefix(line, "yes:") {
+							return true, strings.TrimPrefix(line, "yes:")
+						}
+					}
+				}
+				return true, "Enabled but not connected"
+			}
+			return false, "WiFi Disabled"
+		}
+	}
+
+	// 2. Fallback: check ip addr for wlan interface status
+	out, err := exec.Command("ip", "addr").Output()
+	if err == nil {
+		content := string(out)
+		if strings.Contains(content, "wlan") || strings.Contains(content, "wlp") {
+			if strings.Contains(content, "state UP") {
+				return true, "Connected (via IP link)"
+			}
+			return false, "Interface DOWN"
+		}
+	}
+
+	return false, "No WiFi interface detected"
+}
+
+func (l *LinuxAdapter) Doctor() error {
+	fmt.Println("🏥 SLD System Health Check")
+	fmt.Println("--------------------------")
+
+	// Check Services
+	services := []string{"nginx", "dnsmasq", "systemd-resolved"}
+	for _, s := range services {
+		running, err := l.IsServiceRunning(s)
+		status := "🔴 STOPPED"
+		if err == nil && running {
+			status = "🟢 RUNNING"
+		}
+		fmt.Printf("%-18s: %s\n", s, status)
+	}
+
+	// Check PHP-FPM
+	phpVer := l.GetPHPVersion()
+	phpSvc := fmt.Sprintf("php%s-fpm", phpVer)
+	phpRunning, _ := l.IsServiceRunning(phpSvc)
+	phpStatus := "🔴 STOPPED"
+	if phpRunning {
+		phpStatus = "🟢 RUNNING"
+	}
+	fmt.Printf("%-18s: %s (PHP %s)\n", phpSvc, phpStatus, phpVer)
+
+	// Check Connectivity
+	wifiAlive, wifiMsg := l.CheckWifi()
+	wifiStatus := "🔴 OFFLINE"
+	if wifiAlive {
+		wifiStatus = "🟢 ONLINE"
+	}
+	fmt.Printf("%-18s: %s (%s)\n", "WiFi Status", wifiStatus, wifiMsg)
+
+	// Check .test resolution
+	cmd := exec.Command("resolvectl", "query", "sld.test")
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("%-18s: 🔴 FAILED (systemd-resolved not resolving .test)\n", ".test Resolution")
+	} else {
+		fmt.Printf("%-18s: 🟢 WORKING\n", ".test Resolution")
+	}
+
+	return nil
+}
+
+func (l *LinuxAdapter) GetLogPaths() map[string]string {
+	logs := make(map[string]string)
+	logs["nginx-error"] = "/var/log/nginx/error.log"
+	logs["nginx-access"] = "/var/log/nginx/access.log"
+
+	// Try to find specific php log
+	ver := l.GetPHPVersion()
+	logs["php-fpm"] = fmt.Sprintf("/var/log/php%s-fpm.log", ver)
+
+	return logs
 }

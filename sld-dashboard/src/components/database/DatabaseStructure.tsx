@@ -75,11 +75,9 @@ export function DatabaseStructure({
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium">Filters</span>
             <div className="relative">
-              <span className="absolute left-3 top-2.5 text-xs text-[var(--muted-foreground)]">
-                Containing the word:
-              </span>
               <Input
-                className="pl-32 h-9 w-[300px] bg-[var(--background)]"
+                className="h-9 w-[300px] bg-[var(--background)]"
+                placeholder="Search tables..."
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
               />

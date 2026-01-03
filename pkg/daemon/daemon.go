@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"strings"
 
@@ -59,14 +60,8 @@ func Initialize() (*Daemon, error) {
 	tunnelManager := services.NewTunnelManager("/var/lib/sld")
 	xrayService := services.NewXRayService(eventBus)
 	databaseService := services.NewDatabaseService()
-	// Use user's home/Developments as default base?
-	// We need a sensible default.
-	home, _ := os.UserHomeDir()
-	if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" {
-		home = filepath.Join("/home", sudoUser)
-	}
-	baseDir := filepath.Join(home, "Developments")
-	// Ensure it exists? Or let create handle it.
+	home := getRealUserHome()
+	baseDir := findBestDevDir(home)
 	projectManager := services.NewProjectManager(baseDir)
 
 	// Start X-Ray immediately
@@ -240,36 +235,8 @@ func (d *Daemon) EnsureInstalled() error {
 }
 
 func (d *Daemon) syncHosts() error {
-	domains := []string{}
-	// Collect linked sites
-	for name := range d.State.Data.Links {
-		domains = append(domains, name+"."+d.State.Data.TLD)
-	}
-
-	// Collect parked sites
-	for _, p := range d.State.Data.Paths {
-		entries, err := os.ReadDir(p)
-		if err == nil {
-			for _, entry := range entries {
-				if entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") {
-					// Check ignore list
-					ignored := false
-					fullPath := filepath.Join(p, entry.Name())
-					for _, ig := range d.State.Data.Ignored {
-						if ig == fullPath {
-							ignored = true
-							break
-						}
-					}
-					if !ignored {
-						domains = append(domains, entry.Name()+"."+d.State.Data.TLD)
-					}
-				}
-			}
-		}
-	}
-
-	return d.Adapter.UpdateHosts(domains)
+	// Reverted: User requested to not hardcode projects in /etc/hosts
+	return nil
 }
 
 func replaceSocket(config, newSocket string) string {
@@ -455,8 +422,10 @@ server {
 
 func getRealUserHome() string {
 	if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" {
-		// This is a naive way, but works for standard setups.
-		// Ideally lookup /etc/passwd
+		if u, err := user.Lookup(sudoUser); err == nil {
+			return u.HomeDir
+		}
+		// Fallback if lookup fails (e.g. static binary issues)
 		return filepath.Join("/home", sudoUser)
 	}
 	h, _ := os.UserHomeDir()
@@ -812,52 +781,7 @@ func (d *Daemon) Restart() error {
 // Diagnostics
 
 func (d *Daemon) Doctor() error {
-	fmt.Println("Running diagnostic checks... 🩺")
-
-	// 1. Check Services
-	services := []string{"nginx", "dnsmasq"}
-	allGood := true
-
-	for _, s := range services {
-		running, err := d.Adapter.IsServiceRunning(s)
-		if err != nil {
-			fmt.Printf("❌ %s check failed: %v\n", s, err)
-			allGood = false
-		} else if !running {
-			fmt.Printf("❌ %s is NOT running.\n", s)
-			allGood = false
-		} else {
-			fmt.Printf("✅ %s is running.\n", s)
-		}
-	}
-
-	// 2. Check PHP
-	phpV := d.Adapter.GetPHPVersion()
-	if phpV == "" {
-		fmt.Println("❌ No PHP version detected.")
-		allGood = false
-	} else {
-		fmt.Printf("✅ PHP version: %s\n", phpV)
-		// Check socket
-		_, err := d.Adapter.CheckPHPSocket(phpV)
-		if err != nil {
-			fmt.Printf("❌ PHP socket not found: %v\n", err)
-			allGood = false
-		} else {
-			fmt.Println("✅ PHP socket found.")
-		}
-	}
-
-	// 3. Check Permissions
-	// TODO: Add permission checks
-
-	if allGood {
-		fmt.Println("\nEverything looks good! 🎉")
-	} else {
-		fmt.Println("\nSome issues were found. Please check logs.")
-	}
-
-	return nil
+	return d.Adapter.Doctor()
 }
 
 // Logs returns map of log names to paths
@@ -898,4 +822,15 @@ func (d *Daemon) SwitchPHP(version string) error {
 
 	fmt.Printf("Switched to PHP %s successfully! 🐘\n", version)
 	return nil
+}
+
+func findBestDevDir(home string) string {
+	defaults := []string{"Developments", "Projects", "Sites", "code", "codes", "dev"}
+	for _, d := range defaults {
+		path := filepath.Join(home, d)
+		if st, err := os.Stat(path); err == nil && st.IsDir() {
+			return path
+		}
+	}
+	return home // Fallback to home if none found
 }

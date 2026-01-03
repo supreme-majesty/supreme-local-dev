@@ -390,13 +390,21 @@ var daemonCmd = &cobra.Command{
 	Short: "Start the SLD API server and dashboard",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Ensure core is installed/ready?
-		_, err := daemon.GetClient()
+		d, err := daemon.GetClient()
 		if err != nil {
 			return err
 		}
 
 		// Start Server
 		srv := api.NewServer(2025)
+
+		// Sync state on startup
+		go func() {
+			fmt.Println("Performing initial state refresh...")
+			if err := d.Refresh(); err != nil {
+				fmt.Printf("Warning: Initial refresh failed: %v\n", err)
+			}
+		}()
 
 		// Handle shutdown
 		sigChan := make(chan os.Signal, 1)

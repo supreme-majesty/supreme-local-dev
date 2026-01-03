@@ -29,4 +29,8 @@ type SystemAdapter interface {
 	AddWebUserToGroup(group string) error
 	RestartPHP() error
 	UpdateHosts(domains []string) error
+	// Health & Connectivity
+	CheckWifi() (bool, string)
+	Doctor() error
+	GetLogPaths() map[string]string
 }
