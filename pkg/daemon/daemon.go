@@ -333,6 +333,22 @@ func (d *Daemon) refreshNginxConfig() error {
 					}
 
 					// Basic Server Block Template for Isolation
+					// We add support for Cloudflare Tunnel headers (X-Forwarded-Host, X-Forwarded-Proto)
+					// to ensure Laravel/PHP generates correct public URLs and handles SSL correctly behind the tunnel.
+
+					proxyLogic := `
+    # Proxy Header Support for Cloudflare Tunnels
+    set $proxy_host $host;
+    if ($http_x_forwarded_host) {
+        set $proxy_host $http_x_forwarded_host;
+    }
+    
+    set $proxy_https $https;
+    if ($http_x_forwarded_proto = "https") {
+        set $proxy_https "on";
+    }
+`
+
 					var block string
 					if d.State.Data.Secure {
 						block = fmt.Sprintf(`
@@ -353,6 +369,8 @@ server {
     
     index index.html index.htm index.php;
 
+    %s
+
     location / {
         try_files $uri $uri/ /index.php?$query_string;
     }
@@ -362,18 +380,22 @@ server {
         fastcgi_index index.php;
         fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
         include fastcgi_params;
+        
+        # Override Host/Proto for Tunnel
+        fastcgi_param HTTP_HOST $proxy_host;
+        fastcgi_param SERVER_NAME $proxy_host;
+        fastcgi_param HTTPS $proxy_https;
+
         fastcgi_param PHP_VALUE "error_reporting=E_ALL & ~E_DEPRECATED";
         fastcgi_buffers 16 32k;
         fastcgi_buffer_size 64k;
         fastcgi_busy_buffers_size 64k;
     }
 }
-`, port, port, domain, webRoot, socket)
+`, port, port, domain, webRoot, proxyLogic, socket)
 					}
 
-					// If secure, add SSL block too (using snakeoil for simplicity or same certs)
-					// But wait, the wildcard cert works for these!
-					// If d.State.Data.Secure is true, we should generate an SSL block.
+					// If secure, add SSL block too
 					if d.State.Data.Secure {
 						// We assume certs are at /var/lib/sld/certs/dev.pem
 						certPath := "/var/lib/sld/certs/dev.pem"
@@ -391,6 +413,8 @@ server {
 
     index index.html index.htm index.php;
 
+    %s
+
     location / {
         try_files $uri $uri/ /index.php?$query_string;
     }
@@ -400,13 +424,18 @@ server {
         fastcgi_index index.php;
         fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
         include fastcgi_params;
-        fastcgi_param HTTPS on;
+        
+        # Override Host/Proto for Tunnel
+        fastcgi_param HTTP_HOST $proxy_host;
+        fastcgi_param SERVER_NAME $proxy_host;
+        fastcgi_param HTTPS $proxy_https;  # Prioritize proxy logic, fallback to explicit HTTPS on
+
         fastcgi_buffers 16 32k;
         fastcgi_buffer_size 64k;
         fastcgi_busy_buffers_size 64k;
     }
 }
-`, domain, webRoot, certPath, keyPath, socket)
+`, domain, webRoot, certPath, keyPath, proxyLogic, socket)
 					}
 
 					isolationBlocks += block

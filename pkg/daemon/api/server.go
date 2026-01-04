@@ -547,7 +547,18 @@ func (s *Server) handleShareStart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	d, _ := daemon.GetClient()
-	url, err := d.TunnelManager.StartTunnel(req.Site)
+
+	// Determine target based on Secure mode
+	target := "http://localhost:80" // Default
+	if d.State.Data.Port != "" {
+		target = fmt.Sprintf("http://localhost:%s", d.State.Data.Port)
+	}
+
+	if d.State.Data.Secure {
+		target = "https://localhost:443"
+	}
+
+	url, err := d.TunnelManager.StartTunnel(req.Site, target)
 	if err != nil {
 		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
 		return

@@ -83,7 +83,7 @@ func (tm *TunnelManager) EnsureBinary() error {
 }
 
 // StartTunnel starts a tunnel for a given site
-func (tm *TunnelManager) StartTunnel(siteName string) (string, error) {
+func (tm *TunnelManager) StartTunnel(siteName, target string) (string, error) {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
 
@@ -97,9 +97,13 @@ func (tm *TunnelManager) StartTunnel(siteName string) (string, error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Command: cloudflared tunnel --url http://localhost:80 --http-host-header site.test
-	// Note: We use port 80 and host header to route correctly through Nginx
-	cmd := exec.CommandContext(ctx, tm.BinPath, "tunnel", "--url", "http://localhost:80", "--http-host-header", siteName+".test")
+	// Command: cloudflared tunnel --url TARGET --http-host-header site.test
+	args := []string{"tunnel", "--url", target, "--http-host-header", siteName + ".test"}
+	if len(target) > 5 && target[:5] == "https" {
+		args = append(args, "--no-tls-verify")
+	}
+
+	cmd := exec.CommandContext(ctx, tm.BinPath, args...)
 
 	// Create pipes to capture URL
 	stderr, err := cmd.StderrPipe()
