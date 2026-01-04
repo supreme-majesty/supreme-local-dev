@@ -453,6 +453,7 @@ export default function Projects() {
       {/* Env Editor Modal */}
       {selectedProjectPath && (
         <EnvEditor
+          key={selectedProjectPath}
           isOpen={isEnvEditorOpen}
           onClose={() => setIsEnvEditorOpen(false)}
           projectPath={selectedProjectPath}
