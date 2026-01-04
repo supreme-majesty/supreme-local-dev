@@ -103,6 +103,41 @@ Domains=~test
 	return fmt.Errorf("package manager not supported (only apt-get implemented for now)")
 }
 
+func (l *LinuxAdapter) InstallPHP(version string) error {
+	// 1. Check if PPA is needed (Ubuntu/Debian)
+	// For simplicity, we assume user has add-apt-repository or similar,
+	// checking if we can just install.
+	// We'll proceed with direct install attempt.
+
+	packageName := fmt.Sprintf("php%s-fpm", version)
+	fmt.Printf("Attempting to install %s...\n", packageName)
+
+	// Update apt cache first? Maybe too slow.
+	// Let's rely on it being somewhat fresh or apt failing.
+
+	cmd := exec.Command("sudo", "apt-get", "install", "-y",
+		packageName,
+		fmt.Sprintf("php%s-mysql", version),
+		fmt.Sprintf("php%s-mbstring", version),
+		fmt.Sprintf("php%s-xml", version),
+		fmt.Sprintf("php%s-curl", version),
+		fmt.Sprintf("php%s-zip", version),
+		fmt.Sprintf("php%s-sqlite3", version),
+		fmt.Sprintf("php%s-bcmath", version),
+		fmt.Sprintf("php%s-intl", version),
+	)
+
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to install %s: %w", packageName, err)
+	}
+
+	fmt.Printf("%s installed successfully! 🐘\n", packageName)
+	return nil
+}
+
 // ensureHostsEntry adds a hostname to /etc/hosts if not already present
 func (l *LinuxAdapter) ensureHostsEntry(hostname string) error {
 	hostsPath := "/etc/hosts"

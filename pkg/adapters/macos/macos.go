@@ -11,6 +11,7 @@ func (m *MacOSAdapter) StopService(name string) error                       { re
 func (m *MacOSAdapter) RestartService(name string) error                    { return nil }
 func (m *MacOSAdapter) IsServiceRunning(name string) (bool, error)          { return false, nil }
 func (m *MacOSAdapter) InstallDependencies() error                          { return nil }
+func (m *MacOSAdapter) InstallPHP(version string) error                     { return nil }
 func (m *MacOSAdapter) InstallCertificates() error                          { return nil }
 func (m *MacOSAdapter) InstallMkcert() error                                { return nil }
 func (m *MacOSAdapter) GenerateCert(homeDir string, domains []string) error { return nil }

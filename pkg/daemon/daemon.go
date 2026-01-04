@@ -843,7 +843,16 @@ func (d *Daemon) SwitchPHP(version string) error {
 	// 1. Verify existence
 	socketPath, err := d.Adapter.CheckPHPSocket(version)
 	if err != nil {
-		return err
+		fmt.Printf("Socket for PHP %s not found. Attempting automatic installation...\n", version)
+		if installErr := d.Adapter.InstallPHP(version); installErr != nil {
+			return fmt.Errorf("failed to install PHP %s: %w", version, installErr)
+		}
+
+		// Re-check after installation
+		socketPath, err = d.Adapter.CheckPHPSocket(version)
+		if err != nil {
+			return fmt.Errorf("failed to locate socket after installation: %w", err)
+		}
 	}
 	fmt.Printf("Found socket: %s\n", socketPath)
 

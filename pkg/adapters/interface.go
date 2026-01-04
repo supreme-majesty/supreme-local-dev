@@ -10,6 +10,7 @@ type SystemAdapter interface {
 
 	// Installation & Setup
 	InstallDependencies() error
+	InstallPHP(version string) error
 	InstallCertificates() error
 	InstallMkcert() error
 	GenerateCert(homeDir string, domains []string) error
