@@ -2,6 +2,7 @@ package services
 
 import (
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -160,4 +161,47 @@ func (p *MailHogPlugin) Stop() error {
 
 	os.Remove(p.pidFile())
 	return nil
+}
+
+// UIPort returns the MailHog web UI port
+func (p *MailHogPlugin) UIPort() int {
+	return 8025
+}
+
+// Health checks if MailHog is responding
+func (p *MailHogPlugin) Health() (bool, string) {
+	if p.Status() != plugins.StatusRunning {
+		return false, "MailHog is not running"
+	}
+
+	// Try HTTP GET to MailHog API
+	resp, err := http.Get("http://localhost:8025/api/v2/messages?limit=1")
+	if err != nil {
+		return false, fmt.Sprintf("MailHog not responding: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 200 {
+		return true, "MailHog is healthy"
+	}
+	return false, fmt.Sprintf("MailHog returned status %d", resp.StatusCode)
+}
+
+// Logs returns the last N lines of MailHog logs
+func (p *MailHogPlugin) Logs(lines int) ([]string, error) {
+	logPath := filepath.Join(p.dataDir, "mailhog.log")
+	if _, err := os.Stat(logPath); os.IsNotExist(err) {
+		return []string{"No logs available - MailHog logs to stdout"}, nil
+	}
+
+	content, err := os.ReadFile(logPath)
+	if err != nil {
+		return nil, err
+	}
+
+	allLines := strings.Split(string(content), "\n")
+	if len(allLines) > lines {
+		allLines = allLines[len(allLines)-lines:]
+	}
+	return allLines, nil
 }

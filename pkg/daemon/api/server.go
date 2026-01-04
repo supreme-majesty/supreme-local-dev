@@ -40,6 +40,8 @@ func (s *Server) Start() error {
 	http.HandleFunc("/api/plugins", s.handlePlugins)
 	http.HandleFunc("/api/plugins/install", s.handlePluginInstall)
 	http.HandleFunc("/api/plugins/toggle", s.handlePluginToggle)
+	http.HandleFunc("/api/plugins/logs", s.handlePluginLogs)
+	http.HandleFunc("/api/plugins/health", s.handlePluginHealth)
 	http.HandleFunc("/api/metrics", s.handleMetrics)
 	http.HandleFunc("/api/share/start", s.handleShareStart)
 	http.HandleFunc("/api/share/stop", s.handleShareStop)
@@ -56,6 +58,7 @@ func (s *Server) Start() error {
 	http.HandleFunc("/api/db/snapshots/restore", s.handleDBRestore)
 	http.HandleFunc("/api/db/import", s.handleDBImport)
 	http.HandleFunc("/api/db/query", s.handleDBQuery)
+	http.HandleFunc("/api/db/clone", s.handleDBClone)
 	http.HandleFunc("/api/db/foreign-values", s.handleDBForeignValues)
 
 	// Logging
@@ -69,6 +72,17 @@ func (s *Server) Start() error {
 	http.HandleFunc("/api/system/editors", s.handleSystemEditors)
 	http.HandleFunc("/api/system/open-editor", s.handleSystemOpenEditor)
 	http.HandleFunc("/api/system/directories", s.handleSystemDirectories)
+
+	// Env Manager
+	http.HandleFunc("/api/env/files", s.handleEnvFiles)
+	http.HandleFunc("/api/env/read", s.handleEnvRead)
+	http.HandleFunc("/api/env/write", s.handleEnvWrite)
+	http.HandleFunc("/api/env/backups", s.handleEnvBackups)
+	http.HandleFunc("/api/env/restore", s.handleEnvRestore)
+
+	// Artisan Runner
+	http.HandleFunc("/api/artisan/run", s.handleArtisanRun)
+	http.HandleFunc("/api/artisan/commands", s.handleArtisanCommands)
 
 	// Initialize WebSocket Hub
 	hub := NewHub()
@@ -521,6 +535,76 @@ func (s *Server) handlePluginToggle(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, SuccessResponse{Success: true}, 200)
 }
 
+func (s *Server) handlePluginLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		return
+	}
+
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		jsonResponse(w, ErrorResponse{Error: "id parameter required"}, 400)
+		return
+	}
+
+	linesStr := r.URL.Query().Get("lines")
+	lines := 100
+	if linesStr != "" {
+		if n, err := strconv.Atoi(linesStr); err == nil && n > 0 {
+			lines = n
+		}
+	}
+
+	d, _ := daemon.GetClient()
+	p, ok := d.PluginManager.Get(id)
+	if !ok {
+		jsonResponse(w, ErrorResponse{Error: "Plugin not found"}, 404)
+		return
+	}
+
+	// Check if plugin implements LogProvider
+	if lp, ok := p.(interface{ Logs(int) ([]string, error) }); ok {
+		logs, err := lp.Logs(lines)
+		if err != nil {
+			jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+			return
+		}
+		jsonResponse(w, map[string]interface{}{"logs": logs}, 200)
+		return
+	}
+
+	jsonResponse(w, map[string]interface{}{"logs": []string{"Log viewing not supported for this plugin"}}, 200)
+}
+
+func (s *Server) handlePluginHealth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		return
+	}
+
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		jsonResponse(w, ErrorResponse{Error: "id parameter required"}, 400)
+		return
+	}
+
+	d, _ := daemon.GetClient()
+	p, ok := d.PluginManager.Get(id)
+	if !ok {
+		jsonResponse(w, ErrorResponse{Error: "Plugin not found"}, 404)
+		return
+	}
+
+	// Check if plugin implements HealthChecker
+	if hc, ok := p.(interface{ Health() (bool, string) }); ok {
+		ok, msg := hc.Health()
+		jsonResponse(w, map[string]interface{}{"healthy": ok, "message": msg}, 200)
+		return
+	}
+
+	// Default: use Status() as health indicator
+	isRunning := p.Status() == "running"
+	jsonResponse(w, map[string]interface{}{"healthy": isRunning, "message": string(p.Status())}, 200)
+}
+
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	d, _ := daemon.GetClient()
 	stats, err := metrics.Collect(d)
@@ -844,6 +928,34 @@ func (s *Server) handleDBQuery(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, result, 200)
 }
 
+func (s *Server) handleDBClone(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		return
+	}
+
+	var req struct {
+		Source string `json:"source"`
+		Target string `json:"target"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
+		return
+	}
+
+	if req.Source == "" || req.Target == "" {
+		jsonResponse(w, ErrorResponse{Error: "source and target database names required"}, 400)
+		return
+	}
+
+	d, _ := daemon.GetClient()
+	if err := d.DatabaseService.CloneDatabase(req.Source, req.Target); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+
+	jsonResponse(w, SuccessResponse{Success: true, Message: fmt.Sprintf("Database '%s' cloned to '%s'", req.Source, req.Target)}, 200)
+}
+
 func (s *Server) handleDBDownload(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "GET" {
 		return
@@ -1078,4 +1190,158 @@ func (s *Server) handleLogUnwatch(w http.ResponseWriter, r *http.Request) {
 	d.LogWatcher.StopWatching(services.LogSource(req.Source))
 
 	jsonResponse(w, SuccessResponse{Success: true}, 200)
+}
+
+// Env Manager Handlers
+
+func (s *Server) handleEnvFiles(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		return
+	}
+
+	projectPath := r.URL.Query().Get("project")
+	if projectPath == "" {
+		jsonResponse(w, ErrorResponse{Error: "project parameter required"}, 400)
+		return
+	}
+
+	d, _ := daemon.GetClient()
+	files, err := d.EnvManager.ListEnvFiles(projectPath)
+	if err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+
+	jsonResponse(w, files, 200)
+}
+
+func (s *Server) handleEnvRead(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		return
+	}
+
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		jsonResponse(w, ErrorResponse{Error: "path parameter required"}, 400)
+		return
+	}
+
+	d, _ := daemon.GetClient()
+	envFile, err := d.EnvManager.ReadEnvFile(path)
+	if err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+
+	jsonResponse(w, envFile, 200)
+}
+
+func (s *Server) handleEnvWrite(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "PUT" && r.Method != "POST" {
+		return
+	}
+
+	var req struct {
+		Path      string            `json:"path"`
+		Variables map[string]string `json:"variables"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
+		return
+	}
+
+	d, _ := daemon.GetClient()
+	if err := d.EnvManager.WriteEnvFile(req.Path, req.Variables); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+
+	jsonResponse(w, SuccessResponse{Success: true, Message: "Env file saved with backup"}, 200)
+}
+
+func (s *Server) handleEnvBackups(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		return
+	}
+
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		jsonResponse(w, ErrorResponse{Error: "path parameter required"}, 400)
+		return
+	}
+
+	d, _ := daemon.GetClient()
+	backups, err := d.EnvManager.ListBackups(path)
+	if err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+
+	jsonResponse(w, backups, 200)
+}
+
+func (s *Server) handleEnvRestore(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		return
+	}
+
+	var req struct {
+		BackupPath string `json:"backup_path"`
+		TargetPath string `json:"target_path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
+		return
+	}
+
+	d, _ := daemon.GetClient()
+	if err := d.EnvManager.RestoreBackup(req.BackupPath, req.TargetPath); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+
+	jsonResponse(w, SuccessResponse{Success: true, Message: "Backup restored"}, 200)
+}
+
+// Artisan Runner Handlers
+
+func (s *Server) handleArtisanRun(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		return
+	}
+
+	var req struct {
+		ProjectPath string `json:"project_path"`
+		Command     string `json:"command"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
+		return
+	}
+
+	if req.ProjectPath == "" || req.Command == "" {
+		jsonResponse(w, ErrorResponse{Error: "project_path and command required"}, 400)
+		return
+	}
+
+	d, _ := daemon.GetClient()
+
+	// Run async - output will stream via WebSocket
+	go func() {
+		if err := d.ArtisanService.RunCommand(req.ProjectPath, req.Command); err != nil {
+			fmt.Printf("[ERROR] Artisan command failed: %v\n", err)
+		}
+	}()
+
+	jsonResponse(w, SuccessResponse{Success: true, Message: "Command started"}, 202)
+}
+
+func (s *Server) handleArtisanCommands(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		return
+	}
+
+	d, _ := daemon.GetClient()
+	commands := d.ArtisanService.GetCommonCommands()
+	jsonResponse(w, commands, 200)
 }

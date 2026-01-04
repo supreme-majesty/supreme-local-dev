@@ -124,4 +124,20 @@ func SetupEventBridge(hub *Hub) {
 			"data": e.Payload,
 		}
 	})
+
+	// Subscribe to Artisan output
+	d.Events.Subscribe(events.ArtisanOutput, func(e events.Event) {
+		hub.broadcast <- map[string]interface{}{
+			"type": "artisan:output",
+			"data": e.Payload,
+		}
+	})
+
+	// Subscribe to Artisan command completion
+	d.Events.Subscribe(events.ArtisanDone, func(e events.Event) {
+		hub.broadcast <- map[string]interface{}{
+			"type": "artisan:done",
+			"data": e.Payload,
+		}
+	})
 }

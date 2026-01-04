@@ -795,6 +795,70 @@ func (d *DatabaseService) ImportSQL(database, sqlFilePath string) error {
 	return nil
 }
 
+// CloneDatabase creates a copy of a database using mysqldump piped directly to mysql
+func (d *DatabaseService) CloneDatabase(source, target string) error {
+	if err := d.ensureConnected(); err != nil {
+		return err
+	}
+
+	// Validate source exists
+	var exists int
+	err := d.db.QueryRow("SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?", source).Scan(&exists)
+	if err != nil || exists == 0 {
+		return fmt.Errorf("source database '%s' not found", source)
+	}
+
+	// Check target doesn't exist
+	err = d.db.QueryRow("SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?", target).Scan(&exists)
+	if err == nil && exists > 0 {
+		return fmt.Errorf("target database '%s' already exists", target)
+	}
+
+	// Create target database
+	_, err = d.db.Exec(fmt.Sprintf("CREATE DATABASE `%s`", target))
+	if err != nil {
+		return fmt.Errorf("failed to create target database: %w", err)
+	}
+
+	// Use pipe: mysqldump source | mysql target
+	dumpCmd := exec.Command("mysqldump", "-u", "root", source)
+	importCmd := exec.Command("mysql", "-u", "root", target)
+
+	// Create pipe
+	pipe, err := dumpCmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("failed to create pipe: %w", err)
+	}
+	importCmd.Stdin = pipe
+
+	// Capture stderr for error reporting
+	var dumpStderr, importStderr strings.Builder
+	dumpCmd.Stderr = &dumpStderr
+	importCmd.Stderr = &importStderr
+
+	// Start both commands
+	if err := dumpCmd.Start(); err != nil {
+		return fmt.Errorf("failed to start mysqldump: %w", err)
+	}
+	if err := importCmd.Start(); err != nil {
+		dumpCmd.Process.Kill()
+		return fmt.Errorf("failed to start mysql import: %w", err)
+	}
+
+	// Wait for dump to complete
+	if err := dumpCmd.Wait(); err != nil {
+		importCmd.Process.Kill()
+		return fmt.Errorf("mysqldump failed: %s", dumpStderr.String())
+	}
+
+	// Wait for import to complete
+	if err := importCmd.Wait(); err != nil {
+		return fmt.Errorf("mysql import failed: %s", importStderr.String())
+	}
+
+	return nil
+}
+
 // ForeignValue represents a value-label pair for foreign keys
 type ForeignValue struct {
 	Value string `json:"value"`

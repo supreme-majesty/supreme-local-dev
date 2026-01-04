@@ -38,3 +38,21 @@ type Plugin interface {
 	// IsInstalled checks if the binary/resources exist
 	IsInstalled() bool
 }
+
+// HealthChecker is an optional interface for plugins that can report health status
+type HealthChecker interface {
+	// Health returns whether the plugin is healthy and a status message
+	Health() (ok bool, message string)
+}
+
+// LogProvider is an optional interface for plugins that can provide logs
+type LogProvider interface {
+	// Logs returns the last N lines of logs
+	Logs(lines int) ([]string, error)
+}
+
+// UIProvider is an optional interface for plugins that have a web UI
+type UIProvider interface {
+	// UIPort returns the port where the UI is available
+	UIPort() int
+}

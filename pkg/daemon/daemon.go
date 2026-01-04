@@ -32,6 +32,8 @@ type Daemon struct {
 	DatabaseService *services.DatabaseService
 	ProjectManager  *services.ProjectManager
 	LogWatcher      *services.LogWatcher
+	EnvManager      *services.EnvManager
+	ArtisanService  *services.ArtisanService
 }
 
 var instance *Daemon
@@ -97,6 +99,8 @@ func Initialize() (*Daemon, error) {
 		DatabaseService: databaseService,
 		ProjectManager:  projectManager,
 		LogWatcher:      logWatcher,
+		EnvManager:      services.NewEnvManager(),
+		ArtisanService:  services.NewArtisanService(eventBus),
 	}
 
 	return instance, nil

@@ -15,6 +15,8 @@ const (
 	SitesUpdated     EventType = "sites:updated"
 	XRayLog          EventType = "xray:log"
 	LogEntry         EventType = "log:entry"
+	ArtisanOutput    EventType = "artisan:output"
+	ArtisanDone      EventType = "artisan:done"
 )
 
 type Event struct {

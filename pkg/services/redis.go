@@ -139,3 +139,48 @@ func (p *RedisPlugin) Stop() error {
 	os.Remove(p.pidFile())
 	return nil
 }
+
+// Health checks if Redis is responding
+func (p *RedisPlugin) Health() (bool, string) {
+	if p.Status() != plugins.StatusRunning {
+		return false, "Redis is not running"
+	}
+
+	// Try redis-cli PING
+	cmd := exec.Command("redis-cli", "PING")
+	output, err := cmd.Output()
+	if err != nil {
+		return false, fmt.Sprintf("Redis not responding: %v", err)
+	}
+
+	if strings.TrimSpace(string(output)) == "PONG" {
+		return true, "Redis is healthy"
+	}
+	return false, "Redis PING failed"
+}
+
+// Logs returns the last N lines of Redis logs
+func (p *RedisPlugin) Logs(lines int) ([]string, error) {
+	logPath := filepath.Join(p.dataDir, "redis.log")
+	if _, err := os.Stat(logPath); os.IsNotExist(err) {
+		// Try journalctl as fallback
+		cmd := exec.Command("journalctl", "-u", "redis", "-n", strconv.Itoa(lines), "--no-pager")
+		output, err := cmd.Output()
+		if err != nil {
+			return []string{"No logs available"}, nil
+		}
+		return strings.Split(string(output), "\n"), nil
+	}
+
+	// Read from log file
+	content, err := os.ReadFile(logPath)
+	if err != nil {
+		return nil, err
+	}
+
+	allLines := strings.Split(string(content), "\n")
+	if len(allLines) > lines {
+		allLines = allLines[len(allLines)-lines:]
+	}
+	return allLines, nil
+}
