@@ -30,7 +30,8 @@ var installCmd = &cobra.Command{
 	Short: "Install SLD dependencies and core services",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if os.Geteuid() != 0 {
-			return fmt.Errorf("installation requires root privileges. Please run with sudo")
+			fmt.Println("This command requires root privileges. Requesting sudo...")
+			return elevate()
 		}
 
 		fmt.Println("Installing Supreme Local Dev...")
@@ -63,6 +64,11 @@ var uninstallCmd = &cobra.Command{
 	Use:   "uninstall",
 	Short: "Remove SLD and all its configurations",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if os.Geteuid() != 0 {
+			fmt.Println("This command requires root privileges. Requesting sudo...")
+			return elevate()
+		}
+
 		fmt.Println("Uninstalling Supreme Local Dev...")
 
 		d, err := daemon.GetClient()
@@ -118,6 +124,21 @@ var statusCmd = &cobra.Command{
 	},
 }
 
+// elevate runs the current command with sudo
+func elevate() error {
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+
+	cmd := exec.Command("sudo", append([]string{exe}, os.Args[1:]...)...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	return cmd.Run()
+}
+
 // isInstalled checks if SLD has been configured on the system
 func isInstalled() bool {
 	_, err := os.Stat("/var/lib/sld/state.json")
@@ -130,13 +151,12 @@ func autoInstall() bool {
 	fmt.Println("🔧 Running automatic installation...")
 	fmt.Println()
 
-	// Get the current executable path
+	// Re-use elevate logic but hardcode "install"
 	exe, err := os.Executable()
 	if err != nil {
-		exe = "sld" // Fallback to PATH lookup
+		exe = "sld" // Fallback
 	}
 
-	// Run sudo with interactive mode for password prompt
 	cmd := exec.Command("sudo", exe, "install")
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -670,7 +690,8 @@ var serviceInstallCmd = &cobra.Command{
 	Short: "Install SLD daemon as a systemd service (auto-start on boot)",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if os.Geteuid() != 0 {
-			return fmt.Errorf("service installation requires root. Please run with sudo")
+			fmt.Println("This command requires root privileges. Requesting sudo...")
+			return elevate()
 		}
 
 		fmt.Println("Installing SLD daemon service...")

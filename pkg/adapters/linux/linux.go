@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/supreme-majesty/supreme-local-dev/pkg/adapters"
 )
 
 type LinuxAdapter struct {
@@ -743,4 +745,99 @@ func (l *LinuxAdapter) GetLogPaths() map[string]string {
 	logs["php-fpm"] = fmt.Sprintf("/var/log/php%s-fpm.log", ver)
 
 	return logs
+}
+
+// Structured Status Implementation
+
+func (l *LinuxAdapter) GetServices() ([]adapters.ServiceStatus, error) {
+	services := []adapters.ServiceStatus{}
+
+	// Nginx
+	nginxRunning, _ := l.IsServiceRunning("nginx")
+	services = append(services, adapters.ServiceStatus{
+		Name:    "Nginx",
+		Running: nginxRunning,
+		Version: "Unknown", // Could parse nginx -v
+	})
+
+	// PHP-FPM
+	phpVer := l.GetPHPVersion()
+	phpSvc := fmt.Sprintf("php%s-fpm", phpVer)
+	phpRunning, _ := l.IsServiceRunning(phpSvc)
+	services = append(services, adapters.ServiceStatus{
+		Name:    "PHP-FPM",
+		Running: phpRunning,
+		Version: phpVer,
+	})
+
+	// DNSMasq
+	dnsRunning, _ := l.IsServiceRunning("dnsmasq")
+	services = append(services, adapters.ServiceStatus{
+		Name:    "DNSMasq",
+		Running: dnsRunning,
+	})
+
+	// MySQL/MariaDB
+	mysqlRunning, _ := l.IsServiceRunning("mysql")
+	if !mysqlRunning {
+		mysqlRunning, _ = l.IsServiceRunning("mariadb")
+	}
+	services = append(services, adapters.ServiceStatus{
+		Name:    "Database",
+		Running: mysqlRunning,
+	})
+
+	return services, nil
+}
+
+func (l *LinuxAdapter) GetSystemHealth() ([]adapters.HealthCheck, error) {
+	checks := []adapters.HealthCheck{}
+
+	// 1. Services Check
+	svcs, _ := l.GetServices()
+	for _, s := range svcs {
+		status := "fail"
+		msg := "Stopped"
+		if s.Running {
+			status = "pass"
+			msg = "Running"
+		}
+		checks = append(checks, adapters.HealthCheck{
+			Name:    s.Name,
+			Status:  status,
+			Message: msg,
+		})
+	}
+
+	// 2. Connectivity
+	wifiAlive, wifiMsg := l.CheckWifi()
+	wifiStatus := "fail"
+	if wifiAlive {
+		wifiStatus = "pass"
+	}
+	checks = append(checks, adapters.HealthCheck{
+		Name:    "WiFi/Network",
+		Status:  wifiStatus,
+		Message: wifiMsg,
+	})
+
+	// 3. DNS Resolution
+	cmd := exec.Command("resolvectl", "query", "sld.test")
+	dnsStatus := "pass"
+	dnsMsg := "Resolved parameters correctly"
+	if err := cmd.Run(); err != nil {
+		dnsStatus = "fail"
+		dnsMsg = "Failed to resolve .test domain via systemd-resolved"
+	}
+	checks = append(checks, adapters.HealthCheck{
+		Name:    "Local DNS (.test)",
+		Status:  dnsStatus,
+		Message: dnsMsg,
+	})
+
+	// 4. Port 80 Check (Generic)
+	// We can try to bind or just check if our Nginx is running
+	// If Nginx is running, Port 80 is likely fine.
+
+	return checks, nil
 }

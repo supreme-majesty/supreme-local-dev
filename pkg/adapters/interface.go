@@ -35,4 +35,21 @@ type SystemAdapter interface {
 	CheckWifi() (bool, string)
 	Doctor() error
 	GetLogPaths() map[string]string
+
+	// Structured Status
+	GetServices() ([]ServiceStatus, error)
+	GetSystemHealth() ([]HealthCheck, error)
+}
+
+// Shared Types
+type ServiceStatus struct {
+	Name    string `json:"name"`
+	Running bool   `json:"running"`
+	Version string `json:"version,omitempty"`
+}
+
+type HealthCheck struct {
+	Name    string `json:"name"`
+	Status  string `json:"status"` // pass, fail, warn
+	Message string `json:"message"`
 }

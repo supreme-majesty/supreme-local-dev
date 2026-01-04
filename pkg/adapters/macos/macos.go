@@ -1,5 +1,9 @@
 package macos
 
+import (
+	"github.com/supreme-majesty/supreme-local-dev/pkg/adapters"
+)
+
 type MacOSAdapter struct{}
 
 func NewMacOSAdapter() *MacOSAdapter {
@@ -29,3 +33,9 @@ func (m *MacOSAdapter) UpdateHosts(domains []string) error                  { re
 func (m *MacOSAdapter) CheckWifi() (bool, string)                           { return true, "Unknown" }
 func (m *MacOSAdapter) Doctor() error                                       { return nil }
 func (m *MacOSAdapter) GetLogPaths() map[string]string                      { return nil }
+func (m *MacOSAdapter) GetServices() ([]adapters.ServiceStatus, error) {
+	return []adapters.ServiceStatus{}, nil
+}
+func (m *MacOSAdapter) GetSystemHealth() ([]adapters.HealthCheck, error) {
+	return []adapters.HealthCheck{}, nil
+}

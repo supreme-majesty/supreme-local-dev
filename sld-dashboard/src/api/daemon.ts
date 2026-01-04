@@ -17,10 +17,9 @@ export interface SLDState {
   port: string;
 }
 
-export interface ApiResponse<T = void> {
+export interface ActionResponse {
   success: boolean;
   message?: string;
-  data?: T;
   error?: string;
 }
 
@@ -168,10 +167,15 @@ class DaemonApi {
     });
 
     if (!response.ok) {
-      const error = await response
-        .json()
-        .catch(() => ({ error: "Unknown error" }));
-      throw new Error(error.error || `Request failed: ${response.statusText}`);
+      let errorMessage: string;
+      const contentType = response.headers.get("content-type");
+      if (contentType && contentType.includes("application/json")) {
+        const json = await response.json().catch(() => ({}));
+        errorMessage = json.error || json.message || "Unknown error";
+      } else {
+        errorMessage = await response.text();
+      }
+      throw new Error(errorMessage || `Request failed: ${response.statusText}`);
     }
 
     return response.json();
@@ -287,22 +291,22 @@ class DaemonApi {
   }
 
   // Project Management
-  async park(path: string): Promise<ApiResponse> {
-    return this.request<ApiResponse>("/park", {
+  async park(path: string): Promise<ActionResponse> {
+    return this.request<ActionResponse>("/park", {
       method: "POST",
       body: JSON.stringify({ path }),
     });
   }
 
-  async forget(path: string): Promise<ApiResponse> {
-    return this.request<ApiResponse>("/forget", {
+  async forget(path: string): Promise<ActionResponse> {
+    return this.request<ActionResponse>("/forget", {
       method: "POST",
       body: JSON.stringify({ path }),
     });
   }
 
-  async link(name: string, path: string): Promise<ApiResponse> {
-    return this.request<ApiResponse>("/link", {
+  async link(name: string, path: string): Promise<ActionResponse> {
+    return this.request<ActionResponse>("/link", {
       method: "POST",
       body: JSON.stringify({ name, path }),
     });
@@ -316,7 +320,7 @@ class DaemonApi {
   }
 
   async ignore(path: string): Promise<boolean> {
-    const res = await this.request<ApiResponse>("/ignore", {
+    const res = await this.request<ActionResponse>("/ignore", {
       method: "POST",
       body: JSON.stringify({ path }),
     });
@@ -324,7 +328,7 @@ class DaemonApi {
   }
 
   async unignore(path: string): Promise<boolean> {
-    const res = await this.request<ApiResponse>("/unignore", {
+    const res = await this.request<ActionResponse>("/unignore", {
       method: "POST",
       body: JSON.stringify({ path }),
     });
@@ -337,7 +341,7 @@ class DaemonApi {
   }
 
   async installPlugin(id: string): Promise<boolean> {
-    const res = await this.request<ApiResponse>("/plugins/install", {
+    const res = await this.request<ActionResponse>("/plugins/install", {
       method: "POST",
       body: JSON.stringify({ id }),
     });
@@ -345,7 +349,7 @@ class DaemonApi {
   }
 
   async togglePlugin(id: string, enabled: boolean): Promise<boolean> {
-    const res = await this.request<ApiResponse>("/plugins/toggle", {
+    const res = await this.request<ActionResponse>("/plugins/toggle", {
       method: "POST",
       body: JSON.stringify({ id, enabled }),
     });
@@ -353,8 +357,8 @@ class DaemonApi {
   }
 
   // PHP Management
-  async switchPHP(version: string): Promise<ApiResponse> {
-    return this.request<ApiResponse>("/php", {
+  async switchPHP(version: string): Promise<ActionResponse> {
+    return this.request<ActionResponse>("/php", {
       method: "POST",
       body: JSON.stringify({ version }),
     });
@@ -365,15 +369,15 @@ class DaemonApi {
   }
 
   // SSL/HTTPS
-  async secure(): Promise<ApiResponse> {
-    return this.request<ApiResponse>("/secure", {
+  async secure(): Promise<ActionResponse> {
+    return this.request<ActionResponse>("/secure", {
       method: "POST",
     });
   }
 
   // Projects & System
-  async createProject(options: ProjectOptions): Promise<ApiResponse> {
-    return this.request<ApiResponse>("/projects/create", {
+  async createProject(options: ProjectOptions): Promise<ActionResponse> {
+    return this.request<ActionResponse>("/projects/create", {
       method: "POST",
       body: JSON.stringify(options),
     });
@@ -387,8 +391,8 @@ class DaemonApi {
     return this.request<Editor[]>("/system/editors");
   }
 
-  async openInEditor(path: string, editor: string): Promise<ApiResponse> {
-    return this.request<ApiResponse>("/system/open-editor", {
+  async openInEditor(path: string, editor: string): Promise<ActionResponse> {
+    return this.request<ActionResponse>("/system/open-editor", {
       method: "POST",
       body: JSON.stringify({ path, editor }),
     });
@@ -402,63 +406,19 @@ class DaemonApi {
 
   // Service Management (to be implemented in daemon)
   async getServiceStatus(): Promise<ServiceStatus[]> {
-    try {
-      const state = await this.getState();
-      // Parse from state.services or mock for now
-      return [
-        { name: "Nginx", running: true, version: "1.24.0" },
-        { name: "PHP-FPM", running: true, version: state.php_version || "8.2" },
-        { name: "DNSMasq", running: true },
-        { name: "MySQL", running: true, version: "8.0" },
-      ];
-    } catch {
-      return [
-        { name: "Nginx", running: false },
-        { name: "PHP-FPM", running: false },
-        { name: "DNSMasq", running: false },
-        { name: "MySQL", running: false },
-      ];
-    }
+    return this.request<ServiceStatus[]>("/services");
   }
 
-  async restart(): Promise<ApiResponse> {
-    return this.request<ApiResponse>("/restart", {
+  async restart(): Promise<ActionResponse> {
+    return this.request<ActionResponse>("/restart", {
       method: "POST",
     });
   }
 
   // Doctor/Diagnostics (to be implemented in daemon)
+  // Doctor/Diagnostics
   async runDoctor(): Promise<HealthCheck[]> {
-    // Mock for now - will be implemented in daemon
-    return [
-      {
-        name: "Nginx Configuration",
-        status: "pass",
-        message: "Valid configuration",
-      },
-      {
-        name: "PHP-FPM Socket",
-        status: "pass",
-        message: "Socket active and responding",
-      },
-      {
-        name: "DNS Resolution",
-        status: "pass",
-        message: "Resolving .test domains correctly",
-      },
-      {
-        name: "SSL Certificates",
-        status: "pass",
-        message: "mkcert CA installed",
-      },
-      { name: "Port 80", status: "pass", message: "No conflicts detected" },
-      { name: "Port 443", status: "pass", message: "No conflicts detected" },
-      {
-        name: "MySQL Connection",
-        status: "pass",
-        message: "Database accessible",
-      },
-    ];
+    return this.request<HealthCheck[]>("/system/doctor");
   }
 
   // Helper to transform state into projects list
@@ -469,7 +429,7 @@ class DaemonApi {
 
   // Sharing / Tunnels
   async shareStart(site: string): Promise<string> {
-    const res = await this.request<ApiResponse>("/share/start", {
+    const res = await this.request<ActionResponse>("/share/start", {
       method: "POST",
       body: JSON.stringify({ site }),
     });
@@ -503,8 +463,8 @@ class DaemonApi {
   async writeEnvFile(
     path: string,
     variables: Record<string, string>
-  ): Promise<ApiResponse> {
-    return this.request<ApiResponse>("/env/write", {
+  ): Promise<ActionResponse> {
+    return this.request<ActionResponse>("/env/write", {
       method: "PUT",
       body: JSON.stringify({ path, variables }),
     });
@@ -519,8 +479,8 @@ class DaemonApi {
   async restoreEnvBackup(
     backupPath: string,
     targetPath: string
-  ): Promise<ApiResponse> {
-    return this.request<ApiResponse>("/env/restore", {
+  ): Promise<ActionResponse> {
+    return this.request<ActionResponse>("/env/restore", {
       method: "POST",
       body: JSON.stringify({
         backup_path: backupPath,
@@ -533,8 +493,8 @@ class DaemonApi {
   async runArtisanCommand(
     projectPath: string,
     command: string
-  ): Promise<ApiResponse> {
-    return this.request<ApiResponse>("/artisan/run", {
+  ): Promise<ActionResponse> {
+    return this.request<ActionResponse>("/artisan/run", {
       method: "POST",
       body: JSON.stringify({ project_path: projectPath, command }),
     });
@@ -545,8 +505,8 @@ class DaemonApi {
   }
 
   // Database Clone
-  async cloneDatabase(source: string, target: string): Promise<ApiResponse> {
-    return this.request<ApiResponse>("/db/clone", {
+  async cloneDatabase(source: string, target: string): Promise<ActionResponse> {
+    return this.request<ActionResponse>("/db/clone", {
       method: "POST",
       body: JSON.stringify({ source, target }),
     });

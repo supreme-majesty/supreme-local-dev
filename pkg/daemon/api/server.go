@@ -62,6 +62,10 @@ func (s *Server) Start() error {
 	http.HandleFunc("/api/db/clone", s.handleDBClone)
 	http.HandleFunc("/api/db/foreign-values", s.handleDBForeignValues)
 
+	// Service Status & Health
+	http.HandleFunc("/api/services", s.handleServices)
+	http.HandleFunc("/api/system/doctor", s.handleSystemDoctor)
+
 	// Logging
 	http.HandleFunc("/api/logs/sources", s.handleLogSources)
 	http.HandleFunc("/api/logs/watch", s.handleLogWatch)
@@ -1358,4 +1362,26 @@ func (s *Server) handleArtisanCommands(w http.ResponseWriter, r *http.Request) {
 	d, _ := daemon.GetClient()
 	commands := d.ArtisanService.GetCommonCommands()
 	jsonResponse(w, commands, 200)
+}
+
+// Service & Doctor Handlers
+
+func (s *Server) handleServices(w http.ResponseWriter, r *http.Request) {
+	d, _ := daemon.GetClient()
+	services, err := d.Adapter.GetServices()
+	if err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+	jsonResponse(w, services, 200)
+}
+
+func (s *Server) handleSystemDoctor(w http.ResponseWriter, r *http.Request) {
+	d, _ := daemon.GetClient()
+	checks, err := d.Adapter.GetSystemHealth()
+	if err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+	jsonResponse(w, checks, 200)
 }
