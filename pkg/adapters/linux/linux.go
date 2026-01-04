@@ -50,12 +50,31 @@ func (l *LinuxAdapter) InstallDependencies() error {
 	// Check for apt-get
 	path, err := exec.LookPath("apt-get")
 	if err == nil && path != "" {
-		// Install nginx, php-fpm, dnsmasq, and essential PHP extensions
-		cmd := exec.Command("sudo", "apt-get", "install", "-y",
+		// Base packages
+		packages := []string{
 			"nginx", "php-fpm", "dnsmasq", "zip", "unzip",
+			"git", "composer", "nodejs", "npm",
 			"php-mysql", "php-mbstring", "php-xml", "php-curl",
 			"php-zip", "php-sqlite3", "php-bcmath", "php-intl",
-		)
+		}
+
+		// Check for Database (MySQL or MariaDB)
+		if _, err := exec.LookPath("mysql"); err != nil {
+			if _, err := exec.LookPath("mariadb"); err != nil {
+				fmt.Println("Database not found, adding mariadb-server...")
+				packages = append(packages, "mariadb-server")
+			}
+		}
+
+		// Check for Redis
+		if _, err := exec.LookPath("redis-server"); err != nil {
+			fmt.Println("Redis not found, adding redis-server...")
+			packages = append(packages, "redis-server")
+		}
+
+		// Install packages
+		args := append([]string{"apt-get", "install", "-y"}, packages...)
+		cmd := exec.Command("sudo", args...)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
