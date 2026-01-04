@@ -716,11 +716,11 @@ func (s *Server) handleDBSnapshots(w http.ResponseWriter, r *http.Request) {
 			}
 			response = append(response, map[string]interface{}{
 				"id":         s.Filename, // use filename as ID
-				"name":       s.Filename,
+				"filename":   s.Filename,
 				"database":   s.Database,
+				"table":      s.Table,
 				"size":       s.Size,
 				"created_at": s.CreatedAt,
-				"path":       s.Filename,
 			})
 		}
 		jsonResponse(w, response, 200)
@@ -744,11 +744,11 @@ func (s *Server) handleDBSnapshots(w http.ResponseWriter, r *http.Request) {
 
 		resp := map[string]interface{}{
 			"id":         snapshot.Filename,
-			"name":       snapshot.Filename,
+			"filename":   snapshot.Filename,
 			"database":   snapshot.Database,
+			"table":      snapshot.Table,
 			"size":       snapshot.Size,
 			"created_at": snapshot.CreatedAt,
-			"path":       snapshot.Filename,
 		}
 		jsonResponse(w, resp, 200)
 
@@ -838,6 +838,32 @@ func (s *Server) handleDBDownload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	path := filepath.Join(d.DatabaseService.SnapDir, id)
+
+	// Parse filename to extract db/table name for a clean download name
+	// Formats: db_timestamp.sql or db__table_timestamp.sql
+	cleanName := id
+	baseName := strings.TrimSuffix(id, ".sql")
+	if strings.Contains(baseName, "__") {
+		// Table export: db__table_timestamp.sql -> table.sql
+		parts := strings.Split(baseName, "__")
+		if len(parts) >= 2 {
+			remaining := parts[1]
+			remainingParts := strings.Split(remaining, "_")
+			if len(remainingParts) >= 2 {
+				tableName := strings.Join(remainingParts[:len(remainingParts)-2], "_")
+				cleanName = tableName + ".sql"
+			}
+		}
+	} else {
+		// Database export: db_timestamp.sql -> db.sql
+		parts := strings.Split(baseName, "_")
+		if len(parts) >= 2 {
+			dbName := strings.Join(parts[:len(parts)-2], "_")
+			cleanName = dbName + ".sql"
+		}
+	}
+
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, cleanName))
 	http.ServeFile(w, r, path)
 }
 

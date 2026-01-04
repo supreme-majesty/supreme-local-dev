@@ -95,6 +95,7 @@ export interface TableData {
 export interface Snapshot {
   id: string;
   database: string;
+  table?: string;
   filename: string;
   size: number;
   created_at: string;

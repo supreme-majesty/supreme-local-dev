@@ -60,6 +60,7 @@ type TableData struct {
 type Snapshot struct {
 	ID        string    `json:"id"`
 	Database  string    `json:"database"`
+	Table     string    `json:"table,omitempty"`
 	Filename  string    `json:"filename"`
 	Size      int64     `json:"size"`
 	CreatedAt time.Time `json:"created_at"`
@@ -639,7 +640,8 @@ func (d *DatabaseService) CreateSnapshot(database, table string) (*Snapshot, err
 	timestamp := time.Now().Format("20060102_150405")
 	filename := fmt.Sprintf("%s_%s.sql", database, timestamp)
 	if table != "" {
-		filename = fmt.Sprintf("%s_%s_%s.sql", database, table, timestamp)
+		// Use a double underscore to separate db and table more clearly
+		filename = fmt.Sprintf("%s__%s_%s.sql", database, table, timestamp)
 	}
 	filepath := filepath.Join(d.SnapDir, filename)
 
@@ -691,19 +693,34 @@ func (d *DatabaseService) ListSnapshots() ([]Snapshot, error) {
 			continue
 		}
 
-		// Parse filename: dbname_20060102_150405.sql
+		// Parse filename: dbname_timestamp.sql or dbname__tablename_timestamp.sql
 		name := strings.TrimSuffix(entry.Name(), ".sql")
-		parts := strings.Split(name, "_")
-		if len(parts) < 3 {
-			continue
-		}
 
-		dbName := strings.Join(parts[:len(parts)-2], "_")
-		timestamp := parts[len(parts)-2] + "_" + parts[len(parts)-1]
+		var dbName, tableName, timestamp string
+
+		if strings.Contains(name, "__") {
+			// New format: db__table_date_time
+			parts := strings.Split(name, "__")
+			dbName = parts[0]
+			remaining := parts[1]
+			remainingParts := strings.Split(remaining, "_")
+			if len(remainingParts) >= 2 {
+				tableName = strings.Join(remainingParts[:len(remainingParts)-2], "_")
+				timestamp = remainingParts[len(remainingParts)-2] + "_" + remainingParts[len(remainingParts)-1]
+			}
+		} else {
+			// Old format or simple db snapshot: db_date_time
+			parts := strings.Split(name, "_")
+			if len(parts) >= 2 {
+				dbName = strings.Join(parts[:len(parts)-2], "_")
+				timestamp = parts[len(parts)-2] + "_" + parts[len(parts)-1]
+			}
+		}
 
 		snapshots = append(snapshots, Snapshot{
 			ID:        timestamp,
 			Database:  dbName,
+			Table:     tableName,
 			Filename:  entry.Name(),
 			Size:      info.Size(),
 			CreatedAt: info.ModTime(),

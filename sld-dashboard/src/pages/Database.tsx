@@ -1948,7 +1948,8 @@ $mysqli->close();
                         )
                       }
                     >
-                      <FileDown size={14} className="mr-2" /> Download
+                      <FileDown size={14} className="mr-2" /> Download{" "}
+                      {snap.table || snap.database}
                     </Button>
                     <Button
                       variant="secondary"
@@ -2670,7 +2671,11 @@ $mysqli->close();
                                       variant="ghost"
                                       size="sm"
                                       className="h-8 w-8 p-0"
-                                      title="Download"
+                                      title={`Download ${
+                                        s.table
+                                          ? `${s.database}.${s.table}`
+                                          : s.database
+                                      }`}
                                       onClick={() =>
                                         window.open(
                                           `/api/db/snapshots/download?id=${s.id}`
@@ -2917,17 +2922,40 @@ $mysqli->close();
         }
         title={resultModal.title}
         footer={
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => {
-              navigator.clipboard.writeText(resultModal.content);
-              alert("Copied to clipboard!");
-            }}
-            className="gap-1"
-          >
-            <Copy size={14} /> Copy to Clipboard
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                navigator.clipboard.writeText(resultModal.content);
+                alert("Copied to clipboard!");
+              }}
+              className="gap-1"
+            >
+              <Copy size={14} /> Copy to Clipboard
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                const element = document.createElement("a");
+                const file = new Blob([resultModal.content], {
+                  type: "text/plain",
+                });
+                element.href = URL.createObjectURL(file);
+                element.download = `${resultModal.title.replace(
+                  /\s+/g,
+                  "_"
+                )}.sql`;
+                document.body.appendChild(element);
+                element.click();
+                document.body.removeChild(element);
+              }}
+              className="gap-1"
+            >
+              <DownloadIcon size={14} /> Download as SQL
+            </Button>
+          </div>
         }
       >
         <div className="max-h-[60vh] overflow-auto">
