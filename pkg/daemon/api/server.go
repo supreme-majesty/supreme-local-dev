@@ -56,7 +56,13 @@ func (s *Server) Start() error {
 	http.HandleFunc("/api/db/snapshots/restore", s.handleDBRestore)
 	http.HandleFunc("/api/db/import", s.handleDBImport)
 	http.HandleFunc("/api/db/query", s.handleDBQuery)
+	http.HandleFunc("/api/db/query", s.handleDBQuery)
 	http.HandleFunc("/api/db/foreign-values", s.handleDBForeignValues)
+
+	// Logging
+	http.HandleFunc("/api/logs/sources", s.handleLogSources)
+	http.HandleFunc("/api/logs/watch", s.handleLogWatch)
+	http.HandleFunc("/api/logs/unwatch", s.handleLogUnwatch)
 
 	// Projects & System
 	http.HandleFunc("/api/projects/create", s.handleProjectCreate)
@@ -966,4 +972,89 @@ func (s *Server) handleDBForeignValues(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(values); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+// Log Management Handlers
+
+func (s *Server) handleLogSources(w http.ResponseWriter, r *http.Request) {
+	d, _ := daemon.GetClient()
+	sources := d.LogWatcher.GetAvailableSources()
+
+	// Convert map to frontend friendly array
+	type LogSourceInfo struct {
+		ID    string `json:"id"`
+		Path  string `json:"path"`
+		Label string `json:"label"`
+	}
+
+	var response []LogSourceInfo
+	for id, path := range sources {
+		label := string(id)
+		switch id {
+		case services.LogSourceNginxError:
+			label = "Nginx Error"
+		case services.LogSourceNginxAccess:
+			label = "Nginx Access"
+		case services.LogSourcePHPFPM:
+			label = "PHP-FPM"
+		}
+
+		response = append(response, LogSourceInfo{
+			ID:    string(id),
+			Path:  path,
+			Label: label,
+		})
+	}
+
+	jsonResponse(w, response, 200)
+}
+
+func (s *Server) handleLogWatch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		return
+	}
+
+	var req struct {
+		Source      string `json:"source"`
+		ProjectPath string `json:"project_path"` // Optional, for Laravel logs
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
+		return
+	}
+
+	d, _ := daemon.GetClient()
+
+	var err error
+	if strings.HasPrefix(req.Source, "laravel") && req.ProjectPath != "" {
+		err = d.LogWatcher.WatchLaravelLog(req.ProjectPath)
+	} else {
+		err = d.LogWatcher.StartWatching(services.LogSource(req.Source))
+	}
+
+	if err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+
+	jsonResponse(w, SuccessResponse{Success: true}, 200)
+}
+
+func (s *Server) handleLogUnwatch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		return
+	}
+
+	var req struct {
+		Source string `json:"source"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
+		return
+	}
+
+	d, _ := daemon.GetClient()
+	d.LogWatcher.StopWatching(services.LogSource(req.Source))
+
+	jsonResponse(w, SuccessResponse{Success: true}, 200)
 }

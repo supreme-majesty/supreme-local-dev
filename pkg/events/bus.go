@@ -14,6 +14,7 @@ const (
 	ConfigChanged    EventType = "ConfigChanged"
 	SitesUpdated     EventType = "sites:updated"
 	XRayLog          EventType = "xray:log"
+	LogEntry         EventType = "log:entry"
 )
 
 type Event struct {

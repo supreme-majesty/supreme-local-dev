@@ -9,6 +9,7 @@ import Settings from "@/pages/Settings";
 import Doctor from "@/pages/Doctor";
 import XRay from "@/pages/XRay";
 import Share from "@/pages/Share";
+import Logs from "@/pages/Logs";
 
 import { ErrorBoundary } from "@/components/common/ErrorBoundary";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -28,6 +29,7 @@ function App() {
               <Route path="/plugins" element={<Plugins />} />
               <Route path="/xray" element={<XRay />} />
               <Route path="/share" element={<Share />} />
+              <Route path="/logs" element={<Logs />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="/doctor" element={<Doctor />} />
 

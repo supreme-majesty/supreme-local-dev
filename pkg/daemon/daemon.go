@@ -31,6 +31,7 @@ type Daemon struct {
 	XRayService     *services.XRayService
 	DatabaseService *services.DatabaseService
 	ProjectManager  *services.ProjectManager
+	LogWatcher      *services.LogWatcher
 }
 
 var instance *Daemon
@@ -59,6 +60,7 @@ func Initialize() (*Daemon, error) {
 	pluginManager := plugins.NewManager("/var/lib/sld/plugins", stateManager)
 	tunnelManager := services.NewTunnelManager("/var/lib/sld")
 	xrayService := services.NewXRayService(eventBus)
+	logWatcher := services.NewLogWatcher(eventBus)
 	databaseService := services.NewDatabaseService()
 	home := getRealUserHome()
 	baseDir := findBestDevDir(home)
@@ -94,6 +96,7 @@ func Initialize() (*Daemon, error) {
 		XRayService:     xrayService,
 		DatabaseService: databaseService,
 		ProjectManager:  projectManager,
+		LogWatcher:      logWatcher,
 	}
 
 	return instance, nil

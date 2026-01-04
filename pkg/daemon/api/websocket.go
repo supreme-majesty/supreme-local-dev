@@ -116,4 +116,12 @@ func SetupEventBridge(hub *Hub) {
 			"data": e.Payload,
 		}
 	})
+
+	// Subscribe to Log entries
+	d.Events.Subscribe(events.LogEntry, func(e events.Event) {
+		hub.broadcast <- map[string]interface{}{
+			"type": "log:entry",
+			"data": e.Payload,
+		}
+	})
 }
