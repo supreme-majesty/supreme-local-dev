@@ -838,3 +838,98 @@ func getPathOwner(path string) (uint32, uint32, error) {
 		path = parent
 	}
 }
+
+// CloneProject creates a "Ghost" clone of a project for experimentation.
+// It copies the project files (excluding heavy dirs) and optionally clones its database.
+func (pm *ProjectManager) CloneProject(sourcePath, targetName string, cloneDB bool, dbService interface {
+	CloneDatabase(source, target string) error
+}) (string, error) {
+	// 1. Validate source exists
+	if _, err := os.Stat(sourcePath); os.IsNotExist(err) {
+		return "", fmt.Errorf("source project not found: %s", sourcePath)
+	}
+
+	// 2. Determine target path (same parent as source, with -ghost suffix)
+	sourceDir := filepath.Dir(sourcePath)
+	if targetName == "" {
+		targetName = filepath.Base(sourcePath) + "-ghost"
+	}
+	targetPath := filepath.Join(sourceDir, targetName)
+
+	// Check target doesn't already exist
+	if _, err := os.Stat(targetPath); err == nil {
+		return "", fmt.Errorf("target path already exists: %s", targetPath)
+	}
+
+	// 3. Copy files using rsync for speed (excluding heavy directories)
+	// Exclude: node_modules, vendor, .git, storage/logs, storage/framework/cache
+	rsyncArgs := []string{
+		"-a", "--progress",
+		"--exclude", "node_modules",
+		"--exclude", "vendor",
+		"--exclude", ".git",
+		"--exclude", "storage/logs/*",
+		"--exclude", "storage/framework/cache/*",
+		"--exclude", "storage/framework/sessions/*",
+		"--exclude", "storage/framework/views/*",
+		sourcePath + "/",
+		targetPath,
+	}
+
+	cmd := exec.Command("rsync", rsyncArgs...)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("failed to copy project: %s", string(output))
+	}
+
+	fmt.Printf("[GHOST MODE] Copied project to %s\n", targetPath)
+
+	// 4. If Laravel project and cloneDB requested, clone the database
+	if cloneDB {
+		envPath := filepath.Join(targetPath, ".env")
+		if _, err := os.Stat(envPath); err == nil {
+			// Read .env to get DB name
+			envContent, err := os.ReadFile(envPath)
+			if err == nil {
+				lines := strings.Split(string(envContent), "\n")
+				var sourceDBName string
+				for _, line := range lines {
+					if strings.HasPrefix(line, "DB_DATABASE=") {
+						sourceDBName = strings.TrimPrefix(line, "DB_DATABASE=")
+						sourceDBName = strings.TrimSpace(sourceDBName)
+						break
+					}
+				}
+
+				if sourceDBName != "" && dbService != nil {
+					targetDBName := targetName + "_db"
+					// Replace dashes with underscores for DB name validity
+					targetDBName = strings.ReplaceAll(targetDBName, "-", "_")
+
+					fmt.Printf("[GHOST MODE] Cloning database %s -> %s\n", sourceDBName, targetDBName)
+					if err := dbService.CloneDatabase(sourceDBName, targetDBName); err != nil {
+						fmt.Printf("[GHOST MODE] Warning: DB clone failed: %v\n", err)
+					} else {
+						// Update .env in target to point to new DB
+						newEnvContent := strings.Replace(string(envContent),
+							"DB_DATABASE="+sourceDBName,
+							"DB_DATABASE="+targetDBName, 1)
+						os.WriteFile(envPath, []byte(newEnvContent), 0644)
+						fmt.Printf("[GHOST MODE] Updated .env with new database name\n")
+					}
+				}
+			}
+		}
+	}
+
+	// 5. Update APP_URL in .env if it exists
+	envPath := filepath.Join(targetPath, ".env")
+	if envContent, err := os.ReadFile(envPath); err == nil {
+		sourceName := filepath.Base(sourcePath)
+		newEnvContent := strings.Replace(string(envContent),
+			sourceName+".test",
+			targetName+".test", -1)
+		os.WriteFile(envPath, []byte(newEnvContent), 0644)
+	}
+
+	return targetPath, nil
+}

@@ -60,6 +60,7 @@ func (s *Server) Start() error {
 	http.HandleFunc("/api/db/import", s.handleDBImport)
 	http.HandleFunc("/api/db/query", s.handleDBQuery)
 	http.HandleFunc("/api/db/clone", s.handleDBClone)
+	http.HandleFunc("/api/db/rewind", s.handleDBRewind)
 	http.HandleFunc("/api/db/foreign-values", s.handleDBForeignValues)
 
 	// Service Status & Health
@@ -71,8 +72,13 @@ func (s *Server) Start() error {
 	http.HandleFunc("/api/logs/watch", s.handleLogWatch)
 	http.HandleFunc("/api/logs/unwatch", s.handleLogUnwatch)
 
+	// Supreme Healer
+	http.HandleFunc("/api/healer/issues", s.handleHealerIssues)
+	http.HandleFunc("/api/healer/resolve", s.handleHealerResolve)
+
 	// Projects & System
 	http.HandleFunc("/api/projects/create", s.handleProjectCreate)
+	http.HandleFunc("/api/projects/ghost", s.handleProjectGhost)
 	http.HandleFunc("/api/projects/templates", s.handleGetTemplates) // New route
 	http.HandleFunc("/api/system/editors", s.handleSystemEditors)
 	http.HandleFunc("/api/system/open-editor", s.handleSystemOpenEditor)
@@ -427,6 +433,51 @@ func (s *Server) handleProjectCreate(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	jsonResponse(w, SuccessResponse{Success: true, Message: "Project creation started in background"}, 202)
+}
+
+// handleProjectGhost creates a "Ghost" clone of a project for experimentation
+func (s *Server) handleProjectGhost(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		return
+	}
+
+	var req struct {
+		SourcePath string `json:"source_path"`
+		TargetName string `json:"target_name"`
+		CloneDB    bool   `json:"clone_db"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
+		return
+	}
+
+	if req.SourcePath == "" {
+		jsonResponse(w, ErrorResponse{Error: "source_path required"}, 400)
+		return
+	}
+
+	d, _ := daemon.GetClient()
+
+	// Run in background since it can take time
+	go func() {
+		targetPath, err := d.ProjectManager.CloneProject(req.SourcePath, req.TargetName, req.CloneDB, d.DatabaseService)
+		if err != nil {
+			fmt.Printf("[GHOST MODE] Error: %v\n", err)
+			return
+		}
+
+		// Link the new ghost project
+		ghostName := filepath.Base(targetPath)
+		if err := d.Link(ghostName, targetPath); err != nil {
+			fmt.Printf("[GHOST MODE] Failed to link %s: %v\n", ghostName, err)
+			return
+		}
+
+		d.Events.Publish(events.Event{Type: events.SitesUpdated})
+		fmt.Printf("[GHOST MODE] Successfully created ghost: %s\n", ghostName)
+	}()
+
+	jsonResponse(w, SuccessResponse{Success: true, Message: "Ghost clone started in background"}, 202)
 }
 
 func (s *Server) handleSystemEditors(w http.ResponseWriter, r *http.Request) {
@@ -972,6 +1023,39 @@ func (s *Server) handleDBClone(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResponse(w, SuccessResponse{Success: true, Message: fmt.Sprintf("Database '%s' cloned to '%s'", req.Source, req.Target)}, 200)
+}
+
+// handleDBRewind performs a Time-Travel restore with auto-backup
+func (s *Server) handleDBRewind(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		return
+	}
+
+	var req struct {
+		Filename string `json:"filename"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
+		return
+	}
+
+	if req.Filename == "" {
+		jsonResponse(w, ErrorResponse{Error: "filename required"}, 400)
+		return
+	}
+
+	d, _ := daemon.GetClient()
+	backup, err := d.DatabaseService.RewindDatabase(req.Filename)
+	if err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+
+	jsonResponse(w, map[string]interface{}{
+		"success": true,
+		"message": fmt.Sprintf("Rewound to %s. Safety backup: %s", req.Filename, backup.Filename),
+		"backup":  backup,
+	}, 200)
 }
 
 func (s *Server) handleDBDownload(w http.ResponseWriter, r *http.Request) {

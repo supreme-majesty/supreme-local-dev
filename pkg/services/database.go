@@ -777,6 +777,42 @@ func (d *DatabaseService) DeleteSnapshot(filename string) error {
 	return os.Remove(filepath)
 }
 
+// RewindDatabase is a "Time-Travel" restore that first creates a safety backup
+// before restoring the target snapshot. This allows users to "undo the undo".
+func (d *DatabaseService) RewindDatabase(snapshotFilename string) (*Snapshot, error) {
+	// 1. Parse the database name from the snapshot filename
+	name := strings.TrimSuffix(snapshotFilename, ".sql")
+
+	var dbName string
+	if strings.Contains(name, "__") {
+		// Table export: db__table_timestamp
+		parts := strings.Split(name, "__")
+		dbName = parts[0]
+	} else {
+		// Full DB export: db_timestamp
+		parts := strings.Split(name, "_")
+		if len(parts) < 3 {
+			return nil, fmt.Errorf("invalid snapshot filename format")
+		}
+		dbName = strings.Join(parts[:len(parts)-2], "_")
+	}
+
+	// 2. Create an auto-backup BEFORE restoring (for undo capability)
+	autoBackup, err := d.CreateSnapshot(dbName, "")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create safety backup before rewind: %w", err)
+	}
+	fmt.Printf("[TIME-TRAVEL] Created safety backup: %s\n", autoBackup.Filename)
+
+	// 3. Restore the target snapshot
+	if err := d.RestoreSnapshot(snapshotFilename); err != nil {
+		return nil, fmt.Errorf("rewind failed: %w", err)
+	}
+
+	fmt.Printf("[TIME-TRAVEL] Rewound %s to snapshot: %s\n", dbName, snapshotFilename)
+	return autoBackup, nil
+}
+
 // ImportSQL imports a SQL file into a specific database
 func (d *DatabaseService) ImportSQL(database, sqlFilePath string) error {
 	file, err := os.Open(sqlFilePath)

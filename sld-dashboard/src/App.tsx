@@ -14,10 +14,12 @@ import Logs from "@/pages/Logs";
 import { ErrorBoundary } from "@/components/common/ErrorBoundary";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient } from "@/lib/react-query";
+import { HealerNotification } from "@/components/dashboard/HealerNotification";
 
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
+      <HealerNotification />
       <ErrorBoundary>
         <BrowserRouter>
           <Routes>

@@ -220,6 +220,33 @@ export function CommandPalette() {
       },
       keywords: ["tunnel", "public"],
     },
+    {
+      id: `ghost-${site.name}`,
+      label: `Fork ${site.name}`,
+      description: "Create ghost clone for experimentation",
+      icon: FolderOpen,
+      category: "actions" as const,
+      action: async () => {
+        setLoading(true);
+        // We need the path, which we don't have in this context
+        // Fetch site details to get path
+        const res = await fetch("/api/sites");
+        const allSites = await res.json();
+        const siteData = allSites.find((s: any) => s.name === site.name);
+        if (siteData?.path) {
+          await fetch("/api/projects/ghost", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              source_path: siteData.path,
+              clone_db: true,
+            }),
+          });
+        }
+        setLoading(false);
+      },
+      keywords: ["clone", "ghost", "duplicate", "copy"],
+    },
   ]);
 
   const allCommands = [...staticCommands, ...siteCommands];

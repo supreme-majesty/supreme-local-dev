@@ -46,6 +46,18 @@ export interface HealthCheck {
   fixable?: boolean;
 }
 
+// Supreme Healer Types
+export interface HealerIssue {
+  id: string;
+  title: string;
+  description: string;
+  severity: "info" | "warning" | "critical";
+  source: string;
+  detected_at: string;
+  fix_action: string;
+  can_auto_fix: boolean;
+}
+
 export interface Plugin {
   id: string;
   name: string;
@@ -258,6 +270,16 @@ class DaemonApi {
     });
   }
 
+  // Time-Travel: Rewind database to a snapshot (creates auto-backup first)
+  async rewindDatabase(
+    filename: string
+  ): Promise<{ success: boolean; message: string; backup: Snapshot }> {
+    return this.request("/db/rewind", {
+      method: "POST",
+      body: JSON.stringify({ filename }),
+    });
+  }
+
   async executeQuery(database: string, query: string): Promise<QueryResult> {
     return this.request<QueryResult>("/db/query", {
       method: "POST",
@@ -385,6 +407,22 @@ class DaemonApi {
 
   async getTemplates(): Promise<ProjectTemplate[]> {
     return this.request<ProjectTemplate[]>("/projects/templates");
+  }
+
+  // Ghost Mode: Clone a project for experimentation
+  async ghostProject(
+    sourcePath: string,
+    targetName?: string,
+    cloneDB: boolean = true
+  ): Promise<ActionResponse> {
+    return this.request<ActionResponse>("/projects/ghost", {
+      method: "POST",
+      body: JSON.stringify({
+        source_path: sourcePath,
+        target_name: targetName,
+        clone_db: cloneDB,
+      }),
+    });
   }
 
   async getEditors(): Promise<Editor[]> {
@@ -528,6 +566,19 @@ class DaemonApi {
     return this.request<{ healthy: boolean; message: string }>(
       `/plugins/health?id=${id}`
     );
+  }
+
+  // ============ Supreme Healer ============
+  async getHealerIssues(): Promise<HealerIssue[]> {
+    const res = await this.request<HealerIssue[]>("/healer/issues");
+    return res || [];
+  }
+
+  async resolveHealerIssue(id: string): Promise<ActionResponse> {
+    return this.request<ActionResponse>("/healer/resolve", {
+      method: "POST",
+      body: JSON.stringify({ id }),
+    });
   }
 }
 

@@ -34,6 +34,7 @@ type Daemon struct {
 	LogWatcher      *services.LogWatcher
 	EnvManager      *services.EnvManager
 	ArtisanService  *services.ArtisanService
+	HealerService   *services.HealerService
 }
 
 var instance *Daemon
@@ -101,7 +102,11 @@ func Initialize() (*Daemon, error) {
 		LogWatcher:      logWatcher,
 		EnvManager:      services.NewEnvManager(),
 		ArtisanService:  services.NewArtisanService(eventBus),
+		HealerService:   services.NewHealerService(eventBus),
 	}
+
+	// Start Healer
+	instance.HealerService.Start()
 
 	return instance, nil
 }

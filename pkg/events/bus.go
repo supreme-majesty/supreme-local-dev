@@ -7,16 +7,18 @@ import (
 type EventType string
 
 const (
-	ProjectParked    EventType = "ProjectParked"
-	Projectforgotten EventType = "ProjectForgotten"
-	ServiceStarted   EventType = "ServiceStarted"
-	ServiceStopped   EventType = "ServiceStopped"
-	ConfigChanged    EventType = "ConfigChanged"
-	SitesUpdated     EventType = "sites:updated"
-	XRayLog          EventType = "xray:log"
-	LogEntry         EventType = "log:entry"
-	ArtisanOutput    EventType = "artisan:output"
-	ArtisanDone      EventType = "artisan:done"
+	ProjectParked       EventType = "ProjectParked"
+	Projectforgotten    EventType = "ProjectForgotten"
+	ServiceStarted      EventType = "ServiceStarted"
+	ServiceStopped      EventType = "ServiceStopped"
+	ConfigChanged       EventType = "ConfigChanged"
+	SitesUpdated        EventType = "sites:updated"
+	XRayLog             EventType = "xray:log"
+	LogEntry            EventType = "log:entry"
+	ArtisanOutput       EventType = "artisan:output"
+	ArtisanDone         EventType = "artisan:done"
+	HealerIssueDetected EventType = "healer:issue_detected"
+	HealerIssueResolved EventType = "healer:issue_resolved"
 )
 
 type Event struct {
