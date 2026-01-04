@@ -1,10 +1,11 @@
+import { useState } from "react";
 import { Switch } from "@/components/ui/Switch";
 import {
   Puzzle,
-  Settings,
   Download,
   ExternalLink,
   RefreshCw,
+  ActivitySquare,
 } from "lucide-react";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -13,8 +14,10 @@ import {
   usePlugins,
   useTogglePluginMutation,
   useInstallPluginMutation,
+  usePluginHealth,
 } from "@/hooks/use-daemon";
 import { type Plugin } from "@/api/daemon";
+import { PluginLogsModal } from "@/components/dashboard/PluginLogsModal";
 
 function PluginCard({ plugin }: { plugin: Plugin }) {
   const toggleMutation = useTogglePluginMutation();
@@ -39,86 +42,113 @@ function PluginCard({ plugin }: { plugin: Plugin }) {
     meilisearch: "🔍",
   };
 
+  const { data: health } = usePluginHealth(plugin.id);
+  const [showLogs, setShowLogs] = useState(false);
+
   return (
-    <div
-      className={cn(
-        "p-5 rounded-xl border transition-all duration-200",
-        isRunning
-          ? "bg-gradient-to-br from-blue-500/5 to-indigo-500/5 border-blue-500/20"
-          : "bg-[var(--card)] border-[var(--border)] hover:border-[var(--muted-foreground)]/30"
-      )}
-    >
-      <div className="flex items-start justify-between mb-4">
-        <div className="flex items-center gap-3">
-          <span className="text-2xl">{icons[plugin.id] || "🧩"}</span>
-          <div>
-            <div className="flex items-center gap-2">
-              <h3 className="font-semibold text-[var(--foreground)]">
-                {plugin.name}
-              </h3>
-              {plugin.status === "installing" && (
-                <span className="text-xs text-blue-400 animate-pulse">
-                  Installing...
-                </span>
-              )}
+    <>
+      <div
+        className={cn(
+          "p-5 rounded-xl border transition-all duration-200",
+          isRunning
+            ? "bg-gradient-to-br from-blue-500/5 to-indigo-500/5 border-blue-500/20"
+            : "bg-[var(--card)] border-[var(--border)] hover:border-[var(--muted-foreground)]/30"
+        )}
+      >
+        <div className="flex items-start justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">{icons[plugin.id] || "🧩"}</span>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="font-semibold text-[var(--foreground)]">
+                  {plugin.name}
+                </h3>
+                {plugin.status === "installing" && (
+                  <span className="text-xs text-blue-400 animate-pulse">
+                    Installing...
+                  </span>
+                )}
+                {isRunning && health && (
+                  <div
+                    className={cn(
+                      "w-2 h-2 rounded-full",
+                      health.healthy ? "bg-green-500" : "bg-red-500"
+                    )}
+                    title={
+                      health.message ||
+                      (health.healthy ? "Healthy" : "Unhealthy")
+                    }
+                  />
+                )}
+              </div>
+
+              <p className="text-xs text-[var(--muted-foreground)] font-mono">
+                v{plugin.version}
+              </p>
             </div>
-
-            <p className="text-xs text-[var(--muted-foreground)] font-mono">
-              v{plugin.version}
-            </p>
           </div>
-        </div>
 
-        {plugin.installed ? (
-          <Switch
-            checked={isRunning}
-            onCheckedChange={handleToggle}
-            loading={loading}
-          />
-        ) : (
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={handleInstall}
-            loading={loading}
-          >
-            <Download size={14} />
-            Install
-          </Button>
-        )}
-      </div>
-      <p className="text-sm text-[var(--muted-foreground)] mb-4 h-10 overflow-hidden">
-        {plugin.description}
-      </p>
-      <div className="flex items-center gap-2">
-        <button
-          disabled={!plugin.installed}
-          className={cn(
-            "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm",
-            "bg-[var(--muted)]/50 text-[var(--muted-foreground)]",
-            "hover:bg-[var(--muted)] hover:text-[var(--foreground)]",
-            "transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+          {plugin.installed ? (
+            <Switch
+              checked={isRunning}
+              onCheckedChange={handleToggle}
+              loading={loading}
+            />
+          ) : (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={handleInstall}
+              loading={loading}
+            >
+              <Download size={14} />
+              Install
+            </Button>
           )}
-        >
-          <Settings size={14} />
-          Settings
-        </button>
-        {plugin.id === "mailhog" && isRunning && (
-          <button
-            className={cn(
-              "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm",
-              "bg-[var(--primary)]/10 text-[var(--primary)]",
-              "hover:bg-[var(--primary)]/20",
-              "transition-colors duration-200"
-            )}
-            onClick={() => window.open("http://localhost:8025", "_blank")}
-          >
-            <ExternalLink size={14} />
-            Open UI
-          </button>
-        )}
+        </div>
+        <p className="text-sm text-[var(--muted-foreground)] mb-4 h-10 overflow-hidden">
+          {plugin.description}
+        </p>
+        <div className="flex items-center gap-2">
+          {plugin.installed && (
+            <button
+              onClick={() => setShowLogs(true)}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm",
+                "bg-[var(--muted)]/50 text-[var(--muted-foreground)]",
+                "hover:bg-[var(--muted)] hover:text-[var(--foreground)]",
+                "transition-colors duration-200"
+              )}
+            >
+              <ActivitySquare size={14} />
+              Logs
+            </button>
+          )}
+
+          {plugin.id === "mailhog" && isRunning && (
+            <button
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm",
+                "bg-[var(--primary)]/10 text-[var(--primary)]",
+                "hover:bg-[var(--primary)]/20",
+                "transition-colors duration-200"
+              )}
+              onClick={() => window.open("http://localhost:8025", "_blank")}
+            >
+              <ExternalLink size={14} />
+              Open UI
+            </button>
+          )}
+        </div>
       </div>
-    </div>
+
+      <PluginLogsModal
+        isOpen={showLogs}
+        onClose={() => setShowLogs(false)}
+        pluginId={plugin.id}
+        pluginName={plugin.name}
+      />
+    </>
   );
 }
 

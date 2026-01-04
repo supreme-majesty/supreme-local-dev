@@ -10,6 +10,7 @@ import {
   Plus,
   Search,
   Folder,
+  Copy,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDatabases, useTables } from "@/hooks/use-database";
@@ -23,6 +24,7 @@ interface DatabaseTreeProps {
   onSelectDb: (db: string) => void;
   onSelectTable: (db: string, table: string) => void;
   onCreateTable: (db: string) => void;
+  onCloneDatabase: (db: string) => void;
 }
 
 function TableNode({
@@ -275,6 +277,7 @@ function RecursiveTreeNode({
   onSelectDb,
   onSelectTable,
   onCreateTable,
+  onCloneDatabase,
   filter,
 }: {
   node: TreeNode;
@@ -284,6 +287,7 @@ function RecursiveTreeNode({
   onSelectDb: (db: string) => void;
   onSelectTable: (db: string, table: string) => void;
   onCreateTable: (db: string) => void;
+  onCloneDatabase: (db: string) => void;
   filter: string;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -378,7 +382,19 @@ function RecursiveTreeNode({
 
         <span className="flex-1 truncate">{node.name}</span>
 
-        {/* Count badge for groups? Maybe later */}
+        {/* Clone Action */}
+        {node.isDatabase && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onCloneDatabase(node.fullName);
+            }}
+            className="p-1 text-[var(--muted-foreground)] hover:text-[var(--primary)] opacity-0 group-hover:opacity-100 transition-opacity"
+            title="Clone Database"
+          >
+            <Copy size={12} />
+          </button>
+        )}
       </div>
 
       {isExpanded && (
@@ -410,6 +426,7 @@ function RecursiveTreeNode({
                     onSelectDb={onSelectDb}
                     onSelectTable={onSelectTable}
                     onCreateTable={onCreateTable}
+                    onCloneDatabase={onCloneDatabase}
                     filter={filter}
                   />
                 ))}
@@ -427,6 +444,7 @@ export function DatabaseTree({
   onSelectDb,
   onSelectTable,
   onCreateTable,
+  onCloneDatabase,
 }: DatabaseTreeProps) {
   const { data: databases = [], isLoading, refetch } = useDatabases();
   const [searchTerm, setSearchTerm] = useState("");
@@ -500,6 +518,7 @@ export function DatabaseTree({
             onSelectDb={onSelectDb}
             onSelectTable={onSelectTable}
             onCreateTable={onCreateTable}
+            onCloneDatabase={onCloneDatabase}
             filter={searchTerm}
           />
         ))}

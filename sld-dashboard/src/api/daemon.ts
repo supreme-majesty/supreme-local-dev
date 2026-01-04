@@ -136,6 +136,21 @@ export interface Tunnel {
   started_at: string;
 }
 
+// Env Manager types
+export interface EnvFile {
+  path: string;
+  name: string;
+  variables: Record<string, string>;
+  mod_time: string;
+}
+
+export interface EnvBackup {
+  filename: string;
+  path: string;
+  created_at: string;
+  size: number;
+}
+
 // API Client
 class DaemonApi {
   private async request<T>(
@@ -466,6 +481,89 @@ class DaemonApi {
 
   async getShareStatus(): Promise<Tunnel[]> {
     return this.request<Tunnel[]>("/share/status");
+  }
+
+  // ============ Phase 2 Features ============
+
+  // Env Manager
+  async getEnvFiles(projectPath: string): Promise<EnvFile[]> {
+    return this.request<EnvFile[]>(
+      `/env/files?project=${encodeURIComponent(projectPath)}`
+    );
+  }
+
+  async readEnvFile(path: string): Promise<EnvFile> {
+    return this.request<EnvFile>(`/env/read?path=${encodeURIComponent(path)}`);
+  }
+
+  async writeEnvFile(
+    path: string,
+    variables: Record<string, string>
+  ): Promise<ApiResponse> {
+    return this.request<ApiResponse>("/env/write", {
+      method: "PUT",
+      body: JSON.stringify({ path, variables }),
+    });
+  }
+
+  async getEnvBackups(path: string): Promise<EnvBackup[]> {
+    return this.request<EnvBackup[]>(
+      `/env/backups?path=${encodeURIComponent(path)}`
+    );
+  }
+
+  async restoreEnvBackup(
+    backupPath: string,
+    targetPath: string
+  ): Promise<ApiResponse> {
+    return this.request<ApiResponse>("/env/restore", {
+      method: "POST",
+      body: JSON.stringify({
+        backup_path: backupPath,
+        target_path: targetPath,
+      }),
+    });
+  }
+
+  // Artisan Runner
+  async runArtisanCommand(
+    projectPath: string,
+    command: string
+  ): Promise<ApiResponse> {
+    return this.request<ApiResponse>("/artisan/run", {
+      method: "POST",
+      body: JSON.stringify({ project_path: projectPath, command }),
+    });
+  }
+
+  async getArtisanCommands(): Promise<string[]> {
+    return this.request<string[]>("/artisan/commands");
+  }
+
+  // Database Clone
+  async cloneDatabase(source: string, target: string): Promise<ApiResponse> {
+    return this.request<ApiResponse>("/db/clone", {
+      method: "POST",
+      body: JSON.stringify({ source, target }),
+    });
+  }
+
+  // Plugin Health & Logs
+  async getPluginLogs(
+    id: string,
+    lines: number = 100
+  ): Promise<{ logs: string[] }> {
+    return this.request<{ logs: string[] }>(
+      `/plugins/logs?id=${id}&lines=${lines}`
+    );
+  }
+
+  async getPluginHealth(
+    id: string
+  ): Promise<{ healthy: boolean; message: string }> {
+    return this.request<{ healthy: boolean; message: string }>(
+      `/plugins/health?id=${id}`
+    );
   }
 }
 

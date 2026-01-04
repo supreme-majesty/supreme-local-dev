@@ -24,7 +24,9 @@ import {
 } from "@/hooks/use-daemon";
 import { Modal } from "@/components/ui/Modal";
 import { CreateProjectModal } from "@/components/CreateProjectModal";
-import { Code } from "lucide-react";
+import { EnvEditor } from "@/components/dashboard/EnvEditor";
+import { ConsoleDrawer } from "@/components/dashboard/ConsoleDrawer";
+import { Code, Settings2, Terminal } from "lucide-react";
 
 export default function Projects() {
   const { data: projects = [], isLoading } = useSites();
@@ -41,9 +43,12 @@ export default function Projects() {
   const [projectToRemove, setProjectToRemove] = useState<Project | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isEditorModalOpen, setIsEditorModalOpen] = useState(false);
+  const [isEnvEditorOpen, setIsEnvEditorOpen] = useState(false);
+  const [isConsoleOpen, setIsConsoleOpen] = useState(false);
   const [selectedProjectPath, setSelectedProjectPath] = useState<string | null>(
     null
   );
+  const [selectedProjectName, setSelectedProjectName] = useState<string>("");
 
   // Determine default editor (e.g. VS Code if available)
   const defaultEditor =
@@ -225,19 +230,45 @@ export default function Projects() {
                   <ExternalLink size={14} className="opacity-50" />
                 </a>
 
-                {/* Editor Button */}
-                {editors.length > 0 && (
+                {/* Editor & Env Buttons */}
+                <div className="flex gap-2">
+                  {editors.length > 0 && (
+                    <button
+                      onClick={() => {
+                        setSelectedProjectPath(project.path);
+                        setIsEditorModalOpen(true);
+                      }}
+                      className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-[var(--card)] border border-[var(--border)] hover:bg-[var(--muted)] hover:border-[var(--primary)]/30 text-[var(--foreground)] rounded-lg font-medium transition-all"
+                    >
+                      <Code size={16} />
+                      Editor
+                    </button>
+                  )}
+
                   <button
                     onClick={() => {
                       setSelectedProjectPath(project.path);
-                      setIsEditorModalOpen(true);
+                      setSelectedProjectName(project.name);
+                      setIsEnvEditorOpen(true);
                     }}
-                    className="flex items-center justify-center gap-2 w-full py-2.5 bg-[var(--card)] border border-[var(--border)] hover:bg-[var(--muted)] hover:border-[var(--primary)]/30 text-[var(--foreground)] rounded-lg font-medium transition-all"
+                    className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-[var(--card)] border border-[var(--border)] hover:bg-[var(--muted)] hover:border-[var(--primary)]/30 text-[var(--foreground)] rounded-lg font-medium transition-all"
                   >
-                    <Code size={16} />
-                    Open in Editor
+                    <Settings2 size={16} />
+                    Env
                   </button>
-                )}
+
+                  <button
+                    onClick={() => {
+                      setSelectedProjectPath(project.path);
+                      setSelectedProjectName(project.name);
+                      setIsConsoleOpen(true);
+                    }}
+                    className="flex-none flex items-center justify-center w-12 py-2.5 bg-[var(--card)] border border-[var(--border)] hover:bg-[var(--muted)] hover:border-[var(--primary)]/30 text-[var(--foreground)] rounded-lg font-medium transition-all"
+                    title="Artisan Console"
+                  >
+                    <Terminal size={16} />
+                  </button>
+                </div>
 
                 {/* Share Button / Status */}
                 {(() => {
@@ -418,6 +449,26 @@ export default function Projects() {
           // useSites hooks automatically invalidates, so list should refresh
         }}
       />
+
+      {/* Env Editor Modal */}
+      {selectedProjectPath && (
+        <EnvEditor
+          isOpen={isEnvEditorOpen}
+          onClose={() => setIsEnvEditorOpen(false)}
+          projectPath={selectedProjectPath}
+          projectName={selectedProjectName}
+        />
+      )}
+
+      {/* Console Drawer */}
+      {selectedProjectPath && (
+        <ConsoleDrawer
+          isOpen={isConsoleOpen}
+          onClose={() => setIsConsoleOpen(false)}
+          projectPath={selectedProjectPath}
+          projectName={selectedProjectName}
+        />
+      )}
     </div>
   );
 }

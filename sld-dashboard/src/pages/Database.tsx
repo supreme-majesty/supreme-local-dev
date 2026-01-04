@@ -47,6 +47,7 @@ import { DatabaseTree } from "@/components/database/DatabaseTree";
 import { DataForm } from "@/components/database/DataForm";
 import { DatabaseStructure } from "@/components/database/DatabaseStructure";
 import { TableCreator } from "@/components/database/TableCreator";
+import { CloneDatabaseModal } from "@/components/database/CloneDatabaseModal";
 import { Modal } from "@/components/ui/Modal";
 import {
   useTableData,
@@ -93,6 +94,10 @@ export default function Database() {
   const [showExplainModal, setShowExplainModal] = useState(false);
   const [showPhpModal, setShowPhpModal] = useState(false);
   const [explainData, setExplainData] = useState<any>(null);
+
+  // Clone Modal
+  const [isCloneModalOpen, setIsCloneModalOpen] = useState(false);
+  const [dbToClone, setDbToClone] = useState<string | null>(null);
 
   // Result modal state
   const [resultModal, setResultModal] = useState<{
@@ -639,6 +644,11 @@ export default function Database() {
     );
   };
 
+  const handleCloneDatabase = (db: string) => {
+    setDbToClone(db);
+    setIsCloneModalOpen(true);
+  };
+
   // Load triggers for the current database/table
   const loadTriggers = async () => {
     if (!selectedDB) return;
@@ -913,10 +923,10 @@ $mysqli->close();
           onSelectDb={handleSelectDb}
           onSelectTable={handleSelectTable}
           onCreateTable={(db) => {
-            setSelectedDB(db);
-            setSelectedTable(null);
-            setActiveTab("create-table");
+            handleSelectDb(db);
+            setActiveTab("create_table");
           }}
+          onCloneDatabase={handleCloneDatabase}
         />
       </div>
 
@@ -2964,6 +2974,14 @@ $mysqli->close();
           </pre>
         </div>
       </Modal>
+      {/* Clone Database Modal */}
+      {dbToClone && (
+        <CloneDatabaseModal
+          isOpen={isCloneModalOpen}
+          onClose={() => setIsCloneModalOpen(false)}
+          sourceDatabase={dbToClone}
+        />
+      )}
     </div>
   );
 }

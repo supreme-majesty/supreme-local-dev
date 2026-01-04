@@ -450,8 +450,209 @@ export function useRealtimeUpdates() {
     connect();
 
     return () => {
-      isMounted = false;
       ws.current?.close();
     };
   }, [queryClient]);
+}
+
+export function useArtisanSocket(
+  onOutput: (line: string, isError: boolean) => void,
+  onDone: (success: boolean) => void,
+  projectPath: string | null
+) {
+  const ws = useRef<WebSocket | null>(null);
+
+  useEffect(() => {
+    if (!projectPath) return;
+
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const host = window.location.host;
+    const url = `${protocol}//${host}/api/ws`;
+    const connect = () => {
+      ws.current = new WebSocket(url);
+
+      ws.current.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+
+          // Filter by project path if needed, but for now we assume single active console
+          if (msg.project_path && msg.project_path !== projectPath) return;
+
+          if (msg.type === "artisan:output") {
+            onOutput(msg.line, msg.is_error);
+          } else if (msg.type === "artisan:done") {
+            onDone(msg.success);
+          }
+        } catch (e) {
+          // ignore
+        }
+      };
+
+      ws.current.onerror = () => {
+        // quiet fail
+      };
+    };
+
+    connect();
+
+    return () => {
+      ws.current?.close();
+    };
+  }, [projectPath, onOutput, onDone]);
+}
+// ============ Phase 2 Hooks ============
+
+// Env Manager
+export function useEnvFiles(projectPath?: string) {
+  return useQuery({
+    queryKey: ["env-files", projectPath],
+    queryFn: () =>
+      projectPath ? api.getEnvFiles(projectPath) : Promise.resolve([]),
+    enabled: !!projectPath,
+  });
+}
+
+export function useEnvFile(path?: string) {
+  return useQuery({
+    queryKey: ["env-file", path],
+    queryFn: () => (path ? api.readEnvFile(path) : Promise.reject("No path")),
+    enabled: !!path,
+  });
+}
+
+export function useSaveEnvMutation() {
+  const queryClient = useQueryClient();
+  const addToast = useAppStore((s) => s.addToast);
+
+  return useMutation({
+    mutationFn: (args: { path: string; variables: Record<string, string> }) =>
+      api.writeEnvFile(args.path, args.variables),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["env-file", variables.path] });
+      queryClient.invalidateQueries({
+        queryKey: ["env-backups", variables.path],
+      });
+      addToast({
+        type: "success",
+        title: "Env file saved",
+        description: "Backup created automatically",
+      });
+    },
+    onError: (err: Error) => {
+      addToast({
+        type: "error",
+        title: "Failed to save env file",
+        description: err.message,
+      });
+    },
+  });
+}
+
+export function useEnvBackups(path?: string) {
+  return useQuery({
+    queryKey: ["env-backups", path],
+    queryFn: () => (path ? api.getEnvBackups(path) : Promise.resolve([])),
+    enabled: !!path,
+  });
+}
+
+export function useRestoreEnvBackupMutation() {
+  const queryClient = useQueryClient();
+  const addToast = useAppStore((s) => s.addToast);
+
+  return useMutation({
+    mutationFn: (args: { backupPath: string; targetPath: string }) =>
+      api.restoreEnvBackup(args.backupPath, args.targetPath),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({
+        queryKey: ["env-file", variables.targetPath],
+      });
+      addToast({ type: "success", title: "Backup restored" });
+    },
+    onError: (err: Error) => {
+      addToast({
+        type: "error",
+        title: "Failed to restore backup",
+        description: err.message,
+      });
+    },
+  });
+}
+
+// Artisan Runner
+export function useArtisanRunMutation() {
+  const addToast = useAppStore((s) => s.addToast);
+
+  return useMutation({
+    mutationFn: (args: { projectPath: string; command: string }) =>
+      api.runArtisanCommand(args.projectPath, args.command),
+    onSuccess: () => {
+      // No toast needed, outcome is streamed
+    },
+    onError: (err: Error) => {
+      addToast({
+        type: "error",
+        title: "Failed to start command",
+        description: err.message,
+      });
+    },
+  });
+}
+
+export function useArtisanCommands() {
+  return useQuery({
+    queryKey: ["artisan-commands"],
+    queryFn: () => api.getArtisanCommands(),
+    staleTime: Infinity,
+  });
+}
+
+// Database Clone
+export function useCloneDatabaseMutation() {
+  const queryClient = useQueryClient();
+  const addToast = useAppStore((s) => s.addToast);
+
+  return useMutation({
+    mutationFn: (args: { source: string; target: string }) =>
+      api.cloneDatabase(args.source, args.target),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["databases"] });
+      addToast({
+        type: "success",
+        title: "Database cloned",
+        description: `Cloned ${variables.source} to ${variables.target}`,
+      });
+    },
+    onError: (err: Error) => {
+      addToast({
+        type: "error",
+        title: "Clone failed",
+        description: err.message,
+      });
+    },
+  });
+}
+
+// Plugin Logs & Health
+export function usePluginLogs(
+  id: string,
+  lines: number = 100,
+  enabled: boolean = false
+) {
+  return useQuery({
+    queryKey: ["plugin-logs", id, lines],
+    queryFn: () => api.getPluginLogs(id, lines),
+    enabled: enabled && !!id,
+    refetchInterval: enabled ? 3000 : false,
+    select: (data) => data.logs || [],
+  });
+}
+
+export function usePluginHealth(id: string) {
+  return useQuery({
+    queryKey: ["plugin-health", id],
+    queryFn: () => api.getPluginHealth(id),
+    refetchInterval: 10000,
+    enabled: !!id,
+  });
 }

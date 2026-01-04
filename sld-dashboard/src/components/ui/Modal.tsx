@@ -9,6 +9,7 @@ interface ModalProps {
   title: string;
   children: React.ReactNode;
   footer?: React.ReactNode;
+  className?: string;
 }
 
 export function Modal({
@@ -17,6 +18,7 @@ export function Modal({
   title,
   children,
   footer,
+  className,
 }: ModalProps) {
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
@@ -48,7 +50,8 @@ export function Modal({
       <div
         className={cn(
           "relative bg-[var(--card)] border border-[var(--border)] rounded-xl w-full max-w-md shadow-2xl",
-          "transform transition-all duration-200 animate-in fade-in zoom-in-95"
+          "transform transition-all duration-200 animate-in fade-in zoom-in-95",
+          className
         )}
       >
         {/* Header */}
