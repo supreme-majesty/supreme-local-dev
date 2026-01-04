@@ -68,9 +68,11 @@ type Snapshot struct {
 
 // QueryResult represents a SQL query result
 type QueryResult struct {
-	Columns  []string                 `json:"columns"`
-	Rows     []map[string]interface{} `json:"rows"`
-	RowCount int                      `json:"row_count"`
+	Columns         []string                 `json:"columns"`
+	Rows            []map[string]interface{} `json:"rows"`
+	RowCount        int                      `json:"row_count"`
+	AffectedRows    int64                    `json:"affected_rows,omitempty"`
+	ExecutionTimeMs int64                    `json:"execution_time_ms"`
 }
 
 // NewDatabaseService creates a new database service
@@ -560,7 +562,6 @@ func (d *DatabaseService) GetTableDataEx(database, table string, page, perPage i
 }
 
 // ExecuteQuery executes a SQL query (read or write)
-// ExecuteQuery executes a SQL query (read or write)
 func (d *DatabaseService) ExecuteQuery(database, query string) (*QueryResult, error) {
 	if err := d.ensureConnected(); err != nil {
 		return nil, err
@@ -570,20 +571,26 @@ func (d *DatabaseService) ExecuteQuery(database, query string) (*QueryResult, er
 		return nil, err
 	}
 
+	// Start timing
+	startTime := time.Now()
+
 	// Determine usage
 	trimmed := strings.TrimSpace(strings.ToUpper(query))
 	isSelect := strings.HasPrefix(trimmed, "SELECT") || strings.HasPrefix(trimmed, "SHOW") || strings.HasPrefix(trimmed, "DESCRIBE") || strings.HasPrefix(trimmed, "EXPLAIN")
 
 	if !isSelect {
 		res, err := d.db.Exec(query)
+		elapsedMs := time.Since(startTime).Milliseconds()
 		if err != nil {
 			return nil, err
 		}
 		affected, _ := res.RowsAffected()
 		return &QueryResult{
-			RowCount: int(affected),
-			Rows:     []map[string]interface{}{},
-			Columns:  []string{},
+			RowCount:        int(affected),
+			Rows:            []map[string]interface{}{},
+			Columns:         []string{},
+			AffectedRows:    affected,
+			ExecutionTimeMs: elapsedMs,
 		}, nil
 	}
 
@@ -623,10 +630,12 @@ func (d *DatabaseService) ExecuteQuery(database, query string) (*QueryResult, er
 		data = append(data, row)
 	}
 
+	elapsedMs := time.Since(startTime).Milliseconds()
 	return &QueryResult{
-		Columns:  colNames,
-		Rows:     data,
-		RowCount: len(data),
+		Columns:         colNames,
+		Rows:            data,
+		RowCount:        len(data),
+		ExecutionTimeMs: elapsedMs,
 	}, nil
 }
 
