@@ -22,12 +22,12 @@ type TunnelManager struct {
 }
 
 type Tunnel struct {
-	SiteName  string `json:"site_name"`
-	PublicURL string `json:"public_url"`
-	Process   *os.Process
-	Cmd       *exec.Cmd
-	StartedAt time.Time `json:"started_at"`
-	Cancel    context.CancelFunc
+	SiteName  string             `json:"site_name"`
+	PublicURL string             `json:"public_url"`
+	Process   *os.Process        `json:"-"`
+	Cmd       *exec.Cmd          `json:"-"`
+	StartedAt time.Time          `json:"started_at"`
+	Cancel    context.CancelFunc `json:"-"`
 }
 
 func NewTunnelManager(baseDir string) *TunnelManager {

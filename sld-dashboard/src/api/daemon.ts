@@ -130,6 +130,12 @@ export interface ProjectOptions {
   repository?: string;
 }
 
+export interface Tunnel {
+  site_name: string;
+  public_url: string;
+  started_at: string;
+}
+
 // API Client
 class DaemonApi {
   private async request<T>(
@@ -440,6 +446,26 @@ class DaemonApi {
   async getProjects(): Promise<Project[]> {
     const projects = await this.request<Project[]>("/sites");
     return projects || [];
+  }
+
+  // Sharing / Tunnels
+  async shareStart(site: string): Promise<string> {
+    const res = await this.request<ApiResponse>("/share/start", {
+      method: "POST",
+      body: JSON.stringify({ site }),
+    });
+    return res.message || "";
+  }
+
+  async shareStop(site: string): Promise<void> {
+    return this.request("/share/stop", {
+      method: "POST",
+      body: JSON.stringify({ site }),
+    });
+  }
+
+  async getShareStatus(): Promise<Tunnel[]> {
+    return this.request<Tunnel[]>("/share/status");
   }
 }
 

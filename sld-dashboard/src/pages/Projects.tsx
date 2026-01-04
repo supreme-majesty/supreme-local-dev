@@ -8,6 +8,8 @@ import {
   ShieldCheck,
   ShieldAlert,
   FolderOpen,
+  Copy,
+  Loader2,
 } from "lucide-react";
 import { type Project } from "@/api/daemon";
 import {
@@ -16,6 +18,9 @@ import {
   useUnlinkMutation,
   useEditors,
   useOpenInEditorMutation,
+  useShareStatus,
+  useShareStartMutation,
+  useShareStopMutation,
 } from "@/hooks/use-daemon";
 import { Modal } from "@/components/ui/Modal";
 import { CreateProjectModal } from "@/components/CreateProjectModal";
@@ -27,6 +32,9 @@ export default function Projects() {
   const ignoreMutation = useIgnoreMutation();
   const unlinkMutation = useUnlinkMutation();
   const openEditorMutation = useOpenInEditorMutation();
+  const { data: tunnels = [] } = useShareStatus();
+  const shareStartMutation = useShareStartMutation();
+  const shareStopMutation = useShareStopMutation();
 
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "parked" | "linked">("all");
@@ -230,6 +238,81 @@ export default function Projects() {
                     Open in Editor
                   </button>
                 )}
+
+                {/* Share Button / Status */}
+                {(() => {
+                  const tunnel = tunnels.find(
+                    (t) => t.site_name === project.name
+                  );
+                  const isSharing = !!tunnel;
+                  const isSharingLoading =
+                    shareStartMutation.isPending &&
+                    shareStartMutation.variables === project.name;
+                  const isStopping =
+                    shareStopMutation.isPending &&
+                    shareStopMutation.variables === project.name;
+
+                  if (isSharing) {
+                    return (
+                      <div className="flex flex-col gap-2 p-3 bg-purple-500/5 rounded-lg border border-purple-500/20">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-purple-500 uppercase tracking-wide flex items-center gap-1">
+                            <span className="relative flex h-2 w-2">
+                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-purple-400 opacity-75"></span>
+                              <span className="relative inline-flex rounded-full h-2 w-2 bg-purple-500"></span>
+                            </span>
+                            Live
+                          </span>
+                          <button
+                            onClick={() =>
+                              shareStopMutation.mutate(project.name)
+                            }
+                            disabled={isStopping}
+                            className="text-xs text-[var(--muted-foreground)] hover:text-red-500 transition-colors"
+                          >
+                            {isStopping ? "Stopping..." : "Stop Sharing"}
+                          </button>
+                        </div>
+                        <div className="flex items-center gap-2 bg-[var(--background)] p-1.5 rounded-md border border-[var(--border)] overflow-hidden">
+                          <Globe
+                            size={14}
+                            className="text-purple-500 shrink-0"
+                          />
+                          <div className="text-xs truncate flex-1 text-[var(--foreground)] select-all font-mono">
+                            {tunnel.public_url}
+                          </div>
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(tunnel.public_url);
+                              // Optional: toast copied?
+                            }}
+                            className="p-1 hover:bg-[var(--muted)] rounded-md text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
+                            title="Copy URL"
+                          >
+                            <Copy size={12} />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <button
+                      onClick={() => shareStartMutation.mutate(project.name)}
+                      disabled={isSharingLoading}
+                      className="flex items-center justify-center gap-2 w-full py-2.5 bg-[var(--card)] border border-[var(--border)] hover:bg-[var(--muted)] hover:border-purple-500/30 text-[var(--foreground)] rounded-lg font-medium transition-all"
+                    >
+                      {isSharingLoading ? (
+                        <Loader2 size={16} className="animate-spin" />
+                      ) : (
+                        <Globe size={16} />
+                      )}
+                      {isSharingLoading
+                        ? "Starting Tunnel..."
+                        : "Share via URL"}
+                    </button>
+                  );
+                })()}
               </div>
             </div>
           ))}

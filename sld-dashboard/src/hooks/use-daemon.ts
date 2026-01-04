@@ -9,6 +9,7 @@ import {
   type Editor,
   type ProjectOptions,
   type ProjectTemplate,
+  type Tunnel,
 } from "@/api/daemon";
 import { useAppStore } from "@/stores/useAppStore";
 
@@ -346,6 +347,59 @@ export function useDirectories(path?: string) {
     queryKey: ["directories", path],
     queryFn: () => api.getDirectories(path),
     staleTime: 1000 * 60,
+  });
+}
+
+// Sharing Hooks
+export function useShareStatus() {
+  return useQuery<Tunnel[]>({
+    queryKey: ["tunnels"],
+    queryFn: () => api.getShareStatus(),
+    refetchInterval: 5000,
+  });
+}
+
+export function useShareStartMutation() {
+  const queryClient = useQueryClient();
+  const addToast = useAppStore((s) => s.addToast);
+
+  return useMutation({
+    mutationFn: (site: string) => api.shareStart(site),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["tunnels"] });
+      addToast({
+        type: "success",
+        title: "Site Shared",
+        description: "Tunnel started successfully",
+      });
+    },
+    onError: (err: Error) => {
+      addToast({
+        type: "error",
+        title: "Failed to share site",
+        description: err.message,
+      });
+    },
+  });
+}
+
+export function useShareStopMutation() {
+  const queryClient = useQueryClient();
+  const addToast = useAppStore((s) => s.addToast);
+
+  return useMutation({
+    mutationFn: (site: string) => api.shareStop(site),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["tunnels"] });
+      addToast({ type: "success", title: "Sharing Stopped" });
+    },
+    onError: (err: Error) => {
+      addToast({
+        type: "error",
+        title: "Failed to stop sharing",
+        description: err.message,
+      });
+    },
   });
 }
 
