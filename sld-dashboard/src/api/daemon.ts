@@ -360,6 +360,10 @@ class DaemonApi {
     });
   }
 
+  async getPHPVersions(): Promise<string[]> {
+    return this.request<string[]>("/php/versions");
+  }
+
   // SSL/HTTPS
   async secure(): Promise<ApiResponse> {
     return this.request<ApiResponse>("/secure", {

@@ -12,6 +12,7 @@ import {
   type Tunnel,
 } from "@/api/daemon";
 import { useAppStore } from "@/stores/useAppStore";
+import { useToast } from "@/hooks/useToast";
 
 // Keys
 export const queryKeys = {
@@ -217,30 +218,38 @@ export function useRestartMutation() {
   });
 }
 
-export function useSwitchPHPMutation() {
+export const useSwitchPHPMutation = () => {
   const queryClient = useQueryClient();
-  const addToast = useAppStore((s) => s.addToast);
+  const { toast } = useToast();
 
   return useMutation({
     mutationFn: (version: string) => api.switchPHP(version),
-    onSuccess: (_data, version) => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.state });
-      queryClient.invalidateQueries({ queryKey: queryKeys.services });
-      addToast({
-        type: "success",
-        title: "PHP Switched",
-        description: `Now using PHP ${version}`,
+    onSuccess: (_, version) => {
+      queryClient.invalidateQueries({ queryKey: ["state"] });
+      // Also invalidate services since PHP version changed
+      queryClient.invalidateQueries({ queryKey: ["services"] });
+      toast({
+        title: "PHP Version Switched",
+        description: `Successfully switched to PHP ${version}`,
       });
     },
-    onError: (err: Error) => {
-      addToast({
-        type: "error",
-        title: "Failed to switch PHP",
-        description: err.message,
+    onError: (error: Error) => {
+      toast({
+        title: "Switch Failed",
+        description: error.message,
+        variant: "destructive",
       });
     },
   });
-}
+};
+
+export const usePHPVersions = () => {
+  return useQuery({
+    queryKey: ["php-versions"],
+    queryFn: () => api.getPHPVersions(),
+    staleTime: 1000 * 60 * 60, // 1 hour
+  });
+};
 
 export function useInstallPluginMutation() {
   const queryClient = useQueryClient();

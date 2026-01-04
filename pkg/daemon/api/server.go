@@ -32,6 +32,7 @@ func (s *Server) Start() error {
 	http.HandleFunc("/api/link", s.handleLink)
 	http.HandleFunc("/api/unlink", s.handleUnlink)
 	http.HandleFunc("/api/php", s.handlePHP)
+	http.HandleFunc("/api/php/versions", s.handlePHPVersions)
 	http.HandleFunc("/api/secure", s.handleSecure)
 	http.HandleFunc("/api/restart", s.handleRestart)
 	http.HandleFunc("/api/sites", s.handleSites)
@@ -252,6 +253,19 @@ func (s *Server) handlePHP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, SuccessResponse{Success: true}, 200)
+}
+
+func (s *Server) handlePHPVersions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		return
+	}
+	d, _ := daemon.GetClient()
+	versions, err := d.Adapter.ListPHPVersions()
+	if err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+	jsonResponse(w, versions, 200)
 }
 
 func (s *Server) handleSecure(w http.ResponseWriter, r *http.Request) {

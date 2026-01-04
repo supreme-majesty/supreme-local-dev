@@ -337,6 +337,42 @@ func (l *LinuxAdapter) GetPHPVersion() string {
 	return ver
 }
 
+func (l *LinuxAdapter) ListPHPVersions() ([]string, error) {
+	// Use apt-cache search to find available php*-fpm packages
+	// filtering for numeric versions like 7.4, 8.0, 8.1...
+	out, err := exec.Command("apt-cache", "search", "-n", "^php[0-9]+\\.[0-9]+-fpm$").Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list php versions: %w", err)
+	}
+
+	var versions []string
+	lines := strings.Split(string(out), "\n")
+	for _, line := range lines {
+		// Line format: php8.1-fpm - description...
+		parts := strings.Split(line, " ")
+		if len(parts) > 0 {
+			name := parts[0]
+			// Extract version: php8.1-fpm -> 8.1
+			ver := strings.TrimPrefix(name, "php")
+			ver = strings.TrimSuffix(ver, "-fpm")
+			if ver != "" && ver != name {
+				versions = append(versions, ver)
+			}
+		}
+	}
+
+	// Sort versions descending (newest first)
+	// Simple bubble sort or similar since list is small
+	// Or just return as is, frontend can sort?
+	// apt-cache search output is usually sorted by name (7.x then 8.x)
+	// Let's reverse it to have newest first.
+	for i, j := 0, len(versions)-1; i < j; i, j = i+1, j-1 {
+		versions[i], versions[j] = versions[j], versions[i]
+	}
+
+	return versions, nil
+}
+
 func (l *LinuxAdapter) ReloadNginx() error {
 	if err := l.RestartService("nginx"); err != nil {
 		fmt.Println("Nginx restart failed. Attempting to free Port 80 and retry...")

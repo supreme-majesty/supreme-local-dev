@@ -20,6 +20,7 @@ func (m *MacOSAdapter) Uninstall() error                                    { re
 func (m *MacOSAdapter) WriteNginxConfig(config string) error                { return nil }
 func (m *MacOSAdapter) GetNginxConfigPath() string                          { return "" }
 func (m *MacOSAdapter) GetPHPVersion() string                               { return "" }
+func (m *MacOSAdapter) ListPHPVersions() ([]string, error)                  { return []string{"8.2"}, nil }
 func (m *MacOSAdapter) CheckPHPSocket(version string) (string, error)       { return "", nil }
 func (m *MacOSAdapter) ReloadNginx() error                                  { return nil }
 func (m *MacOSAdapter) AddWebUserToGroup(group string) error                { return nil }

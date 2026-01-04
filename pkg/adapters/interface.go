@@ -23,6 +23,7 @@ type SystemAdapter interface {
 
 	// Runtime
 	GetPHPVersion() string
+	ListPHPVersions() ([]string, error)
 	CheckPHPSocket(version string) (string, error)
 	ReloadNginx() error
 

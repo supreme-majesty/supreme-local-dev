@@ -15,7 +15,11 @@ import {
 } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { useAppStore } from "@/stores/useAppStore";
-import { useSldState, useSwitchPHPMutation } from "@/hooks/use-daemon";
+import {
+  useSldState,
+  useSwitchPHPMutation,
+  usePHPVersions,
+} from "@/hooks/use-daemon";
 import { cn } from "@/lib/utils";
 import { Switch } from "@/components/ui/Switch";
 import { useToast } from "@/hooks/useToast";
@@ -107,6 +111,7 @@ export default function Settings() {
   const { theme, toggleTheme } = useAppStore();
   const { data: state, isLoading: isStateLoading } = useSldState();
   const switchPHPMutation = useSwitchPHPMutation();
+  const { data: phpVersions, isLoading: isVersionsLoading } = usePHPVersions();
   const { toast } = useToast();
 
   const [autostart, setAutostart] = useState(true);
@@ -185,17 +190,18 @@ export default function Settings() {
           description="Used for all projects unless overridden"
         >
           <div className="flex items-center gap-3">
-            <Select
-              value={phpVersion}
-              options={[
-                { value: "8.3", label: "PHP 8.3" },
-                { value: "8.2", label: "PHP 8.2" },
-                { value: "8.1", label: "PHP 8.1" },
-                { value: "8.0", label: "PHP 8.0" },
-                { value: "7.4", label: "PHP 7.4" },
-              ]}
-              onChange={handlePhpChange}
-            />
+            {isVersionsLoading ? (
+              <div className="h-9 w-32 bg-[var(--muted)] animate-pulse rounded-lg" />
+            ) : (
+              <Select
+                value={phpVersion}
+                options={(phpVersions || ["8.2", "8.1"]).map((v) => ({
+                  value: v,
+                  label: `PHP ${v}`,
+                }))}
+                onChange={handlePhpChange}
+              />
+            )}
             {switchPHPMutation.isPending && (
               <span className="text-xs text-[var(--muted-foreground)] animate-pulse">
                 Switching...
