@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -356,7 +357,10 @@ func (l *LinuxAdapter) ListPHPVersions() ([]string, error) {
 			ver := strings.TrimPrefix(name, "php")
 			ver = strings.TrimSuffix(ver, "-fpm")
 			if ver != "" && ver != name {
-				versions = append(versions, ver)
+				// Filter: only allow 7.4 and above
+				if vVal, err := strconv.ParseFloat(ver, 64); err == nil && vVal >= 7.4 {
+					versions = append(versions, ver)
+				}
 			}
 		}
 	}
