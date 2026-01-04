@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Modal } from "@/components/ui/Modal";
-import { type ProjectOptions } from "@/api/daemon";
+
 import {
   Loader2,
   Plus,
@@ -13,6 +13,7 @@ import {
   useDirectories,
   useSldState,
   useCreateProjectMutation,
+  useTemplates,
 } from "@/hooks/use-daemon";
 
 interface CreateProjectModalProps {
@@ -27,7 +28,10 @@ export function CreateProjectModal({
   onCreated,
 }: CreateProjectModalProps) {
   const [name, setName] = useState("");
-  const [type, setType] = useState<ProjectOptions["type"]>("laravel");
+  const [type, setType] = useState("laravel");
+  const [repository, setRepository] = useState("");
+
+  const { data: templates = [] } = useTemplates();
 
   // Location Management
   const [targetDir, setTargetDir] = useState("");
@@ -71,7 +75,12 @@ export function CreateProjectModal({
     if (!name) return;
 
     createProjectMutation.mutate(
-      { type, name, directory: targetDir },
+      {
+        type,
+        name,
+        directory: targetDir,
+        repository: type === "custom" ? repository : undefined,
+      },
       {
         onSuccess: () => {
           onCreated();
@@ -90,14 +99,6 @@ export function CreateProjectModal({
       }
     );
   };
-
-  const projectTypes = [
-    { value: "laravel", label: "Laravel (Composer)" },
-    { value: "react", label: "React (Vite)" },
-    { value: "vue", label: "Vue (Vite)" },
-    { value: "nextjs", label: "Next.js" },
-    { value: "nodejs", label: "Node.js (Basic)" },
-  ];
 
   return (
     <Modal
@@ -328,29 +329,50 @@ export function CreateProjectModal({
             Project Type
           </label>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {projectTypes.map((t) => (
+            {templates.map((t) => (
               <button
-                key={t.value}
+                key={t.id}
                 type="button"
-                onClick={() => setType(t.value as any)}
+                onClick={() => setType(t.id)}
                 className={`flex items-center px-3 py-2.5 rounded-lg border text-sm transition-all text-left ${
-                  type === t.value
+                  type === t.id
                     ? "border-[var(--primary)] bg-[var(--primary)]/5 ring-1 ring-[var(--primary)]"
                     : "border-[var(--border)] hover:border-[var(--primary)]/50 hover:bg-[var(--muted)]/50"
                 }`}
               >
                 <div
                   className={`w-2 h-2 rounded-full mr-2 ${
-                    type === t.value
+                    type === t.id
                       ? "bg-[var(--primary)]"
                       : "bg-[var(--muted-foreground)]/30"
                   }`}
                 />
-                {t.label}
+                <div className="flex flex-col">
+                  <span>{t.name}</span>
+                  <span className="text-[10px] text-[var(--muted-foreground)] line-clamp-1">
+                    {t.description}
+                  </span>
+                </div>
               </button>
             ))}
           </div>
         </div>
+
+        {/* Repository Input (Custom) */}
+        {type === "custom" && (
+          <div className="space-y-2 animate-in fade-in zoom-in-95 duration-200">
+            <label className="text-sm font-medium text-[var(--foreground)]">
+              Git Repository URL
+            </label>
+            <input
+              type="text"
+              value={repository}
+              onChange={(e) => setRepository(e.target.value)}
+              placeholder="https://github.com/username/repo.git"
+              className="w-full px-3 py-2 rounded-lg bg-[var(--background)] border border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--primary)] text-sm font-mono"
+            />
+          </div>
+        )}
       </form>
     </Modal>
   );

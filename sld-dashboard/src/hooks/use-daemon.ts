@@ -8,6 +8,7 @@ import {
   type Plugin,
   type Editor,
   type ProjectOptions,
+  type ProjectTemplate,
 } from "@/api/daemon";
 import { useAppStore } from "@/stores/useAppStore";
 
@@ -329,6 +330,14 @@ export function useOpenInEditorMutation() {
         description: err.message,
       });
     },
+  });
+}
+
+export function useTemplates() {
+  return useQuery<ProjectTemplate[]>({
+    queryKey: ["templates"],
+    queryFn: () => api.getTemplates(),
+    staleTime: 1000 * 60 * 60,
   });
 }
 

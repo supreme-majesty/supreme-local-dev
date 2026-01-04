@@ -32,9 +32,10 @@ type Editor struct {
 
 // ProjectOptions options for creating a project
 type ProjectOptions struct {
-	Type      string `json:"type"` // laravel, react, nextjs, nodejs
-	Name      string `json:"name"`
-	Directory string `json:"directory"` // Optional: Specific parent directory
+	Type       string `json:"type"` // laravel, react, nextjs, nodejs
+	Name       string `json:"name"`
+	Directory  string `json:"directory"`  // Optional: Specific parent directory
+	Repository string `json:"repository"` // Optional: Git URL for custom type
 }
 
 // Editors supported for detection
@@ -549,6 +550,28 @@ func (pm *ProjectManager) OpenInEditor(path string, editorID string) error {
 	return nil
 }
 
+// Template represents a project template
+type Template struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Icon        string `json:"icon"` // e.g. "wordpress", "html", "git"
+}
+
+// GetTemplates returns available project templates
+func (pm *ProjectManager) GetTemplates() []Template {
+	return []Template{
+		{ID: "laravel", Name: "Laravel", Description: "Modern PHP framework for web artisans", Icon: "laravel"},
+		{ID: "wordpress", Name: "WordPress", Description: "The world's most popular CMS", Icon: "wordpress"},
+		{ID: "react", Name: "React", Description: "A JavaScript library for building user interfaces", Icon: "react"},
+		{ID: "vue", Name: "Vue.js", Description: "The Progressive JavaScript Framework", Icon: "vue"},
+		{ID: "nextjs", Name: "Next.js", Description: "The React Framework for the Web", Icon: "nextjs"},
+		{ID: "nodejs", Name: "Node.js", Description: "Basic Node.js project", Icon: "nodejs"},
+		{ID: "static", Name: "Static HTML", Description: "Simple HTML/CSS/JS project", Icon: "html"},
+		{ID: "custom", Name: "Custom (Git)", Description: "Clone from a Git repository", Icon: "git"},
+	}
+}
+
 // CreateProject creates a new project using npx or composer
 func (pm *ProjectManager) CreateProject(options ProjectOptions) error {
 	// Sanitize name
@@ -622,6 +645,10 @@ func (pm *ProjectManager) CreateProject(options ProjectOptions) error {
 		// Prefer composer explicitly with --no-cache to avoid corruption issues
 		// We use bash to resolve 'composer' from the injected PATH
 		cmdStr = fmt.Sprintf("composer create-project laravel/laravel %s --prefer-dist --no-cache", options.Name)
+	case "wordpress":
+		// Download latest wordpress, unzip, move contents to targetDir
+		// We'll use a sequence of commands
+		cmdStr = fmt.Sprintf("mkdir %s && curl -L https://wordpress.org/latest.tar.gz | tar xz -C %s --strip-components=1", options.Name, options.Name)
 	case "react":
 		cmdStr = fmt.Sprintf("npx -y create-vite@latest %s --template react", options.Name)
 	case "vue":
@@ -636,6 +663,45 @@ func (pm *ProjectManager) CreateProject(options ProjectOptions) error {
 			os.Chown(targetDir, int(uid), int(gid))
 		}
 		cmdStr = "npm init -y"
+	case "static":
+		if err := os.MkdirAll(targetDir, 0755); err != nil {
+			return err
+		}
+		if uid != 0 {
+			os.Chown(targetDir, int(uid), int(gid))
+		}
+		// Create a basic index.html
+		indexPath := filepath.Join(targetDir, "index.html")
+		content := fmt.Sprintf(`<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>%s</title>
+    <style>
+        body { font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #f0f2f5; }
+        .card { background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; }
+        h1 { margin: 0 0 1rem; color: #333; }
+        p { color: #666; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>Welcome to %s</h1>
+        <p>Your static site is ready!</p>
+    </div>
+</body>
+</html>`, options.Name, options.Name)
+		os.WriteFile(indexPath, []byte(content), 0644)
+		if uid != 0 {
+			os.Chown(indexPath, int(uid), int(gid))
+		}
+		cmdStr = "echo 'Static site created'" // Dummy command to satisfy execution flow
+	case "custom":
+		if options.Repository == "" {
+			return fmt.Errorf("repository URL is required for custom projects")
+		}
+		cmdStr = fmt.Sprintf("git clone %s %s", options.Repository, options.Name)
 	default:
 		return fmt.Errorf("unsupported project type: %s", options.Type)
 	}

@@ -116,10 +116,18 @@ export interface Editor {
   icon: string;
 }
 
+export interface ProjectTemplate {
+  id: string;
+  name: string;
+  description: string;
+  icon: string;
+}
+
 export interface ProjectOptions {
-  type: "laravel" | "react" | "vue" | "nextjs" | "nodejs";
+  type: string;
   name: string;
   directory?: string;
+  repository?: string;
 }
 
 // API Client
@@ -344,6 +352,10 @@ class DaemonApi {
       method: "POST",
       body: JSON.stringify(options),
     });
+  }
+
+  async getTemplates(): Promise<ProjectTemplate[]> {
+    return this.request<ProjectTemplate[]>("/projects/templates");
   }
 
   async getEditors(): Promise<Editor[]> {

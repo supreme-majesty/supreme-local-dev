@@ -56,7 +56,6 @@ func (s *Server) Start() error {
 	http.HandleFunc("/api/db/snapshots/restore", s.handleDBRestore)
 	http.HandleFunc("/api/db/import", s.handleDBImport)
 	http.HandleFunc("/api/db/query", s.handleDBQuery)
-	http.HandleFunc("/api/db/query", s.handleDBQuery)
 	http.HandleFunc("/api/db/foreign-values", s.handleDBForeignValues)
 
 	// Logging
@@ -66,6 +65,7 @@ func (s *Server) Start() error {
 
 	// Projects & System
 	http.HandleFunc("/api/projects/create", s.handleProjectCreate)
+	http.HandleFunc("/api/projects/templates", s.handleGetTemplates) // New route
 	http.HandleFunc("/api/system/editors", s.handleSystemEditors)
 	http.HandleFunc("/api/system/open-editor", s.handleSystemOpenEditor)
 	http.HandleFunc("/api/system/directories", s.handleSystemDirectories)
@@ -314,14 +314,23 @@ func (s *Server) handleUnignore(w http.ResponseWriter, r *http.Request) {
 
 // Projects & System
 
+func (s *Server) handleGetTemplates(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		return
+	}
+	d, _ := daemon.GetClient()
+	jsonResponse(w, d.ProjectManager.GetTemplates(), 200)
+}
+
 func (s *Server) handleProjectCreate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		return
 	}
 	var req struct {
-		Type      string `json:"type"`
-		Name      string `json:"name"`
-		Directory string `json:"directory"`
+		Type       string `json:"type"`
+		Name       string `json:"name"`
+		Directory  string `json:"directory"`
+		Repository string `json:"repository"` // New field
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
@@ -330,9 +339,10 @@ func (s *Server) handleProjectCreate(w http.ResponseWriter, r *http.Request) {
 
 	d, _ := daemon.GetClient()
 	opts := services.ProjectOptions{
-		Type:      req.Type,
-		Name:      req.Name,
-		Directory: req.Directory,
+		Type:       req.Type,
+		Name:       req.Name,
+		Directory:  req.Directory,
+		Repository: req.Repository,
 	}
 
 	// Run project creation asynchronously to avoid gateway timeout
