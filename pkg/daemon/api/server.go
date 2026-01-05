@@ -65,6 +65,7 @@ func (s *Server) Start() error {
 
 	// Service Status & Health
 	http.HandleFunc("/api/services", s.handleServices)
+	http.HandleFunc("/api/services/control", s.handleServiceControl)
 	http.HandleFunc("/api/system/doctor", s.handleSystemDoctor)
 
 	// Logging
@@ -1468,4 +1469,41 @@ func (s *Server) handleSystemDoctor(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, checks, 200)
+}
+
+func (s *Server) handleServiceControl(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		return
+	}
+
+	var req struct {
+		Service string `json:"service"`
+		Action  string `json:"action"` // start, stop, restart
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
+		return
+	}
+
+	d, _ := daemon.GetClient()
+	var err error
+
+	switch req.Action {
+	case "start":
+		err = d.Adapter.StartService(req.Service)
+	case "stop":
+		err = d.Adapter.StopService(req.Service)
+	case "restart":
+		err = d.Adapter.RestartService(req.Service)
+	default:
+		jsonResponse(w, ErrorResponse{Error: "Invalid action"}, 400)
+		return
+	}
+
+	if err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+
+	jsonResponse(w, SuccessResponse{Success: true, Message: fmt.Sprintf("Service %s action %s completed", req.Service, req.Action)}, 200)
 }

@@ -65,7 +65,7 @@ func Initialize() (*Daemon, error) {
 	pluginManager := plugins.NewManager("/var/lib/sld/plugins", stateManager)
 	tunnelManager := services.NewTunnelManager("/var/lib/sld")
 	xrayService := services.NewXRayService(eventBus)
-	logWatcher := services.NewLogWatcher(eventBus)
+	// LogWatcher moved down to depend on adapter
 	databaseService := services.NewDatabaseService()
 	home := getRealUserHome()
 	baseDir := findBestDevDir(home)
@@ -77,6 +77,7 @@ func Initialize() (*Daemon, error) {
 	// Register default plugins
 	pluginManager.Register(services.NewRedisPlugin(pluginManager.DataDir))
 	pluginManager.Register(services.NewMailHogPlugin(pluginManager.DataDir))
+	pluginManager.Register(services.NewPostgresPlugin(pluginManager.DataDir))
 
 	// Auto-start enabled plugins from persisted state
 	pluginManager.StartEnabled()
@@ -93,6 +94,8 @@ func Initialize() (*Daemon, error) {
 	default:
 		return nil, fmt.Errorf("unsupported OS: %s", runtime.GOOS)
 	}
+
+	logWatcher := services.NewLogWatcher(eventBus, adapter.GetLogPaths)
 
 	instance = &Daemon{
 		State:           stateManager,

@@ -442,9 +442,19 @@ class DaemonApi {
     return this.request<string[]>(`/system/directories?${params.toString()}`);
   }
 
-  // Service Management (to be implemented in daemon)
+  // Service Management
   async getServiceStatus(): Promise<ServiceStatus[]> {
     return this.request<ServiceStatus[]>("/services");
+  }
+
+  async controlService(
+    service: string,
+    action: "start" | "stop" | "restart"
+  ): Promise<ActionResponse> {
+    return this.request<ActionResponse>("/services/control", {
+      method: "POST",
+      body: JSON.stringify({ service, action }),
+    });
   }
 
   async restart(): Promise<ActionResponse> {

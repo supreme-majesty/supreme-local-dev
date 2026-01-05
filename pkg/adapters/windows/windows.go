@@ -177,10 +177,49 @@ func (w *WindowsAdapter) AddWebUserToGroup(group string) error                { 
 func (w *WindowsAdapter) RestartPHP() error                                   { return nil }
 func (w *WindowsAdapter) CheckWifi() (bool, string)                           { return true, "Unknown" }
 func (w *WindowsAdapter) Doctor() error                                       { return nil }
-func (w *WindowsAdapter) GetLogPaths() map[string]string                      { return nil }
-func (w *WindowsAdapter) GetServices() ([]adapters.ServiceStatus, error) {
-	return []adapters.ServiceStatus{}, nil
+func (w *WindowsAdapter) GetLogPaths() map[string]string {
+	// Assuming standard install paths or derived from env
+	nginxHome := os.Getenv("NGINX_HOME")
+	if nginxHome == "" {
+		nginxHome = `C:\Program Files\nginx`
+	}
+	return map[string]string{
+		"nginx_access": filepath.Join(nginxHome, "logs", "access.log"),
+		"nginx_error":  filepath.Join(nginxHome, "logs", "error.log"),
+		"php_error":    `C:\tools\php\error.log`, // Example
+	}
 }
+func (w *WindowsAdapter) GetServices() ([]adapters.ServiceStatus, error) {
+	services := []adapters.ServiceStatus{}
+
+	// Core
+	// Nginx on Windows is often just a process "nginx.exe", but if installed via valid tools it might be a service "nginx".
+	// Let's check both or assume service for now as per StartService implementation.
+	running, _ := w.IsServiceRunning("nginx")
+	services = append(services, adapters.ServiceStatus{
+		Name:    "nginx",
+		Running: running,
+	})
+
+	// PHP
+	// On Windows, PHP is often run as FastCGI process, not a service.
+	// But we can check if "php-cgi.exe" is running or a named service exists.
+	// For consistency with other adapters, we'll list versions.
+	phpVersions, _ := w.ListPHPVersions()
+	for _, v := range phpVersions {
+		svcName := fmt.Sprintf("php-%s", v) // e.g. php-8.2
+		running, _ := w.IsServiceRunning(svcName)
+		services = append(services, adapters.ServiceStatus{
+			Name:    svcName,
+			Running: running,
+			Version: v,
+		})
+	}
+
+	return services, nil
+}
+
 func (w *WindowsAdapter) GetSystemHealth() ([]adapters.HealthCheck, error) {
+	// Stub
 	return []adapters.HealthCheck{}, nil
 }

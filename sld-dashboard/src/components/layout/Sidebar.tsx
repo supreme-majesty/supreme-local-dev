@@ -12,6 +12,7 @@ import {
   Share2,
   Database,
   Terminal,
+  Activity,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/useAppStore";
@@ -25,6 +26,7 @@ const navItems = [
   { to: "/plugins", icon: Puzzle, label: "Plugins" },
   { to: "/xray", icon: Zap, label: "X-Ray" },
   { to: "/share", icon: Share2, label: "Share" },
+  { to: "/system", icon: Activity, label: "System" },
   { to: "/settings", icon: Settings, label: "Settings" },
   { to: "/doctor", icon: Stethoscope, label: "Doctor" },
 ];

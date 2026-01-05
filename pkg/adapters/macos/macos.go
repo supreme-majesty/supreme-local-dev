@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/supreme-majesty/supreme-local-dev/pkg/adapters"
@@ -262,11 +263,50 @@ func (m *MacOSAdapter) RestartPHP() error {
 	return nil
 }
 
-func (m *MacOSAdapter) CheckWifi() (bool, string)      { return true, "Unknown" }
-func (m *MacOSAdapter) Doctor() error                  { return nil }
-func (m *MacOSAdapter) GetLogPaths() map[string]string { return nil }
+func (m *MacOSAdapter) CheckWifi() (bool, string) { return true, "Unknown" }
+func (m *MacOSAdapter) Doctor() error             { return nil }
+func (m *MacOSAdapter) GetLogPaths() map[string]string {
+	prefix := "/usr/local"
+	if runtime.GOARCH == "arm64" {
+		prefix = "/opt/homebrew"
+	}
+	return map[string]string{
+		"nginx_access": filepath.Join(prefix, "var/log/nginx/access.log"),
+		"nginx_error":  filepath.Join(prefix, "var/log/nginx/error.log"),
+		"php_fpm":      filepath.Join(prefix, "var/log/php-fpm.log"),
+	}
+}
 func (m *MacOSAdapter) GetServices() ([]adapters.ServiceStatus, error) {
-	return []adapters.ServiceStatus{}, nil
+	services := []adapters.ServiceStatus{}
+
+	// Core Services
+	core := []string{"nginx", "dnsmasq"}
+	for _, name := range core {
+		// On macOS, it might be just 'nginx' or 'nginx-full' depending on install,
+		// but IsServiceRunning handles "brew services list" checks generally?
+		// Actually IsServiceRunning implementation needs to be robust.
+		// Assuming "nginx" works for homebrew formula name.
+		running, _ := m.IsServiceRunning(name)
+		services = append(services, adapters.ServiceStatus{
+			Name:    name,
+			Running: running,
+		})
+	}
+
+	// PHP Services
+	phpVersions, _ := m.ListPHPVersions()
+	for _, v := range phpVersions {
+		// Brew service name is usually php@8.2
+		svcName := "php@" + v
+		running, _ := m.IsServiceRunning(svcName)
+		services = append(services, adapters.ServiceStatus{
+			Name:    svcName,
+			Running: running,
+			Version: v,
+		})
+	}
+
+	return services, nil
 }
 func (m *MacOSAdapter) GetSystemHealth() ([]adapters.HealthCheck, error) {
 	return []adapters.HealthCheck{}, nil

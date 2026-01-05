@@ -846,15 +846,27 @@ func (l *LinuxAdapter) GetServices() ([]adapters.ServiceStatus, error) {
 		Running: dnsRunning,
 	})
 
-	// MySQL/MariaDB
-	mysqlRunning, _ := l.IsServiceRunning("mysql")
-	if !mysqlRunning {
-		mysqlRunning, _ = l.IsServiceRunning("mariadb")
+	// Core Services
+	core := []string{"nginx", "dnsmasq"}
+	for _, name := range core {
+		running, _ := l.IsServiceRunning(name)
+		services = append(services, adapters.ServiceStatus{
+			Name:    name,
+			Running: running,
+		})
 	}
-	services = append(services, adapters.ServiceStatus{
-		Name:    "Database",
-		Running: mysqlRunning,
-	})
+
+	// PHP Services
+	phpVersions, _ := l.ListPHPVersions()
+	for _, v := range phpVersions {
+		svcName := fmt.Sprintf("php%s-fpm", v)
+		running, _ := l.IsServiceRunning(svcName)
+		services = append(services, adapters.ServiceStatus{
+			Name:    svcName,
+			Running: running,
+			Version: v,
+		})
+	}
 
 	return services, nil
 }
@@ -879,34 +891,16 @@ func (l *LinuxAdapter) GetSystemHealth() ([]adapters.HealthCheck, error) {
 	}
 
 	// 2. Connectivity
-	wifiAlive, wifiMsg := l.CheckWifi()
-	wifiStatus := "fail"
-	if wifiAlive {
-		wifiStatus = "pass"
+	online, netMsg := l.CheckWifi()
+	netStatus := "fail"
+	if online {
+		netStatus = "pass"
 	}
 	checks = append(checks, adapters.HealthCheck{
-		Name:    "WiFi/Network",
-		Status:  wifiStatus,
-		Message: wifiMsg,
+		Name:    "Network",
+		Status:  netStatus,
+		Message: netMsg,
 	})
-
-	// 3. DNS Resolution
-	cmd := exec.Command("resolvectl", "query", "sld.test")
-	dnsStatus := "pass"
-	dnsMsg := "Resolved parameters correctly"
-	if err := cmd.Run(); err != nil {
-		dnsStatus = "fail"
-		dnsMsg = "Failed to resolve .test domain via systemd-resolved"
-	}
-	checks = append(checks, adapters.HealthCheck{
-		Name:    "Local DNS (.test)",
-		Status:  dnsStatus,
-		Message: dnsMsg,
-	})
-
-	// 4. Port 80 Check (Generic)
-	// We can try to bind or just check if our Nginx is running
-	// If Nginx is running, Port 80 is likely fine.
 
 	return checks, nil
 }

@@ -48,17 +48,19 @@ type LogEntryData struct {
 
 // LogWatcher watches multiple log files and broadcasts entries via EventBus
 type LogWatcher struct {
-	Bus      *events.Bus
-	watchers map[LogSource]*tail.Tail
-	mu       sync.RWMutex
-	counter  int64
+	Bus          *events.Bus
+	watchers     map[LogSource]*tail.Tail
+	mu           sync.RWMutex
+	counter      int64
+	pathProvider func() map[string]string
 }
 
 // NewLogWatcher creates a new log watcher service
-func NewLogWatcher(bus *events.Bus) *LogWatcher {
+func NewLogWatcher(bus *events.Bus, pathProvider func() map[string]string) *LogWatcher {
 	return &LogWatcher{
-		Bus:      bus,
-		watchers: make(map[LogSource]*tail.Tail),
+		Bus:          bus,
+		watchers:     make(map[LogSource]*tail.Tail),
+		pathProvider: pathProvider,
 	}
 }
 
@@ -66,27 +68,34 @@ func NewLogWatcher(bus *events.Bus) *LogWatcher {
 func (w *LogWatcher) GetAvailableSources() map[LogSource]string {
 	sources := make(map[LogSource]string)
 
-	// Nginx logs
-	if _, err := os.Stat("/var/log/nginx/error.log"); err == nil {
-		sources[LogSourceNginxError] = "/var/log/nginx/error.log"
-	}
-	if _, err := os.Stat("/var/log/nginx/access.log"); err == nil {
-		sources[LogSourceNginxAccess] = "/var/log/nginx/access.log"
+	if w.pathProvider == nil {
+		return sources
 	}
 
-	// PHP-FPM logs (check for version-specific)
-	phpVersions := []string{"8.4", "8.3", "8.2", "8.1", "8.0", "7.4"}
-	for _, v := range phpVersions {
-		path := fmt.Sprintf("/var/log/php%s-fpm.log", v)
+	rawPaths := w.pathProvider()
+
+	// Map raw keys to LogSource
+	if path, ok := rawPaths["nginx_access"]; ok {
 		if _, err := os.Stat(path); err == nil {
-			sources[LogSourcePHPFPM] = path
-			break
+			sources[LogSourceNginxAccess] = path
 		}
 	}
-	// Fallback generic PHP-FPM log
-	if _, ok := sources[LogSourcePHPFPM]; !ok {
-		if _, err := os.Stat("/var/log/php-fpm.log"); err == nil {
-			sources[LogSourcePHPFPM] = "/var/log/php-fpm.log"
+	if path, ok := rawPaths["nginx_error"]; ok {
+		if _, err := os.Stat(path); err == nil {
+			sources[LogSourceNginxError] = path
+		}
+	}
+
+	// PHP-FPM
+	// Check for various keys or generic
+	if path, ok := rawPaths["php_fpm"]; ok {
+		if _, err := os.Stat(path); err == nil {
+			sources[LogSourcePHPFPM] = path
+		}
+	} else if path, ok := rawPaths["php_error"]; ok {
+		// Start treating php_error as PHP source
+		if _, err := os.Stat(path); err == nil {
+			sources[LogSourcePHPFPM] = path
 		}
 	}
 

@@ -66,6 +66,12 @@ export default function Database() {
   const [selectedDB, setSelectedDB] = useState<string | null>(null);
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("browse");
+  const [dbDriver, setDbDriver] = useState<"mysql" | "postgres">(() => {
+    const saved = localStorage.getItem("db_driver");
+    return (saved === "postgres" ? "postgres" : "mysql") as
+      | "mysql"
+      | "postgres";
+  });
   const [page, setPage] = useState(1);
   const [editingRow, setEditingRow] = useState<Record<string, any> | null>(
     null
@@ -974,7 +980,24 @@ $mysqli->close();
             )}
           </div>
 
-          <div className="flex gap-2">{/* Global Actions can go here */}</div>
+          <div className="flex gap-2 items-center">
+            {/* Driver Selector */}
+            <select
+              value={dbDriver}
+              onChange={(e) => {
+                const val = e.target.value as "mysql" | "postgres";
+                setDbDriver(val);
+                localStorage.setItem("db_driver", val);
+                // Reset selection when driver changes
+                setSelectedDB(null);
+                setSelectedTable(null);
+              }}
+              className="bg-[var(--card)] border border-[var(--border)] text-[var(--foreground)] text-xs rounded-md px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
+            >
+              <option value="mysql">MySQL</option>
+              <option value="postgres">PostgreSQL</option>
+            </select>
+          </div>
         </div>
 
         {/* Tab Bar */}
