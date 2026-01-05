@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"runtime"
@@ -199,6 +200,11 @@ func (d *Daemon) EnsureInstalled() error {
 	}
 
 	fmt.Println("Configuring Nginx...")
+
+	// Install any missing PHP versions required by projects
+	d.ensureProjectPHPVersions()
+	// Install any missing Node versions required by projects
+	d.ensureProjectNodeVersions()
 
 	// Remove default nginx site to avoid conflicts
 	defSite := "/etc/nginx/sites-enabled/default"
@@ -449,7 +455,16 @@ server {
 
 					isolationBlocks += block
 				} else {
-					fmt.Printf("Warning: PHP socket for %s not found. Skipping isolation for %s.\n", config.PHPVersion, domain)
+					// Only warn if version is >= 7.4
+					shouldWarn := true
+					if v, err := strconv.ParseFloat(config.PHPVersion, 64); err == nil {
+						if v < 7.4 {
+							shouldWarn = false
+						}
+					}
+					if shouldWarn {
+						fmt.Printf("Warning: PHP socket for %s not found. Skipping isolation for %s.\n", config.PHPVersion, domain)
+					}
 				}
 			}
 		}
@@ -471,6 +486,63 @@ func getRealUserHome() string {
 	}
 	h, _ := os.UserHomeDir()
 	return h
+}
+
+// ensureProjectPHPVersions installs any PHP versions required by projects but not yet installed
+func (d *Daemon) ensureProjectPHPVersions() {
+	versions := make(map[string]bool)
+	for _, config := range d.State.Data.SiteConfigs {
+		if config.PHPVersion != "" {
+			versions[config.PHPVersion] = true
+		}
+	}
+
+	for version := range versions {
+		// Filter out versions below 7.4
+		if v, err := strconv.ParseFloat(version, 64); err == nil {
+			if v < 7.4 {
+				continue
+			}
+		}
+
+		if _, err := d.Adapter.CheckPHPSocket(version); err != nil {
+			fmt.Printf("Installing PHP %s for project isolation...\n", version)
+			if installErr := d.Adapter.InstallPHP(version); installErr != nil {
+				fmt.Printf("Warning: Failed to install PHP %s: %v\n", version, installErr)
+			}
+		}
+	}
+}
+
+// ensureProjectNodeVersions installs Node.js versions required by projects
+func (d *Daemon) ensureProjectNodeVersions() {
+	// Scan all projects to find node requirements
+	// For simplicity, we iterate known sites. Ideally, we scan all paths.
+	// But `SiteConfigs` might be empty initially.
+	// Let's rely on parked paths.
+	for _, path := range d.State.Data.Paths {
+		version, err := d.ProjectManager.ScanNodeRequirement(path)
+		if err != nil {
+			fmt.Printf("Warning: Failed to scan node version for %s: %v\n", path, err)
+			continue
+		}
+
+		if version != "" {
+			// Clean version string (e.g. ">=18.0.0" -> "18", "v20" -> "20")
+			// This is a naive cleaner. fnm handles some semver, but let's be safe.
+			// If it contains specific version, we try to use it.
+			// For now, let's assume valid semver or simple version.
+			// fnm supports "18", "20", "lts", etc.
+			// We remove >=, ^, ~ chars for better matching if simple
+			cleanVer := strings.TrimLeft(version, ">=^~v")
+			cleanVer = strings.Split(cleanVer, " ")[0] // Take first part if range
+
+			fmt.Printf("Project at %s requires Node %s (clean: %s). Ensuring installed...\n", path, version, cleanVer)
+			if err := d.Adapter.InstallNode(cleanVer); err != nil {
+				fmt.Printf("Warning: Failed to install Node %s: %v\n", cleanVer, err)
+			}
+		}
+	}
 }
 
 // Project Management

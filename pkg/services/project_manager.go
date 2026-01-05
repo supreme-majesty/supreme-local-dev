@@ -1,6 +1,7 @@
 package services
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -932,4 +933,31 @@ func (pm *ProjectManager) CloneProject(sourcePath, targetName string, cloneDB bo
 	}
 
 	return targetPath, nil
+}
+
+// PackageJSON represents package.json structure for engine parsing
+type PackageJSON struct {
+	Engines struct {
+		Node string `json:"node"`
+	} `json:"engines"`
+}
+
+// ScanNodeRequirement reads package.json to find node version requirement
+func (pm *ProjectManager) ScanNodeRequirement(projectPath string) (string, error) {
+	pkgPath := filepath.Join(projectPath, "package.json")
+	if _, err := os.Stat(pkgPath); os.IsNotExist(err) {
+		return "", nil // No package.json, no requirement
+	}
+
+	data, err := os.ReadFile(pkgPath)
+	if err != nil {
+		return "", err
+	}
+
+	var pkg PackageJSON
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		return "", nil // Ignore invalid json
+	}
+
+	return pkg.Engines.Node, nil
 }

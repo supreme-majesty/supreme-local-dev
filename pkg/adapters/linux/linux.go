@@ -53,9 +53,22 @@ func (l *LinuxAdapter) InstallDependencies() error {
 		// Base packages
 		packages := []string{
 			"nginx", "php-fpm", "dnsmasq", "zip", "unzip",
-			"git", "composer", "nodejs", "npm",
+			"composer",
 			"php-mysql", "php-mbstring", "php-xml", "php-curl",
 			"php-zip", "php-sqlite3", "php-bcmath", "php-intl",
+		}
+
+		// Check specific packages to avoid conflicts or redundancies
+		// Git
+		if _, err := exec.LookPath("git"); err != nil {
+			packages = append(packages, "git")
+		}
+		// Node.js (implies npm usually)
+		if _, err := exec.LookPath("node"); err != nil {
+			packages = append(packages, "nodejs")
+		} else if _, err := exec.LookPath("npm"); err != nil {
+			// Only install npm if node is there but npm isn't (rare, but possible on some distros)
+			// Actually, let's just stick to nodejs, installing 'npm' explicit often conflicts
 		}
 
 		// Check for Database (MySQL or MariaDB)
@@ -158,6 +171,43 @@ func (l *LinuxAdapter) InstallPHP(version string) error {
 
 	fmt.Printf("%s installed successfully! 🐘\n", packageName)
 	return nil
+}
+
+// InstallNode installs a specific Node.js version using fnm
+func (l *LinuxAdapter) InstallNode(version string) error {
+	// Ensure fnm is installed
+	if _, err := exec.LookPath("fnm"); err != nil {
+		fmt.Println("Installing fnm (Fast Node Manager)...")
+		// Install fnm via script to /usr/local/bin
+		cmd := exec.Command("bash", "-c", "curl -fsSL https://fnm.vercel.app/install | bash -s -- --install-dir /usr/local/bin --skip-shell")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("failed to install fnm: %w", err)
+		}
+	}
+
+	fmt.Printf("Installing Node.js v%s via fnm...\n", version)
+	// fnm install <version>
+	cmd := exec.Command("fnm", "install", version)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to install node %s: %w", version, err)
+	}
+
+	return nil
+}
+
+// GetNodePath returns the path to the node binary for a specific version
+func (l *LinuxAdapter) GetNodePath(version string) (string, error) {
+	// Check if version is installed
+	cmd := exec.Command("fnm", "exec", "--using", version, "which", "node")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("node %s not found (or fnm error): %w", version, err)
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 // ensureHostsEntry adds a hostname to /etc/hosts if not already present
