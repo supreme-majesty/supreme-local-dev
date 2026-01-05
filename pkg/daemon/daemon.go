@@ -15,6 +15,7 @@ import (
 	"github.com/supreme-majesty/supreme-local-dev/pkg/adapters"
 	"github.com/supreme-majesty/supreme-local-dev/pkg/adapters/linux"
 	"github.com/supreme-majesty/supreme-local-dev/pkg/adapters/macos"
+	"github.com/supreme-majesty/supreme-local-dev/pkg/adapters/windows"
 	"github.com/supreme-majesty/supreme-local-dev/pkg/assets"
 	"github.com/supreme-majesty/supreme-local-dev/pkg/daemon/state"
 	"github.com/supreme-majesty/supreme-local-dev/pkg/events"
@@ -87,6 +88,8 @@ func Initialize() (*Daemon, error) {
 		adapter = linux.NewLinuxAdapter()
 	case "darwin":
 		adapter = macos.NewMacOSAdapter()
+	case "windows":
+		adapter = windows.NewWindowsAdapter()
 	default:
 		return nil, fmt.Errorf("unsupported OS: %s", runtime.GOOS)
 	}

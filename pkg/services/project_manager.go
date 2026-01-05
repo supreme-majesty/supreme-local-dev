@@ -10,7 +10,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 )
 
 type ProjectManager struct {
@@ -372,20 +371,19 @@ func (pm *ProjectManager) OpenInEditor(path string, editorID string) error {
 	fmt.Printf("[DEBUG] Launching editor. Path: %s, EditorID: %s, Bin: %s\n", path, editorID, bin)
 
 	// If SUDO_USER is empty (running as pure systemd service), try to detect user from file ownership
+	// If SUDO_USER is empty (running as pure systemd service), try to detect user from file ownership
 	if targetUser == "" && os.Geteuid() == 0 {
-		info, err := os.Stat(path)
+		uidInt, _, err := getPathOwner(path)
 		if err == nil {
-			if stat, ok := info.Sys().(*syscall.Stat_t); ok {
-				uid := strconv.Itoa(int(stat.Uid))
-				if u, err := user.LookupId(uid); err == nil {
-					targetUser = u.Username
-					fmt.Printf("[DEBUG] Detected owner of %s is %s (uid %s)\n", path, targetUser, uid)
-				} else {
-					fmt.Printf("[DEBUG] Failed to lookup user for uid %s: %v\n", uid, err)
-				}
+			uid := strconv.Itoa(uidInt)
+			if u, err := user.LookupId(uid); err == nil {
+				targetUser = u.Username
+				fmt.Printf("[DEBUG] Detected owner of %s is %s (uid %s)\n", path, targetUser, uid)
+			} else {
+				fmt.Printf("[DEBUG] Failed to lookup user for uid %s: %v\n", uid, err)
 			}
 		} else {
-			fmt.Printf("[DEBUG] Failed to stat path %s: %v\n", path, err)
+			fmt.Printf("[DEBUG] Failed to get path owner %s: %v\n", path, err)
 		}
 	} else {
 		fmt.Printf("[DEBUG] SUDO_USER present: %s\n", targetUser)
@@ -716,11 +714,7 @@ func (pm *ProjectManager) CreateProject(options ProjectOptions) error {
 	}
 
 	cmd.Dir = base
-	if uid != 0 {
-		cmd.SysProcAttr = &syscall.SysProcAttr{}
-		cmd.SysProcAttr.Credential = &syscall.Credential{Uid: uid, Gid: gid}
-		cmd.Env = cleanEnv
-	}
+	prepareCommand(cmd, int(uid), int(gid), cleanEnv)
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -733,11 +727,7 @@ func (pm *ProjectManager) CreateProject(options ProjectOptions) error {
 		npmCmd := exec.Command(shell, "-c", "npm install && npm run build")
 		npmCmd.Dir = targetDir
 
-		if uid != 0 {
-			npmCmd.SysProcAttr = &syscall.SysProcAttr{}
-			npmCmd.SysProcAttr.Credential = &syscall.Credential{Uid: uid, Gid: gid}
-			npmCmd.Env = cleanEnv
-		}
+		prepareCommand(npmCmd, int(uid), int(gid), cleanEnv)
 
 		npmOutput, npmErr := npmCmd.CombinedOutput()
 		if npmErr != nil {
@@ -801,11 +791,7 @@ func (pm *ProjectManager) CreateProject(options ProjectOptions) error {
 		// 3. Run Migrations
 		migrateCmd := exec.Command(shell, "-c", "php artisan migrate --force")
 		migrateCmd.Dir = targetDir
-		if uid != 0 {
-			migrateCmd.SysProcAttr = &syscall.SysProcAttr{}
-			migrateCmd.SysProcAttr.Credential = &syscall.Credential{Uid: uid, Gid: gid}
-			migrateCmd.Env = cleanEnv
-		}
+		prepareCommand(migrateCmd, int(uid), int(gid), cleanEnv)
 		if out, err := migrateCmd.CombinedOutput(); err != nil {
 			fmt.Printf("[WARN] Migration failed: %v Output: %s\n", err, string(out))
 		} else {
@@ -814,30 +800,6 @@ func (pm *ProjectManager) CreateProject(options ProjectOptions) error {
 	}
 
 	return nil
-}
-
-// Helper to find the owner of the nearest existing directory
-func getPathOwner(path string) (uint32, uint32, error) {
-	for {
-		if info, err := os.Stat(path); err == nil {
-			stat := info.Sys().(*syscall.Stat_t)
-			return stat.Uid, stat.Gid, nil
-		}
-		parent := filepath.Dir(path)
-		if parent == path || parent == "." || parent == "/" {
-			// Reach root without success, verify root exists? Root always exists.
-			// If we are here, path doesn't exist.
-			if parent == "/" {
-				// Stat root
-				if info, err := os.Stat("/"); err == nil {
-					stat := info.Sys().(*syscall.Stat_t)
-					return stat.Uid, stat.Gid, nil
-				}
-				return 0, 0, fmt.Errorf("root not accessible")
-			}
-		}
-		path = parent
-	}
 }
 
 // CloneProject creates a "Ghost" clone of a project for experimentation.
