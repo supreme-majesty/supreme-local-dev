@@ -70,7 +70,7 @@ export function formatDate(dateStr: string): string {
       hour: "numeric",
       minute: "numeric",
     });
-  } catch (e) {
+  } catch {
     return dateStr;
   }
 }

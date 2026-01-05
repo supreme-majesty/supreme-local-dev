@@ -450,7 +450,7 @@ export function useRealtimeUpdates() {
         }
       };
 
-      ws.current.onerror = (_err) => {
+      ws.current.onerror = () => {
         // console.error("SLD: WS error", err);
         ws.current?.close();
       };
@@ -459,6 +459,7 @@ export function useRealtimeUpdates() {
     connect();
 
     return () => {
+      isMounted = false;
       ws.current?.close();
     };
   }, [queryClient]);
@@ -492,7 +493,7 @@ export function useArtisanSocket(
           } else if (msg.type === "artisan:done") {
             onDone(msg.success);
           }
-        } catch (e) {
+        } catch {
           // ignore
         }
       };

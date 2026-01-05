@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Modal } from "@/components/ui/Modal";
 
 import {
@@ -41,7 +41,7 @@ export function CreateProjectModal({
   const [isBrowserOpen, setIsBrowserOpen] = useState(false);
 
   const { data: state } = useSldState();
-  const parkedPaths = state?.paths || [];
+  const parkedPaths = useMemo(() => state?.paths || [], [state?.paths]);
 
   const createProjectMutation = useCreateProjectMutation();
   const error = createProjectMutation.error?.message;
@@ -53,6 +53,7 @@ export function CreateProjectModal({
       if (parkedPaths.length > 0 && locationMode === "parked") {
         // Only set if not already set to a valid parked path
         if (!parkedPaths.includes(targetDir)) {
+          // eslint-disable-next-line react-hooks/set-state-in-effect
           setTargetDir(parkedPaths[0]);
         }
       } else if (parkedPaths.length === 0 && locationMode === "parked") {

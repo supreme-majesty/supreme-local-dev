@@ -42,7 +42,6 @@ import { Label } from "@/components/ui/Label";
 import { Input } from "@/components/ui/Input";
 import { Badge } from "@/components/ui/Badge";
 import { SQLConsole } from "@/components/database/SQLConsole";
-// @ts-ignore
 import { DatabaseTree } from "@/components/database/DatabaseTree";
 import { DataForm } from "@/components/database/DataForm";
 import { DatabaseStructure } from "@/components/database/DatabaseStructure";
@@ -60,7 +59,17 @@ import {
   useExecuteQueryMutation,
   useImportDatabaseMutation,
 } from "@/hooks/use-database";
-import { api } from "@/api/daemon";
+import { api, type QueryResult } from "@/api/daemon";
+
+interface SearchResult extends Omit<QueryResult, "columns"> {
+  columns?: {
+    name: string;
+    type: string;
+    foreign_key?: { table: string; column: string };
+  }[];
+  total?: number;
+  total_pages?: number;
+}
 
 export default function Database() {
   const [selectedDB, setSelectedDB] = useState<string | null>(null);
@@ -73,17 +82,19 @@ export default function Database() {
       | "postgres";
   });
   const [page, setPage] = useState(1);
-  const [editingRow, setEditingRow] = useState<Record<string, any> | null>(
+  const [editingRow, setEditingRow] = useState<Record<string, unknown> | null>(
     null
   );
   const [insertFormKey, setInsertFormKey] = useState(0);
   const [searchCriteria, setSearchCriteria] = useState<
     Record<string, { value: string; operator: string }>
   >({});
-  const [searchResults, setSearchResults] = useState<any>(null);
+  const [searchResults, setSearchResults] = useState<SearchResult | null>(null);
   const [isSearching, setIsSearching] = useState(false);
   const [restoreAfterImport, setRestoreAfterImport] = useState(true);
-  const [triggers, setTriggers] = useState<any[]>([]);
+  const [triggers, setTriggers] = useState<
+    import("@/api/daemon").DatabaseTrigger[]
+  >([]);
   const [loadingTriggers, setLoadingTriggers] = useState(false);
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
 
@@ -99,7 +110,10 @@ export default function Database() {
   const [profiling, setProfiling] = useState(false);
   const [showExplainModal, setShowExplainModal] = useState(false);
   const [showPhpModal, setShowPhpModal] = useState(false);
-  const [explainData, setExplainData] = useState<any>(null);
+  const [explainData, setExplainData] = useState<{
+    rows: Record<string, unknown>[];
+    columns: string[];
+  } | null>(null);
 
   // Clone Modal
   const [isCloneModalOpen, setIsCloneModalOpen] = useState(false);
@@ -117,7 +131,7 @@ export default function Database() {
     rowIndex: number;
     colName: string;
     value: string;
-    originalRow: Record<string, any>;
+    originalRow: Record<string, unknown>;
   } | null>(null);
   const [fkOptions, setFkOptions] = useState<
     { value: string; label: string }[] | null
@@ -149,14 +163,14 @@ export default function Database() {
   // Helpers
   const pkCol = tableSchema?.find((c) => c.key === "PRI")?.name;
 
-  const escapeValue = (val: any) => {
+  const escapeValue = (val: unknown) => {
     if (val === null) return "NULL";
     if (typeof val === "number") return val;
     return `'${String(val).replace(/'/g, "\\'")}'`;
   };
 
   // Helper to safely get value from row (handles case mismatch)
-  const getValue = (row: Record<string, any>, colName: string) => {
+  const getValue = (row: Record<string, unknown>, colName: string) => {
     if (!colName) return undefined;
     if (row[colName] !== undefined) return row[colName];
     // Try lowercase key match
@@ -289,9 +303,11 @@ export default function Database() {
               database: selectedDB,
               query: `SHOW CREATE TABLE \`${t}\``,
             });
-            const createStmt = result.rows?.[0]?.["Create Table"] || "N/A";
+            const createStmt =
+              (result.rows?.[0] as Record<string, unknown>)?.["Create Table"] ||
+              "N/A";
             results.push(`-- Table: ${t}\n${createStmt};\n`);
-          } catch (e) {
+          } catch {
             results.push(
               `-- Table: ${t}\n-- Error: Failed to get CREATE statement\n`
             );
@@ -315,9 +331,13 @@ export default function Database() {
             });
             results.push(`-- Table: ${t}`);
             results.push(`DROP TABLE IF EXISTS \`${t}\`;`);
-            results.push(createResult.rows?.[0]?.["Create Table"] + ";");
+            results.push(
+              (createResult.rows?.[0] as Record<string, unknown>)?.[
+                "Create Table"
+              ] + ";"
+            );
             results.push("");
-          } catch (e) {
+          } catch {
             results.push(`-- Error exporting ${t}`);
           }
         }
@@ -413,7 +433,7 @@ export default function Database() {
       const content =
         rows.length > 0
           ? rows
-              .map((r: any) =>
+              .map((r: Record<string, unknown>) =>
                 Object.entries(r)
                   .map(([k, v]) => `${k}: ${v}`)
                   .join("\n")
@@ -463,7 +483,7 @@ export default function Database() {
     });
   };
 
-  const handleDeleteRow = (row: Record<string, any>) => {
+  const handleDeleteRow = (row: Record<string, unknown>) => {
     if (!selectedDB || !selectedTable || !pkCol) return;
 
     if (!confirm("Are you sure you want to delete this row?")) return;
@@ -475,7 +495,7 @@ export default function Database() {
   };
 
   const handleSaveRow = (
-    data: Record<string, any>,
+    data: Record<string, unknown>,
     mode: "save" | "save_and_add" = "save"
   ) => {
     if (!selectedDB || !selectedTable) return;
@@ -582,6 +602,7 @@ export default function Database() {
             columns: tableSchema.map((col) => ({
               name: col.name,
               type: col.type,
+              foreign_key: col.foreign_key,
             })),
             total: data.rowCount,
             total_pages: 1, // Simple result set for now
@@ -602,7 +623,7 @@ export default function Database() {
     setSearchResults(null);
   };
 
-  const startEdit = (row: Record<string, any>) => {
+  const startEdit = (row: Record<string, unknown>) => {
     setEditingRow(row);
     setActiveTab("edit");
   };
@@ -671,7 +692,10 @@ export default function Database() {
         query,
       });
 
-      setTriggers(result.rows || []);
+      setTriggers(
+        (result.rows as unknown as import("@/api/daemon").DatabaseTrigger[]) ||
+          []
+      );
     } catch (err) {
       console.error("Failed to load triggers:", err);
       setTriggers([]);
@@ -709,6 +733,7 @@ export default function Database() {
     if (activeTab === "triggers" && selectedDB) {
       loadTriggers();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, selectedDB, selectedTable]);
 
   const currentSnapshotList =
@@ -720,7 +745,7 @@ export default function Database() {
     if (!filterText.trim()) return rows;
 
     const searchLower = filterText.toLowerCase();
-    return rows.filter((row: Record<string, any>) =>
+    return rows.filter((row: Record<string, unknown>) =>
       Object.values(row).some(
         (val) => val !== null && String(val).toLowerCase().includes(searchLower)
       )
@@ -746,7 +771,10 @@ export default function Database() {
       database: selectedDB,
       query,
     });
-    setExplainData(result);
+    setExplainData({
+      rows: result.rows || [],
+      columns: result.columns || [],
+    });
     setShowExplainModal(true);
   };
 
@@ -794,8 +822,8 @@ $mysqli->close();
   const startInlineEdit = async (
     rowIndex: number,
     colName: string,
-    value: any,
-    row: Record<string, any>
+    value: unknown,
+    row: Record<string, unknown>
   ) => {
     setEditingCell({
       rowIndex,
@@ -808,7 +836,8 @@ $mysqli->close();
     // Fetch FK options if applicable
     const cols = searchResults ? searchResults.columns : tableData?.columns;
     const colInfo = cols?.find(
-      (c: any) => (typeof c === "string" ? c : c.name) === colName
+      (c: Record<string, unknown> | string) =>
+        (typeof c === "string" ? c : (c.name as string)) === colName
     );
 
     if (
@@ -870,7 +899,7 @@ $mysqli->close();
   // Bulk Selection Logic
   const allSelected = useMemo(() => {
     if (!pkCol || filteredRows.length === 0) return false;
-    return filteredRows.every((row: any) => {
+    return filteredRows.every((row: Record<string, unknown>) => {
       const val = getValue(row, pkCol);
       return val !== undefined && selectedRows.has(String(val));
     });
@@ -879,7 +908,7 @@ $mysqli->close();
   const handleSelectAll = (checked: boolean) => {
     if (!pkCol) return;
     const newSelected = new Set(selectedRows);
-    filteredRows.forEach((row: any) => {
+    filteredRows.forEach((row: Record<string, unknown>) => {
       const val = getValue(row, pkCol);
       if (val !== undefined) {
         const strVal = String(val);
@@ -924,7 +953,8 @@ $mysqli->close();
       {/* Sidebar - Database Tree */}
       <div className="w-64 border-r border-[var(--border)] bg-[var(--card)] flex flex-col shrink-0">
         <DatabaseTree
-          selectedDb={selectedDB}
+          databases={databases || []}
+          selectedDB={selectedDB}
           selectedTable={selectedTable}
           onSelectDb={handleSelectDb}
           onSelectTable={handleSelectTable}
@@ -1209,7 +1239,7 @@ $mysqli->close();
                           } else if (val === "export") {
                             // Export selected rows as SQL INSERT statements
                             const selectedData = filteredRows.filter(
-                              (row: any) => {
+                              (row: Record<string, unknown>) => {
                                 const pk = getValue(row, pkCol);
                                 return (
                                   pk !== undefined &&
@@ -1219,21 +1249,27 @@ $mysqli->close();
                             );
                             const cols =
                               (searchResults || tableData)?.columns || [];
-                            const colNames = cols.map((c: any) =>
-                              typeof c === "string" ? c : c.name
+                            const colNames = cols.map(
+                              (c: Record<string, unknown> | string) =>
+                                typeof c === "string" ? c : (c.name as string)
                             );
 
-                            const inserts = selectedData.map((row: any) => {
-                              const values = colNames.map((col: string) => {
-                                const val = getValue(row, col);
-                                if (val === null) return "NULL";
-                                if (typeof val === "number") return val;
-                                return `'${String(val).replace(/'/g, "\\'")}'`;
-                              });
-                              return `INSERT INTO \`${selectedTable}\` (\`${colNames.join(
-                                "`, `"
-                              )}\`) VALUES (${values.join(", ")});`;
-                            });
+                            const inserts = selectedData.map(
+                              (row: Record<string, unknown>) => {
+                                const values = colNames.map((col: string) => {
+                                  const val = getValue(row, col);
+                                  if (val === null) return "NULL";
+                                  if (typeof val === "number") return val;
+                                  return `'${String(val).replace(
+                                    /'/g,
+                                    "\\'"
+                                  )}'`;
+                                });
+                                return `INSERT INTO \`${selectedTable}\` (\`${colNames.join(
+                                  "`, `"
+                                )}\`) VALUES (${values.join(", ")});`;
+                              }
+                            );
 
                             setResultModal({
                               isOpen: true,
@@ -1244,7 +1280,7 @@ $mysqli->close();
                           } else if (val === "copy") {
                             // Copy selected rows to clipboard as TSV
                             const selectedData = filteredRows.filter(
-                              (row: any) => {
+                              (row: Record<string, unknown>) => {
                                 const pk = getValue(row, pkCol);
                                 return (
                                   pk !== undefined &&
@@ -1254,17 +1290,19 @@ $mysqli->close();
                             );
                             const cols =
                               (searchResults || tableData)?.columns || [];
-                            const colNames = cols.map((c: any) =>
-                              typeof c === "string" ? c : c.name
+                            const colNames = cols.map(
+                              (c: Record<string, unknown> | string) =>
+                                typeof c === "string" ? c : (c.name as string)
                             );
 
                             const header = colNames.join("\t");
-                            const rows = selectedData.map((row: any) =>
-                              colNames
-                                .map((col: string) =>
-                                  String(getValue(row, col) ?? "")
-                                )
-                                .join("\t")
+                            const rows = selectedData.map(
+                              (row: Record<string, unknown>) =>
+                                colNames
+                                  .map((col: string) =>
+                                    String(getValue(row, col) ?? "")
+                                  )
+                                  .join("\t")
                             );
                             const tsv = [header, ...rows].join("\n");
 
@@ -1413,12 +1451,27 @@ $mysqli->close();
                             </th>
                           )}
                           <th className="px-4 py-3 font-medium">Actions</th>
-                          {(searchResults || tableData).columns?.map(
-                            (col: any) => {
+                          {(searchResults || tableData)?.columns?.map(
+                            (
+                              col:
+                                | {
+                                    name: string;
+                                    type: string;
+                                    foreign_key?: {
+                                      table: string;
+                                      column: string;
+                                    };
+                                  }
+                                | string
+                            ) => {
                               const colName =
-                                typeof col === "string" ? col : col.name;
+                                typeof col === "string"
+                                  ? col
+                                  : (col.name as string);
                               const colType =
-                                typeof col === "string" ? "" : col.type;
+                                typeof col === "string"
+                                  ? ""
+                                  : (col.type as string);
                               const isSorted = sortCol === colName;
                               return (
                                 <th
@@ -1451,289 +1504,308 @@ $mysqli->close();
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-[var(--border)]">
-                        {filteredRows.map((row: any, i: number) => (
-                          <tr
-                            key={i}
-                            className="hover:bg-[var(--muted)]/30 group"
-                          >
-                            {pkCol && (
-                              <td className="px-4 py-2 w-8 text-center">
-                                <Checkbox
-                                  checked={(() => {
-                                    const val = getValue(row, pkCol);
-                                    return (
-                                      val !== undefined &&
-                                      selectedRows.has(String(val))
-                                    );
-                                  })()}
-                                  onChange={(e) => {
-                                    const val = getValue(row, pkCol);
-                                    if (val !== undefined)
-                                      handleSelectRow(
-                                        String(val),
-                                        e.target.checked
+                        {filteredRows.map(
+                          (row: Record<string, unknown>, i: number) => (
+                            <tr
+                              key={i}
+                              className="hover:bg-[var(--muted)]/30 group"
+                            >
+                              {pkCol && (
+                                <td className="px-4 py-2 w-8 text-center">
+                                  <Checkbox
+                                    checked={(() => {
+                                      const val = getValue(row, pkCol);
+                                      return (
+                                        val !== undefined &&
+                                        selectedRows.has(String(val))
                                       );
-                                  }}
-                                />
-                              </td>
-                            )}
-                            <td className="px-4 py-2 w-20">
-                              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <button
-                                  className="p-1 hover:text-blue-400"
-                                  onClick={() => startEdit(row)}
-                                >
-                                  <Code2 size={14} />
-                                </button>
-                                <button
-                                  className="p-1 hover:text-red-400 disabled:opacity-30"
-                                  disabled={!pkCol}
-                                  onClick={() => handleDeleteRow(row)}
-                                  title={
-                                    !pkCol
-                                      ? "No Primary Key found"
-                                      : "Delete Row"
-                                  }
-                                >
-                                  <Trash2 size={14} />
-                                </button>
-                              </div>
-                            </td>
-                            {(searchResults || tableData).columns?.map(
-                              (col: any) => {
-                                const colName =
-                                  typeof col === "string" ? col : col.name;
-                                const val = getValue(row, colName);
-                                const isEditing =
-                                  editingCell?.rowIndex === i &&
-                                  editingCell?.colName === colName;
-
-                                const isFK =
-                                  typeof col !== "string" && !!col.foreign_key;
-
-                                return (
-                                  <td
-                                    key={colName}
-                                    className={`px-4 py-2 whitespace-nowrap max-w-[300px] ${
-                                      isEditing
-                                        ? ""
-                                        : `truncate cursor-pointer hover:bg-[var(--muted)]/30 ${
-                                            isFK
-                                              ? "text-[var(--primary)] hover:underline"
-                                              : ""
-                                          }`
-                                    }`}
-                                    onDoubleClick={() => {
-                                      if (!isEditing && pkCol) {
-                                        startInlineEdit(i, colName, val, row);
-                                      }
+                                    })()}
+                                    onChange={(e) => {
+                                      const val = getValue(row, pkCol);
+                                      if (val !== undefined)
+                                        handleSelectRow(
+                                          String(val),
+                                          e.target.checked
+                                        );
                                     }}
-                                    onClick={undefined} // Remove cell click navigation
+                                  />
+                                </td>
+                              )}
+                              <td className="px-4 py-2 w-20">
+                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <button
+                                    className="p-1 hover:text-blue-400"
+                                    onClick={() => startEdit(row)}
+                                  >
+                                    <Code2 size={14} />
+                                  </button>
+                                  <button
+                                    className="p-1 hover:text-red-400 disabled:opacity-30"
+                                    disabled={!pkCol}
+                                    onClick={() => handleDeleteRow(row)}
                                     title={
-                                      pkCol
-                                        ? "Double-click to edit"
-                                        : "No primary key - cannot edit"
+                                      !pkCol
+                                        ? "No Primary Key found"
+                                        : "Delete Row"
                                     }
                                   >
-                                    {isEditing ? (
-                                      <div className="flex items-center gap-1 w-full min-w-[200px]">
-                                        {(() => {
-                                          const type =
-                                            typeof col === "string"
-                                              ? ""
-                                              : col.type?.toLowerCase() || "";
-                                          const isDate =
-                                            type.includes("datetime") ||
-                                            type.includes("timestamp");
+                                    <Trash2 size={14} />
+                                  </button>
+                                </div>
+                              </td>
+                              {(searchResults || tableData)?.columns?.map(
+                                (
+                                  col:
+                                    | {
+                                        name: string;
+                                        type: string;
+                                        foreign_key?: {
+                                          table: string;
+                                          column: string;
+                                        };
+                                      }
+                                    | string
+                                ) => {
+                                  const colName =
+                                    typeof col === "string"
+                                      ? col
+                                      : (col.name as string);
+                                  const val = getValue(row, colName);
+                                  const isEditing =
+                                    editingCell?.rowIndex === i &&
+                                    editingCell?.colName === colName;
 
-                                          // FK Dropdown
-                                          if (isFK && fkOptions) {
-                                            return (
-                                              <select
-                                                value={editingCell.value}
-                                                onChange={(e) =>
-                                                  setEditingCell({
-                                                    ...editingCell,
-                                                    value: e.target.value,
-                                                  })
-                                                }
-                                                onKeyDown={handleInlineKeyDown}
-                                                onBlur={saveInlineEdit}
-                                                autoFocus
-                                                className="w-full bg-[var(--background)] border border-[var(--primary)] rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
-                                              >
-                                                <option value="">
-                                                  Select...
-                                                </option>
-                                                {fkOptions.map((opt) => (
-                                                  <option
-                                                    key={opt.value}
-                                                    value={opt.value}
-                                                  >
-                                                    {opt.label}
-                                                  </option>
-                                                ))}
-                                              </select>
-                                            );
-                                          }
+                                  const isFK =
+                                    typeof col !== "string" &&
+                                    !!col.foreign_key;
 
-                                          // Format for datetime-local: YYYY-MM-DDThh:mm:ss
-                                          const displayValue =
-                                            isDate && editingCell.value
-                                              ? editingCell.value.replace(
-                                                  " ",
-                                                  "T"
-                                                )
-                                              : editingCell.value;
+                                  return (
+                                    <td
+                                      key={colName}
+                                      className={`px-4 py-2 whitespace-nowrap max-w-[300px] ${
+                                        isEditing
+                                          ? ""
+                                          : `truncate cursor-pointer hover:bg-[var(--muted)]/30 ${
+                                              isFK
+                                                ? "text-[var(--primary)] hover:underline"
+                                                : ""
+                                            }`
+                                      }`}
+                                      onDoubleClick={() => {
+                                        if (!isEditing && pkCol) {
+                                          startInlineEdit(i, colName, val, row);
+                                        }
+                                      }}
+                                      onClick={undefined} // Remove cell click navigation
+                                      title={
+                                        pkCol
+                                          ? "Double-click to edit"
+                                          : "No primary key - cannot edit"
+                                      }
+                                    >
+                                      {isEditing ? (
+                                        <div className="flex items-center gap-1 w-full min-w-[200px]">
+                                          {(() => {
+                                            const type =
+                                              typeof col === "string"
+                                                ? ""
+                                                : col.type?.toLowerCase() || "";
+                                            const isDate =
+                                              type.includes("datetime") ||
+                                              type.includes("timestamp");
 
-                                          return (
-                                            <>
-                                              <input
-                                                type={
-                                                  isDate
-                                                    ? "datetime-local"
-                                                    : "text"
-                                                }
-                                                value={displayValue}
-                                                onChange={(e) => {
-                                                  let newVal = e.target.value;
-                                                  if (isDate) {
-                                                    // Convert back to MySQL format: YYYY-MM-DD hh:mm:ss
-                                                    newVal = newVal.replace(
-                                                      "T",
-                                                      " "
-                                                    );
+                                            // FK Dropdown
+                                            if (isFK && fkOptions) {
+                                              return (
+                                                <select
+                                                  value={editingCell.value}
+                                                  onChange={(e) =>
+                                                    setEditingCell({
+                                                      ...editingCell,
+                                                      value: e.target.value,
+                                                    })
                                                   }
-                                                  setEditingCell({
-                                                    ...editingCell,
-                                                    value: newVal,
-                                                  });
-                                                }}
-                                                onKeyDown={(e) => {
-                                                  handleInlineKeyDown(e);
-                                                }}
-                                                // Remove onBlur for dates because clicking the picker/Now button triggers blur
-                                                onBlur={
-                                                  isDate
-                                                    ? undefined
-                                                    : saveInlineEdit
-                                                }
-                                                autoFocus
-                                                step="1"
-                                                className="w-full bg-[var(--background)] border border-[var(--primary)] rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
-                                              />
-                                              {isDate && (
-                                                <>
-                                                  <button
-                                                    onClick={(e) => {
-                                                      e.stopPropagation(); // Prevent row click
-                                                      const now = new Date();
-                                                      // Construct local YYYY-MM-DD hh:mm:ss
-                                                      const localIso = new Date(
-                                                        now.getTime() -
-                                                          now.getTimezoneOffset() *
-                                                            60000
-                                                      )
-                                                        .toISOString()
-                                                        .slice(0, 19)
-                                                        .replace("T", " ");
+                                                  onKeyDown={
+                                                    handleInlineKeyDown
+                                                  }
+                                                  onBlur={saveInlineEdit}
+                                                  autoFocus
+                                                  className="w-full bg-[var(--background)] border border-[var(--primary)] rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
+                                                >
+                                                  <option value="">
+                                                    Select...
+                                                  </option>
+                                                  {fkOptions.map((opt) => (
+                                                    <option
+                                                      key={opt.value}
+                                                      value={opt.value}
+                                                    >
+                                                      {opt.label}
+                                                    </option>
+                                                  ))}
+                                                </select>
+                                              );
+                                            }
 
-                                                      setEditingCell({
-                                                        ...editingCell,
-                                                        value: localIso,
-                                                      });
-                                                    }}
-                                                    className="p-1 text-[var(--muted-foreground)] hover:text-[var(--primary)] bg-[var(--muted)] rounded border border-[var(--border)]"
-                                                    title="Set to NOW"
-                                                  >
-                                                    <Clock size={14} />
-                                                  </button>
-                                                  <button
-                                                    onClick={saveInlineEdit}
-                                                    className="p-1 hover:text-green-500 bg-[var(--muted)] rounded border border-[var(--border)]"
-                                                    title="Save"
-                                                  >
-                                                    <ArrowRight size={14} />
-                                                  </button>
-                                                </>
-                                              )}
-                                            </>
-                                          );
-                                        })()}
-                                      </div>
-                                    ) : (
-                                      <div className="flex items-center justify-between group/cell relative min-h-[20px]">
-                                        <span
-                                          className={
-                                            val === null
-                                              ? "text-[var(--muted-foreground)] italic"
-                                              : ""
-                                          }
-                                        >
-                                          {val === null ? (
-                                            "NULL"
-                                          ) : val === undefined ? (
-                                            <span className="text-red-400 text-[10px]">
-                                              (missing)
-                                            </span>
-                                          ) : (
-                                            String(val)
-                                          )}
-                                        </span>
-                                        {!isEditing && isFK && val && (
-                                          <button
-                                            className="opacity-0 group-hover/cell:opacity-100 p-0.5 text-[var(--muted-foreground)] hover:text-[var(--primary)] transition-opacity bg-[var(--card)] rounded shadow-sm border border-[var(--border)] absolute right-0 top-1/2 -translate-y-1/2 z-10 cursor-pointer"
-                                            onClick={(e) => {
-                                              e.preventDefault();
-                                              e.stopPropagation();
+                                            // Format for datetime-local: YYYY-MM-DDThh:mm:ss
+                                            const displayValue =
+                                              isDate && editingCell.value
+                                                ? editingCell.value.replace(
+                                                    " ",
+                                                    "T"
+                                                  )
+                                                : editingCell.value;
 
-                                              const fkTable =
-                                                col.foreign_key!.table;
-                                              const fkColumn =
-                                                col.foreign_key!.column;
-                                              const fkValue = String(val);
+                                            return (
+                                              <>
+                                                <input
+                                                  type={
+                                                    isDate
+                                                      ? "datetime-local"
+                                                      : "text"
+                                                  }
+                                                  value={displayValue}
+                                                  onChange={(e) => {
+                                                    let newVal = e.target.value;
+                                                    if (isDate) {
+                                                      // Convert back to MySQL format: YYYY-MM-DD hh:mm:ss
+                                                      newVal = newVal.replace(
+                                                        "T",
+                                                        " "
+                                                      );
+                                                    }
+                                                    setEditingCell({
+                                                      ...editingCell,
+                                                      value: newVal,
+                                                    });
+                                                  }}
+                                                  onKeyDown={(e) => {
+                                                    handleInlineKeyDown(e);
+                                                  }}
+                                                  // Remove onBlur for dates because clicking the picker/Now button triggers blur
+                                                  onBlur={
+                                                    isDate
+                                                      ? undefined
+                                                      : saveInlineEdit
+                                                  }
+                                                  autoFocus
+                                                  step="1"
+                                                  className="w-full bg-[var(--background)] border border-[var(--primary)] rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
+                                                />
+                                                {isDate && (
+                                                  <>
+                                                    <button
+                                                      onClick={(e) => {
+                                                        e.stopPropagation(); // Prevent row click
+                                                        const now = new Date();
+                                                        // Construct local YYYY-MM-DD hh:mm:ss
+                                                        const localIso =
+                                                          new Date(
+                                                            now.getTime() -
+                                                              now.getTimezoneOffset() *
+                                                                60000
+                                                          )
+                                                            .toISOString()
+                                                            .slice(0, 19)
+                                                            .replace("T", " ");
 
-                                              setSelectedDB(selectedDB!);
-                                              setSelectedTable(fkTable);
-                                              setPage(1);
-                                              setSortCol("");
-                                              setFilterText("");
-
-                                              // Set search criteria to filter by FK value
-                                              setSearchCriteria({
-                                                [fkColumn]: {
-                                                  value: fkValue,
-                                                  operator: "=",
-                                                },
-                                              });
-
-                                              // Trigger search after navigating
-                                              setTimeout(() => {
-                                                setActiveTab("search");
-                                              }, 100);
-                                            }}
-                                            title={`Navigate to ${
-                                              col.foreign_key!.table
-                                            } where ${
-                                              col.foreign_key!.column
-                                            } = ${val}`}
+                                                        setEditingCell({
+                                                          ...editingCell,
+                                                          value: localIso,
+                                                        });
+                                                      }}
+                                                      className="p-1 text-[var(--muted-foreground)] hover:text-[var(--primary)] bg-[var(--muted)] rounded border border-[var(--border)]"
+                                                      title="Set to NOW"
+                                                    >
+                                                      <Clock size={14} />
+                                                    </button>
+                                                    <button
+                                                      onClick={saveInlineEdit}
+                                                      className="p-1 hover:text-green-500 bg-[var(--muted)] rounded border border-[var(--border)]"
+                                                      title="Save"
+                                                    >
+                                                      <ArrowRight size={14} />
+                                                    </button>
+                                                  </>
+                                                )}
+                                              </>
+                                            );
+                                          })()}
+                                        </div>
+                                      ) : (
+                                        <div className="flex items-center justify-between group/cell relative min-h-[20px]">
+                                          <span
+                                            className={
+                                              val === null
+                                                ? "text-[var(--muted-foreground)] italic"
+                                                : ""
+                                            }
                                           >
-                                            <ExternalLink size={10} />
-                                          </button>
-                                        )}
-                                      </div>
-                                    )}
-                                  </td>
-                                );
-                              }
-                            )}
-                          </tr>
-                        ))}
+                                            {val === null ? (
+                                              "NULL"
+                                            ) : val === undefined ? (
+                                              <span className="text-red-400 text-[10px]">
+                                                (missing)
+                                              </span>
+                                            ) : (
+                                              String(val)
+                                            )}
+                                          </span>
+                                          {!isEditing && isFK && val && (
+                                            <button
+                                              className="opacity-0 group-hover/cell:opacity-100 p-0.5 text-[var(--muted-foreground)] hover:text-[var(--primary)] transition-opacity bg-[var(--card)] rounded shadow-sm border border-[var(--border)] absolute right-0 top-1/2 -translate-y-1/2 z-10 cursor-pointer"
+                                              onClick={(e) => {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+
+                                                const fkTable =
+                                                  col.foreign_key!.table;
+                                                const fkColumn =
+                                                  col.foreign_key!.column;
+                                                const fkValue = String(val);
+
+                                                setSelectedDB(selectedDB!);
+                                                setSelectedTable(fkTable);
+                                                setPage(1);
+                                                setSortCol("");
+                                                setFilterText("");
+
+                                                // Set search criteria to filter by FK value
+                                                setSearchCriteria({
+                                                  [fkColumn]: {
+                                                    value: fkValue,
+                                                    operator: "=",
+                                                  },
+                                                });
+
+                                                // Trigger search after navigating
+                                                setTimeout(() => {
+                                                  setActiveTab("search");
+                                                }, 100);
+                                              }}
+                                              title={`Navigate to ${
+                                                col.foreign_key!.table
+                                              } where ${
+                                                col.foreign_key!.column
+                                              } = ${val}`}
+                                            >
+                                              <ExternalLink size={10} />
+                                            </button>
+                                          )}
+                                        </div>
+                                      )}
+                                    </td>
+                                  );
+                                }
+                              )}
+                            </tr>
+                          )
+                        )}
                         {filteredRows.length === 0 && (
                           <tr>
                             <td
                               colSpan={
-                                ((searchResults || tableData).columns || [])
+                                ((searchResults || tableData)?.columns || [])
                                   .length + 1
                               }
                               className="px-4 py-8 text-center text-[var(--muted-foreground)] italic"
@@ -1749,7 +1821,7 @@ $mysqli->close();
                         <tr>
                           <td
                             colSpan={
-                              ((searchResults || tableData).columns || [])
+                              ((searchResults || tableData)?.columns || [])
                                 .length + (pkCol ? 2 : 1)
                             }
                             className="px-4 py-2 text-xs text-[var(--muted-foreground)] border-t border-[var(--border)]"
@@ -1906,7 +1978,7 @@ $mysqli->close();
                         {col.type}
                       </td>
                       <td className="px-4 py-2">
-                        {col.nullable ? "Yes" : "No"}
+                        {col.null === "YES" ? "Yes" : "No"}
                       </td>
                       <td className="px-4 py-2 text-[var(--muted-foreground)]">
                         {col.default || "NULL"}
@@ -1936,7 +2008,17 @@ $mysqli->close();
           {/* Context: All, Tab: SQL */}
           {activeTab === "sql" && (
             <div className="h-full flex flex-col">
-              <SQLConsole database={selectedDB || null} />
+              <SQLConsole
+                selectedDB={selectedDB || null}
+                onExecute={(query) => {
+                  if (selectedDB) {
+                    executeQueryMutation.mutate({
+                      database: selectedDB,
+                      query,
+                    });
+                  }
+                }}
+              />
             </div>
           )}
 
@@ -2358,12 +2440,12 @@ $mysqli->close();
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {(databases || []).map((db) => (
                   <Card
-                    key={db.name}
+                    key={db}
                     className="hover:border-[var(--primary)] transition-colors"
                   >
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                       <CardTitle className="text-base font-medium">
-                        {db.name}
+                        {db}
                       </CardTitle>
                       <DatabaseIcon
                         size={16}
@@ -2372,14 +2454,14 @@ $mysqli->close();
                     </CardHeader>
                     <CardContent>
                       <div className="text-xs text-[var(--muted-foreground)] mb-4">
-                        {db.tables ?? 0} tables
+                        Manage tables in {db}
                       </div>
                       <div className="flex gap-2">
                         <Button
                           variant="secondary"
                           size="sm"
                           className="w-full"
-                          onClick={() => setSelectedDB(db.name)}
+                          onClick={() => setSelectedDB(db)}
                         >
                           Manage
                         </Button>
@@ -2388,10 +2470,10 @@ $mysqli->close();
                           size="sm"
                           onClick={() => {
                             // Dirty hack to set selectedDB for the handler, or just call mutate directly
-                            if (confirm(`Drop database ${db.name}?`)) {
+                            if (confirm(`Drop database ${db}?`)) {
                               executeQueryMutation.mutate({
-                                database: db.name,
-                                query: `DROP DATABASE \`${db.name}\``,
+                                database: db,
+                                query: `DROP DATABASE \`${db}\``,
                               });
                             }
                           }}
@@ -2711,7 +2793,7 @@ $mysqli->close();
                                       }`}
                                       onClick={() =>
                                         window.open(
-                                          `/api/db/snapshots/download?id=${s.id}`
+                                          `/api/db/snapshots/download?id=${s.filename}`
                                         )
                                       }
                                     >
@@ -2728,7 +2810,9 @@ $mysqli->close();
                                             "Restore this snapshot? Current database data will be overwritten!"
                                           )
                                         ) {
-                                          restoreSnapshotMutation.mutate(s.id);
+                                          restoreSnapshotMutation.mutate(
+                                            s.filename
+                                          );
                                         }
                                       }}
                                     >
@@ -2741,7 +2825,9 @@ $mysqli->close();
                                       title="Delete"
                                       onClick={() => {
                                         if (confirm("Delete this snapshot?")) {
-                                          deleteSnapshotMutation.mutate(s.id);
+                                          deleteSnapshotMutation.mutate(
+                                            s.filename
+                                          );
                                         }
                                       }}
                                     >
@@ -2811,49 +2897,54 @@ $mysqli->close();
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-[var(--border)]">
-                          {triggers.map((trigger: any, idx: number) => (
-                            <tr
-                              key={idx}
-                              className="hover:bg-[var(--muted)]/30"
-                            >
-                              <td className="px-4 py-3 font-medium">
-                                {trigger.Trigger}
-                              </td>
-                              <td className="px-4 py-3">
-                                <Badge variant="secondary">
-                                  {trigger.Event}
-                                </Badge>
-                              </td>
-                              <td className="px-4 py-3">
-                                <Badge
-                                  variant={
-                                    trigger.Timing === "BEFORE"
-                                      ? "secondary"
-                                      : "outline"
-                                  }
-                                >
-                                  {trigger.Timing}
-                                </Badge>
-                              </td>
-                              <td className="px-4 py-3">{trigger.Table}</td>
-                              <td className="px-4 py-3 max-w-[300px] truncate font-mono text-xs">
-                                {trigger.Statement}
-                              </td>
-                              <td className="px-4 py-3">
-                                <Button
-                                  variant="danger"
-                                  size="sm"
-                                  onClick={() =>
-                                    handleDropTrigger(trigger.Trigger)
-                                  }
-                                  disabled={executeQueryMutation.isPending}
-                                >
-                                  <Trash2 size={14} />
-                                  Drop
-                                </Button>
-                              </td>
-                            </tr>
-                          ))}
+                          {triggers.map(
+                            (
+                              trigger: import("@/api/daemon").DatabaseTrigger,
+                              idx: number
+                            ) => (
+                              <tr
+                                key={idx}
+                                className="hover:bg-[var(--muted)]/30"
+                              >
+                                <td className="px-4 py-3 font-medium">
+                                  {trigger.Trigger}
+                                </td>
+                                <td className="px-4 py-3">
+                                  <Badge variant="secondary">
+                                    {trigger.Event}
+                                  </Badge>
+                                </td>
+                                <td className="px-4 py-3">
+                                  <Badge
+                                    variant={
+                                      trigger.Timing === "BEFORE"
+                                        ? "secondary"
+                                        : "outline"
+                                    }
+                                  >
+                                    {trigger.Timing}
+                                  </Badge>
+                                </td>
+                                <td className="px-4 py-3">{trigger.Table}</td>
+                                <td className="px-4 py-3 max-w-[300px] truncate font-mono text-xs">
+                                  {trigger.Statement}
+                                </td>
+                                <td className="px-4 py-3">
+                                  <Button
+                                    variant="danger"
+                                    size="sm"
+                                    onClick={() =>
+                                      handleDropTrigger(trigger.Trigger)
+                                    }
+                                    disabled={executeQueryMutation.isPending}
+                                  >
+                                    <Trash2 size={14} />
+                                    Drop
+                                  </Button>
+                                </td>
+                              </tr>
+                            )
+                          )}
                         </tbody>
                       </table>
                     </div>
@@ -2882,11 +2973,11 @@ $mysqli->close();
               <div className="mb-3 p-2 bg-[var(--muted)]/50 rounded font-mono text-sm">
                 {currentQuery}
               </div>
-              {explainData?.rows?.length > 0 ? (
+              {explainData?.rows && explainData.rows.length > 0 ? (
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-[var(--border)]">
-                      {explainData.columns?.map((col: string) => (
+                      {(explainData.columns || []).map((col: string) => (
                         <th key={col} className="px-2 py-1 text-left text-xs">
                           {col}
                         </th>
@@ -2894,15 +2985,17 @@ $mysqli->close();
                     </tr>
                   </thead>
                   <tbody>
-                    {explainData.rows.map((row: any, i: number) => (
-                      <tr key={i} className="border-b border-[var(--border)]">
-                        {explainData.columns?.map((col: string) => (
-                          <td key={col} className="px-2 py-1 text-xs">
-                            {row[col] ?? "-"}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
+                    {explainData.rows.map(
+                      (row: Record<string, unknown>, i: number) => (
+                        <tr key={i} className="border-b border-[var(--border)]">
+                          {(explainData.columns || []).map((col: string) => (
+                            <td key={col} className="px-2 py-1 text-xs">
+                              {String(row[col] ?? "-")}
+                            </td>
+                          ))}
+                        </tr>
+                      )
+                    )}
                   </tbody>
                 </table>
               ) : (
