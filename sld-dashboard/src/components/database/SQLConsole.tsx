@@ -1,5 +1,3 @@
-import React from "react";
-
 interface SQLConsoleProps {
   selectedDB: string | null;
   onExecute: (query: string) => void;

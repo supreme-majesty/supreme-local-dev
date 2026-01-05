@@ -1,5 +1,7 @@
+import { type DatabaseInfo } from "../../api/daemon";
+
 interface DatabaseTreeProps {
-  databases: string[];
+  databases: DatabaseInfo[];
   selectedDB: string | null;
   selectedTable: string | null;
   onSelectDb: (db: string) => void;
@@ -30,19 +32,19 @@ export function DatabaseTree({
       </div>
       <ul className="space-y-1">
         {databases.map((db) => (
-          <li key={db} className="cursor-pointer">
+          <li key={db.name} className="cursor-pointer">
             <div
               className={`flex items-center justify-between p-1 rounded ${
-                selectedDB === db ? "bg-accent text-accent-foreground" : ""
+                selectedDB === db.name ? "bg-accent text-accent-foreground" : ""
               }`}
-              onClick={() => onSelectDb(db)}
+              onClick={() => onSelectDb(db.name)}
             >
-              <span>{db}</span>
-              {selectedDB === db && (
+              <span>{db.name}</span>
+              {selectedDB === db.name && (
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    onCloneDatabase(db);
+                    onCloneDatabase(db.name);
                   }}
                   className="text-xs text-muted-foreground hover:text-foreground"
                 >
@@ -50,7 +52,7 @@ export function DatabaseTree({
                 </button>
               )}
             </div>
-            {selectedDB === db && selectedTable && (
+            {selectedDB === db.name && selectedTable && (
               <div className="pl-4 text-sm text-muted-foreground">
                 └ {selectedTable}
               </div>

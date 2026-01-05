@@ -1978,7 +1978,7 @@ $mysqli->close();
                         {col.type}
                       </td>
                       <td className="px-4 py-2">
-                        {col.null === "YES" ? "Yes" : "No"}
+                        {col.nullable ? "Yes" : "No"}
                       </td>
                       <td className="px-4 py-2 text-[var(--muted-foreground)]">
                         {col.default || "NULL"}
@@ -2440,12 +2440,12 @@ $mysqli->close();
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {(databases || []).map((db) => (
                   <Card
-                    key={db}
+                    key={db.name}
                     className="hover:border-[var(--primary)] transition-colors"
                   >
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                       <CardTitle className="text-base font-medium">
-                        {db}
+                        {db.name}
                       </CardTitle>
                       <DatabaseIcon
                         size={16}
@@ -2454,14 +2454,14 @@ $mysqli->close();
                     </CardHeader>
                     <CardContent>
                       <div className="text-xs text-[var(--muted-foreground)] mb-4">
-                        Manage tables in {db}
+                        Manage tables in {db.name}
                       </div>
                       <div className="flex gap-2">
                         <Button
                           variant="secondary"
                           size="sm"
                           className="w-full"
-                          onClick={() => setSelectedDB(db)}
+                          onClick={() => setSelectedDB(db.name)}
                         >
                           Manage
                         </Button>
@@ -2470,10 +2470,10 @@ $mysqli->close();
                           size="sm"
                           onClick={() => {
                             // Dirty hack to set selectedDB for the handler, or just call mutate directly
-                            if (confirm(`Drop database ${db}?`)) {
+                            if (confirm(`Drop database ${db.name}?`)) {
                               executeQueryMutation.mutate({
-                                database: db,
-                                query: `DROP DATABASE \`${db}\``,
+                                database: db.name,
+                                query: `DROP DATABASE \`${db.name}\``,
                               });
                             }
                           }}

@@ -1,5 +1,3 @@
-import React from "react";
-
 interface DatabaseStructureProps {
   database: string;
   onSelectTable: (table: string) => void;

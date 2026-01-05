@@ -101,7 +101,7 @@ export function DataForm({
               />
             )}
             <div className="text-xs text-[var(--muted-foreground)]">
-              {col.type} {col.null === "YES" ? "(Nullable)" : "(Required)"}
+              {col.type} {col.nullable ? "(Nullable)" : "(Required)"}
             </div>
           </div>
         ))}

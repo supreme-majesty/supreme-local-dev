@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect } from "react";
 import { Modal } from "@/components/ui/Modal";
 
 import {
@@ -41,7 +41,7 @@ export function CreateProjectModal({
   const [isBrowserOpen, setIsBrowserOpen] = useState(false);
 
   const { data: state } = useSldState();
-  const parkedPaths = useMemo(() => state?.paths || [], [state?.paths]);
+  const parkedPaths = state?.paths || [];
 
   const createProjectMutation = useCreateProjectMutation();
   const error = createProjectMutation.error?.message;
