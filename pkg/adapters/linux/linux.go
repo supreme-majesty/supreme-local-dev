@@ -319,7 +319,14 @@ func (l *LinuxAdapter) UpdateHosts(domains []string) error {
 
 func (l *LinuxAdapter) InstallCertificates() error {
 	// 1. Get mkcert Root CA path
-	out, err := exec.Command("mkcert", "-CAROOT").Output()
+	var cmd *exec.Cmd
+	if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" {
+		cmd = exec.Command("sudo", "-u", sudoUser, "mkcert", "-CAROOT")
+	} else {
+		cmd = exec.Command("mkcert", "-CAROOT")
+	}
+
+	out, err := cmd.Output()
 	if err != nil {
 		return fmt.Errorf("failed to get mkcert CA path: %w", err)
 	}

@@ -171,12 +171,20 @@ class DaemonApi {
     const url = `${API_BASE}${endpoint}${
       endpoint.includes("?") ? "&" : "?"
     }t=${Date.now()}`;
-    const response = await fetch(url, {
-      headers: {
-        "Content-Type": "application/json",
-      },
-      ...options,
-    });
+    let response;
+    try {
+      response = await fetch(url, {
+        headers: {
+          "Content-Type": "application/json",
+        },
+        ...options,
+      });
+    } catch (error) {
+      console.error("Daemon API Request Error:", error);
+      throw new Error(
+        "Unable to connect to SLD Daemon. Please ensure the service is running via 'sld service start' or './sld daemon'."
+      );
+    }
 
     if (!response.ok) {
       let errorMessage: string;
