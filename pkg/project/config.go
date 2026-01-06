@@ -39,15 +39,8 @@ func Detect(path string) (*Config, error) {
 		}
 	}
 
-	// 2. Check composer.json for PHP version if not already set
-	if config.PHP == "" {
-		composerPath := filepath.Join(path, "composer.json")
-		if _, err := os.Stat(composerPath); err == nil {
-			if phpVer, err := extractPHPVersion(composerPath); err == nil && phpVer != "" {
-				config.PHP = phpVer
-			}
-		}
-	}
+	// PHP version is only read from .sld.yaml (explicit config)
+	// We intentionally do NOT read from composer.json to avoid version conflicts
 
 	// 3. Check .nvmrc for Node version if not already set
 	if config.Node == "" {
@@ -72,7 +65,8 @@ func Detect(path string) (*Config, error) {
 }
 
 // extractPHPVersion parses composer.json to find the required PHP version.
-// It prefers the system's PHP version if it satisfies the constraint.
+// Returns empty string if system PHP satisfies the constraint (use global PHP).
+// Only returns a specific version if the project needs PHP isolation.
 func extractPHPVersion(path string) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -93,12 +87,14 @@ func extractPHPVersion(path string) (string, error) {
 	// Get the system's PHP version
 	systemPHP := getSystemPHPVersion()
 
-	// If system PHP satisfies the constraint, use it
+	// If system PHP satisfies the constraint, return empty to use global PHP
+	// This prevents storing outdated minimum versions that cause Composer mismatches
 	if systemPHP != "" && satisfiesConstraint(systemPHP, constraint) {
-		return systemPHP, nil
+		return "", nil
 	}
 
-	// Fallback: extract minimum version from constraint
+	// Only extract specific version if system PHP doesn't satisfy the constraint
+	// This means the project genuinely needs a different PHP version
 	re := regexp.MustCompile(`(\d+\.\d+)`)
 	matches := re.FindStringSubmatch(constraint)
 	if len(matches) >= 2 {
