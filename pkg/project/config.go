@@ -39,8 +39,16 @@ func Detect(path string) (*Config, error) {
 		}
 	}
 
-	// PHP version is only read from .sld.yaml (explicit config)
-	// We intentionally do NOT read from composer.json to avoid version conflicts
+	// 2. Check composer.json for PHP version (if not set in .sld.yaml)
+	if config.PHP == "" {
+		composerPath := filepath.Join(path, "composer.json")
+		if _, err := os.Stat(composerPath); err == nil {
+			phpVersion, err := extractPHPVersion(composerPath)
+			if err == nil && phpVersion != "" {
+				config.PHP = phpVersion
+			}
+		}
+	}
 
 	// 3. Check .nvmrc for Node version if not already set
 	if config.Node == "" {
