@@ -1,0 +1,37 @@
+#!/bin/bash
+# Post-installation script for supreme-local-dev
+# Uses systemd to defer 'sld install' until after apt releases the lock
+
+set -e
+
+# Install the systemd service to run after apt completes
+if [ -d /etc/systemd/system ]; then
+    cat > /etc/systemd/system/sld-setup.service << 'EOF'
+[Unit]
+Description=Supreme Local Dev Setup
+After=network.target
+ConditionPathExists=!/var/lib/sld/.setup-complete
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/sld install
+ExecStartPost=/bin/touch /var/lib/sld/.setup-complete
+ExecStartPost=/bin/systemctl disable sld-setup.service
+RemainAfterExit=no
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable sld-setup.service
+    nohup systemctl start sld-setup.service > /dev/null 2>&1 &
+fi
+
+echo ""
+echo "✅ Supreme Local Dev installed successfully!"
+echo ""
+
+exit 0

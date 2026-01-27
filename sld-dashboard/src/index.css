@@ -1,0 +1,267 @@
+@import "tailwindcss";
+
+/* ================================================
+   SUPREME LOCAL DEV - Design System
+   Dark-first theme with blue/indigo accents
+   ================================================ */
+
+/* Custom Properties */
+:root {
+  /* Colors - HSL values for flexibility */
+  --color-slate-50: 210 40% 98%;
+  --color-slate-100: 210 40% 96%;
+  --color-slate-200: 214 32% 91%;
+  --color-slate-300: 213 27% 84%;
+  --color-slate-400: 215 20% 65%;
+  --color-slate-500: 215 16% 47%;
+  --color-slate-600: 215 19% 35%;
+  --color-slate-700: 215 25% 27%;
+  --color-slate-800: 217 33% 17%;
+  --color-slate-900: 222 47% 11%;
+  --color-slate-950: 229 84% 5%;
+
+  /* Accent Colors */
+  --color-blue-400: 213 94% 68%;
+  --color-blue-500: 217 91% 60%;
+  --color-blue-600: 221 83% 53%;
+  --color-indigo-400: 238 94% 77%;
+  --color-indigo-500: 239 84% 67%;
+  --color-indigo-600: 243 75% 59%;
+
+  /* Status Colors */
+  --color-green-400: 142 69% 58%;
+  --color-green-500: 142 71% 45%;
+  --color-red-400: 0 91% 71%;
+  --color-red-500: 0 84% 60%;
+  --color-amber-400: 38 92% 50%;
+  --color-amber-500: 38 92% 50%;
+
+  /* Semantic Colors - Dark Mode (default) */
+  --background: hsl(var(--color-slate-950));
+  --foreground: hsl(var(--color-slate-50));
+  --muted: hsl(var(--color-slate-800));
+  --muted-foreground: hsl(var(--color-slate-400));
+  --card: hsl(var(--color-slate-900));
+  --card-foreground: hsl(var(--color-slate-100));
+  --card-hover: hsl(var(--color-slate-800));
+  --border: hsl(var(--color-slate-700));
+  --input: hsl(var(--color-slate-800));
+  --ring: hsl(var(--color-blue-500));
+  --primary: hsl(var(--color-blue-500));
+  --primary-foreground: hsl(var(--color-slate-50));
+  --secondary: hsl(var(--color-slate-700));
+  --secondary-foreground: hsl(var(--color-slate-200));
+  --accent: hsl(var(--color-indigo-500));
+  --accent-foreground: hsl(var(--color-slate-50));
+  --destructive: hsl(var(--color-red-500));
+  --destructive-foreground: hsl(var(--color-slate-50));
+  --success: hsl(var(--color-green-500));
+  --warning: hsl(var(--color-amber-500));
+
+  /* Sizing */
+  --sidebar-width: 240px;
+  --sidebar-collapsed-width: 64px;
+  --topbar-height: 56px;
+  --border-radius: 0.75rem;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.4);
+  --shadow: 0 1px 3px 0 rgb(0 0 0 / 0.4), 0 1px 2px -1px rgb(0 0 0 / 0.4);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.4), 0 2px 4px -2px rgb(0 0 0 / 0.4);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.4),
+    0 4px 6px -4px rgb(0 0 0 / 0.4);
+
+  /* Animation */
+  --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-normal: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-slow: 300ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Light Mode */
+[data-theme="light"] {
+  --background: hsl(var(--color-slate-50));
+  --foreground: hsl(var(--color-slate-900));
+  --muted: hsl(var(--color-slate-200));
+  --muted-foreground: hsl(var(--color-slate-500));
+  --card: hsl(210 40% 100%); /* white */
+  --card-foreground: hsl(var(--color-slate-900));
+  --card-hover: hsl(var(--color-slate-100));
+  --border: hsl(var(--color-slate-300));
+  --input: hsl(var(--color-slate-100));
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1),
+    0 4px 6px -4px rgb(0 0 0 / 0.1);
+}
+
+/* Base Styles */
+*,
+*::before,
+*::after {
+  border-color: var(--border);
+}
+
+html {
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    sans-serif;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Typography */
+.font-mono {
+  font-family: "JetBrains Mono", "Fira Code", "SF Mono", Monaco, "Inconsolata",
+    monospace;
+}
+
+/* Scrollbar Styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--muted);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted-foreground);
+}
+
+/* Focus Styles */
+*:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+/* Animation Classes */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slide-in-right {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes slide-in-up {
+  from {
+    transform: translateY(10px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes pulse-gentle {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-fade-in {
+  animation: fade-in var(--transition-normal) ease-out;
+}
+
+.animate-slide-in-right {
+  animation: slide-in-right var(--transition-normal) ease-out;
+}
+
+.animate-slide-in-up {
+  animation: slide-in-up var(--transition-normal) ease-out;
+}
+
+.animate-pulse-gentle {
+  animation: pulse-gentle 2s ease-in-out infinite;
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+/* Utility Classes */
+.glass {
+  background: rgba(30, 41, 59, 0.8);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+[data-theme="light"] .glass {
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.gradient-text {
+  background: linear-gradient(
+    135deg,
+    hsl(var(--color-blue-400)),
+    hsl(var(--color-indigo-400))
+  );
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Status Dot Animation */
+.status-dot {
+  position: relative;
+}
+
+.status-dot::after {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: 50%;
+  animation: pulse-gentle 2s ease-in-out infinite;
+}
+
+.status-dot.running::after {
+  background: hsl(var(--color-green-400) / 0.3);
+}
+
+.status-dot.stopped::after {
+  background: hsl(var(--color-red-400) / 0.3);
+}

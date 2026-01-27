@@ -1,0 +1,16 @@
+[Unit]
+Description=Supreme Local Dev Daemon
+Documentation=https://github.com/supreme-majesty/supreme-local-dev
+After=network.target nginx.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/sld daemon
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+Environment=HOME=/root
+
+[Install]
+WantedBy=multi-user.target
