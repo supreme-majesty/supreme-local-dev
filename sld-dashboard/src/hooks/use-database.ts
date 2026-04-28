@@ -290,8 +290,8 @@ export function useCloneDatabaseMutation() {
   const addToast = useAppStore((s) => s.addToast);
 
   return useMutation({
-    mutationFn: (vars: { source: string; target: string }) =>
-      api.cloneDatabase(vars.source, vars.target),
+    mutationFn: (vars: { source: string; target: string; mode: string }) =>
+      api.cloneDatabase(vars.source, vars.target, vars.mode),
     onSuccess: (_, vars) => {
       queryClient.invalidateQueries({ queryKey: dbKeys.list() });
       addToast({ 
@@ -306,6 +306,38 @@ export function useCloneDatabaseMutation() {
         title: "Failed to clone database",
         description: err.message,
       });
+    },
+  });
+}
+
+export function useCollations() {
+  return useQuery({
+    queryKey: ["db", "collations"],
+    queryFn: async () => {
+      const result = await api.executeQuery("information_schema", "SHOW COLLATION");
+      return (result.rows || []).map((row: any) => ({
+        name: row.Collation || row.collation,
+        charset: row.Charset || row.charset,
+      }));
+    },
+  });
+}
+
+export function useDatabaseSettings(dbName: string | null) {
+  return useQuery({
+    queryKey: ["db", "settings", dbName],
+    enabled: !!dbName,
+    queryFn: async () => {
+      if (!dbName) return null;
+      const result = await api.executeQuery(
+        "information_schema", 
+        `SELECT DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '${dbName}'`
+      );
+      const row = result.rows?.[0];
+      return row ? {
+        charset: row.DEFAULT_CHARACTER_SET_NAME,
+        collation: row.DEFAULT_COLLATION_NAME,
+      } : null;
     },
   });
 }

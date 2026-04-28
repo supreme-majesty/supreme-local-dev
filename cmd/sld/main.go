@@ -821,7 +821,7 @@ var dbCloneCmd = &cobra.Command{
 		}
 
 		fmt.Printf("Cloning database %s -> %s...\n", args[0], args[1])
-		if err := d.DatabaseService.CloneDatabase(args[0], args[1]); err != nil {
+		if err := d.DatabaseService.CloneDatabase(args[0], args[1], "both"); err != nil {
 			return err
 		}
 		fmt.Println("✅ Database cloned successfully!")

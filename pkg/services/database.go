@@ -313,9 +313,13 @@ func (d *DatabaseService) ImportSQL(database, sqlFilePath string) error {
 }
 
 // CloneDatabase creates a copy of a database using mysqldump piped directly to mysql
-func (d *DatabaseService) CloneDatabase(source, target string) error {
+func (d *DatabaseService) CloneDatabase(source, target string, mode string) error {
 	if err := d.ensureConnected(); err != nil {
 		return err
+	}
+
+	if mode == "" {
+		mode = "both"
 	}
 
 	// Validate source exists
@@ -337,8 +341,18 @@ func (d *DatabaseService) CloneDatabase(source, target string) error {
 		return fmt.Errorf("failed to create target database: %w", err)
 	}
 
+	// Prepare mysqldump args
+	dumpArgs := []string{"-u", "root"}
+	switch mode {
+	case "structure":
+		dumpArgs = append(dumpArgs, "--no-data")
+	case "data":
+		dumpArgs = append(dumpArgs, "--no-create-info")
+	}
+	dumpArgs = append(dumpArgs, source)
+
 	// Use pipe: mysqldump source | mysql target
-	dumpCmd := exec.Command("mysqldump", "-u", "root", source)
+	dumpCmd := exec.Command("mysqldump", dumpArgs...)
 	importCmd := exec.Command("mysql", "-u", "root", target)
 
 	// Create pipe

@@ -636,10 +636,10 @@ class DaemonApi {
   }
 
   // Database Clone
-  async cloneDatabase(source: string, target: string): Promise<ActionResponse> {
+  async cloneDatabase(source: string, target: string, mode: string = "both"): Promise<ActionResponse> {
     return this.request<ActionResponse>("/db/clone", {
       method: "POST",
-      body: JSON.stringify({ source, target }),
+      body: JSON.stringify({ source, target, mode }),
     });
   }
 

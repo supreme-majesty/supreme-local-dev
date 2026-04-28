@@ -1265,6 +1265,7 @@ func (s *Server) handleDBClone(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Source string `json:"source"`
 		Target string `json:"target"`
+		Mode   string `json:"mode"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
@@ -1277,7 +1278,7 @@ func (s *Server) handleDBClone(w http.ResponseWriter, r *http.Request) {
 	}
 
 	d, _ := daemon.GetClient()
-	if err := d.DatabaseService.CloneDatabase(req.Source, req.Target); err != nil {
+	if err := d.DatabaseService.CloneDatabase(req.Source, req.Target, req.Mode); err != nil {
 		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
 		return
 	}
