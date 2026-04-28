@@ -139,6 +139,19 @@ export default function Database() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Sync activeTab with selection context
+  useEffect(() => {
+    if (!selectedDB) {
+      if (activeTab !== "databases" && activeTab !== "sql") {
+        setActiveTab("databases");
+      }
+    } else if (!selectedTable) {
+      if (activeTab === "browse" || activeTab === "insert" || activeTab === "search") {
+        setActiveTab("structure");
+      }
+    }
+  }, [selectedDB, selectedTable, activeTab]);
+
   // Queries - use table control options
   const {
     data: tableData,
