@@ -89,6 +89,7 @@ export interface ColumnInfo {
   nullable: boolean;
   key: string;
   default: string;
+  extra?: string;
   foreign_key?: {
     table: string;
     column: string;

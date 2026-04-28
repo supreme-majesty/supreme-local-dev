@@ -47,6 +47,7 @@ import { SQLConsole } from "@/components/database/SQLConsole";
 import { DatabaseTree } from "@/components/database/DatabaseTree";
 import { DataForm } from "@/components/database/DataForm";
 import { DatabaseStructure } from "@/components/database/DatabaseStructure";
+import { AlterTableDesigner } from "@/components/database/AlterTableDesigner";
 import { TableCreator } from "@/components/database/TableCreator";
 import { CloneDatabaseModal } from "@/components/database/CloneDatabaseModal";
 import { CreateDatabaseModal } from "@/components/database/CreateDatabaseModal";
@@ -80,6 +81,7 @@ export default function Database() {
   const [editingRow, setEditingRow] = useState<Record<string, any> | null>(
     null,
   );
+  const [alteringTable, setAlteringTable] = useState<string | null>(null);
   const [insertFormKey, setInsertFormKey] = useState(0);
   const [searchCriteria, setSearchCriteria] = useState<
     Record<string, { value: string; operator: string }>
@@ -2073,7 +2075,32 @@ $mysqli->close();
               onBulkDrop={handleBulkDropTables}
               onBulkEmpty={handleBulkEmptyTables}
               onBulkAction={handleBulkTableAction}
+              onAlterTable={(table) => setAlteringTable(table)}
             />
+          )}
+
+          {/* Alter Table Modal (Global) */}
+          {alteringTable && selectedDB && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+              <div className="w-full max-w-6xl max-h-[90vh] overflow-y-auto rounded-lg shadow-2xl">
+                <AlterTableDesigner
+                  database={selectedDB}
+                  table={alteringTable}
+                  onCancel={() => setAlteringTable(null)}
+                  onSave={(sql) => {
+                    executeQueryMutation.mutate(
+                      { database: selectedDB, query: sql },
+                      {
+                        onSuccess: () => {
+                          setAlteringTable(null);
+                        },
+                      }
+                    );
+                  }}
+                  isLoading={executeQueryMutation.isPending}
+                />
+              </div>
+            </div>
           )}
 
           {/* Context: Edit */}

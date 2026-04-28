@@ -10,6 +10,7 @@ import {
   FileInput,
   Minimize2,
   Table as TableIcon,
+  Edit2,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/Checkbox";
 
@@ -21,6 +22,7 @@ interface DatabaseStructureProps {
   onBulkDrop: (tables: string[]) => void;
   onBulkEmpty: (tables: string[]) => void;
   onBulkAction: (tables: string[], action: string) => void;
+  onAlterTable: (table: string) => void;
 }
 
 export function DatabaseStructure({
@@ -31,6 +33,7 @@ export function DatabaseStructure({
   onBulkDrop,
   onBulkEmpty,
   onBulkAction,
+  onAlterTable,
 }: DatabaseStructureProps) {
   const { data: tables = [], isLoading } = useTables(database);
   const [filter, setFilter] = useState("");
@@ -103,7 +106,7 @@ export function DatabaseStructure({
                 </th>
                 <th
                   className="p-2 font-bold text-[var(--foreground)]"
-                  colSpan={6}
+                  colSpan={7}
                 >
                   Action
                 </th>
@@ -153,6 +156,17 @@ export function DatabaseStructure({
                     >
                       <TableIcon size={12} />{" "}
                       <span className="text-xs">Structure</span>
+                    </Button>
+                  </td>
+                  <td className="p-1 w-8">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 gap-1 px-1 text-[var(--muted-foreground)] hover:text-[var(--primary)]"
+                      onClick={() => onAlterTable(t.name)}
+                    >
+                      <Edit2 size={12} />{" "}
+                      <span className="text-xs">Alter</span>
                     </Button>
                   </td>
                   <td className="p-1 w-8">

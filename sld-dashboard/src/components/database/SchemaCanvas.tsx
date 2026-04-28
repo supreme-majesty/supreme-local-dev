@@ -12,15 +12,17 @@ import {
   MarkerType,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { Table as TableIcon, Key, Link as LinkIcon, Database } from "lucide-react";
-import { useTables } from "@/hooks/use-database";
+import { Table as TableIcon, Key, Link as LinkIcon, Database, Edit2 } from "lucide-react";
+import { useTables, useExecuteQueryMutation } from "@/hooks/use-database";
 import { api } from "@/api/daemon";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { AlterTableDesigner } from "./AlterTableDesigner";
 
 type TableNodeData = {
   label: string;
   columns: any[];
   database: string;
+  onEdit?: (table: string) => void;
 };
 
 type CustomNode = Node<TableNodeData, "table">;
@@ -29,9 +31,20 @@ type CustomNode = Node<TableNodeData, "table">;
 const TableNode = ({ data }: NodeProps<CustomNode>) => {
   return (
     <div className="bg-[var(--card)] border border-[var(--border)] rounded-lg shadow-xl min-w-[200px] overflow-hidden">
-      <div className="bg-[var(--primary)]/10 px-3 py-2 border-b border-[var(--border)] flex items-center gap-2">
-        <TableIcon size={14} className="text-[var(--primary)]" />
-        <span className="font-bold text-sm text-[var(--foreground)]">{data.label}</span>
+      <div className="bg-[var(--primary)]/10 px-3 py-2 border-b border-[var(--border)] flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <TableIcon size={14} className="text-[var(--primary)]" />
+          <span className="font-bold text-sm text-[var(--foreground)]">{data.label}</span>
+        </div>
+        {data.onEdit && (
+          <button
+            onClick={() => data.onEdit!(data.label)}
+            className="text-[var(--muted-foreground)] hover:text-[var(--primary)] p-1 rounded hover:bg-[var(--primary)]/20 transition-colors"
+            title="Alter Table"
+          >
+            <Edit2 size={14} />
+          </button>
+        )}
       </div>
       <div className="p-0">
         {data.columns?.map((col: any) => (
@@ -83,9 +96,28 @@ interface SchemaCanvasProps {
 }
 
 export function SchemaCanvas({ database }: SchemaCanvasProps) {
-  const { data: tables = [], isLoading: loadingTables } = useTables(database);
+  const { data: tables = [], isLoading: loadingTables, refetch } = useTables(database);
   const [nodes, setNodes, onNodesChange] = useNodesState<CustomNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+  const [editingTable, setEditingTable] = useState<string | null>(null);
+  
+  const executeQueryMutation = useExecuteQueryMutation();
+
+  const handleEditTable = (table: string) => {
+    setEditingTable(table);
+  };
+
+  const handleSaveAlter = (sql: string) => {
+    executeQueryMutation.mutate(
+      { database, query: sql },
+      {
+        onSuccess: () => {
+          setEditingTable(null);
+          refetch(); // Refresh tables and therefore the graph
+        },
+      }
+    );
+  };
 
   // Fetch all table columns to build the graph
   // Note: In a real app, we might want a single endpoint for full schema
@@ -120,7 +152,8 @@ export function SchemaCanvas({ database }: SchemaCanvasProps) {
               data: { 
                 label: table.name, 
                 columns,
-                database 
+                database,
+                onEdit: handleEditTable
               },
             });
 
@@ -184,6 +217,21 @@ export function SchemaCanvas({ database }: SchemaCanvasProps) {
         <Background gap={20} size={1} color="var(--border)" />
         <Controls />
       </ReactFlow>
+
+      {/* Alter Table Modal */}
+      {editingTable && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="w-full max-w-6xl max-h-[90vh] overflow-y-auto rounded-lg shadow-2xl">
+            <AlterTableDesigner
+              database={database}
+              table={editingTable}
+              onCancel={() => setEditingTable(null)}
+              onSave={handleSaveAlter}
+              isLoading={executeQueryMutation.isPending}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
