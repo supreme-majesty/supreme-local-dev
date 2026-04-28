@@ -33,6 +33,11 @@ export function DatabaseOperations({ database, onSelectDb, onCreateTable }: Data
   const [newName, setNewName] = useState(database);
   const [copyName, setCopyName] = useState(`${database}_copy`);
   const [copyOption, setCopyOption] = useState<"structure" | "both" | "data">("both");
+  const [createDb, setCreateDb] = useState(true);
+  const [addDrop, setAddDrop] = useState(false);
+  const [addAutoInc, setAddAutoInc] = useState(true);
+  const [addConstraints, setAddConstraints] = useState(true);
+  const [switchDb, setSwitchDb] = useState(true);
   const [selectedCollation, setSelectedCollation] = useState("");
   const [changeAllTables, setChangeAllTables] = useState(false);
 
@@ -62,8 +67,20 @@ export function DatabaseOperations({ database, onSelectDb, onCreateTable }: Data
 
   const handleCopy = () => {
     if (!copyName) return;
-    cloneMutation.mutate({ source: database, target: copyName, mode: copyOption }, {
-      onSuccess: () => onSelectDb(copyName)
+    cloneMutation.mutate({ 
+      source: database, 
+      target: copyName, 
+      mode: copyOption,
+      create_db: createDb,
+      add_drop: addDrop,
+      add_auto_inc: addAutoInc,
+      add_constraints: addConstraints
+    }, {
+      onSuccess: () => {
+        if (switchDb) {
+          onSelectDb(copyName);
+        }
+      }
     });
   };
 
@@ -199,6 +216,58 @@ export function DatabaseOperations({ database, onSelectDb, onCreateTable }: Data
                   className="accent-[var(--primary)]"
                 />
                 <span className="group-hover:text-[var(--primary)]">Data only</span>
+              </label>
+            </div>
+
+            <div className="space-y-2 pt-4 border-t border-[var(--border)]">
+              <label className="flex items-center gap-2 text-sm cursor-pointer hover:text-[var(--primary)] transition-colors">
+                <input 
+                  type="checkbox" 
+                  checked={createDb} 
+                  onChange={(e) => setCreateDb(e.target.checked)}
+                  className="accent-[var(--primary)]"
+                />
+                <span>CREATE DATABASE before copying</span>
+              </label>
+              <label className="flex items-center gap-2 text-sm cursor-pointer hover:text-[var(--primary)] transition-colors">
+                <input 
+                  type="checkbox" 
+                  checked={addDrop} 
+                  onChange={(e) => setAddDrop(e.target.checked)}
+                  className="accent-[var(--primary)]"
+                />
+                <span>Add DROP TABLE / DROP VIEW</span>
+              </label>
+              <label className="flex items-center gap-2 text-sm cursor-pointer hover:text-[var(--primary)] transition-colors">
+                <input 
+                  type="checkbox" 
+                  checked={addAutoInc} 
+                  onChange={(e) => setAddAutoInc(e.target.checked)}
+                  className="accent-[var(--primary)]"
+                />
+                <span>Add AUTO_INCREMENT value</span>
+              </label>
+              <label className="flex items-center gap-2 text-sm cursor-pointer hover:text-[var(--primary)] transition-colors">
+                <input 
+                  type="checkbox" 
+                  checked={addConstraints} 
+                  onChange={(e) => setAddConstraints(e.target.checked)}
+                  className="accent-[var(--primary)]"
+                />
+                <span>Add constraints</span>
+              </label>
+              <label className="flex items-center gap-2 text-sm cursor-pointer hover:text-[var(--primary)] transition-colors opacity-50">
+                <input type="checkbox" disabled className="accent-[var(--primary)]" />
+                <span>Adjust privileges</span>
+              </label>
+              <label className="flex items-center gap-2 text-sm cursor-pointer hover:text-[var(--primary)] transition-colors">
+                <input 
+                  type="checkbox" 
+                  checked={switchDb} 
+                  onChange={(e) => setSwitchDb(e.target.checked)}
+                  className="accent-[var(--primary)]"
+                />
+                <span>Switch to copied database</span>
               </label>
             </div>
 

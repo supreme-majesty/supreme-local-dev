@@ -1263,9 +1263,13 @@ func (s *Server) handleDBClone(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Source string `json:"source"`
-		Target string `json:"target"`
-		Mode   string `json:"mode"`
+		Source         string `json:"source"`
+		Target         string `json:"target"`
+		Mode           string `json:"mode"`
+		CreateDatabase bool   `json:"create_db"`
+		AddDropTable   bool   `json:"add_drop"`
+		AddAutoInc     bool   `json:"add_auto_inc"`
+		AddConstraints bool   `json:"add_constraints"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
@@ -1278,7 +1282,14 @@ func (s *Server) handleDBClone(w http.ResponseWriter, r *http.Request) {
 	}
 
 	d, _ := daemon.GetClient()
-	if err := d.DatabaseService.CloneDatabase(req.Source, req.Target, req.Mode); err != nil {
+	opts := services.CloneOptions{
+		Mode:             req.Mode,
+		CreateDatabase:   req.CreateDatabase,
+		AddDropTable:     req.AddDropTable,
+		AddAutoIncrement: req.AddAutoInc,
+		AddConstraints:   req.AddConstraints,
+	}
+	if err := d.DatabaseService.CloneDatabase(req.Source, req.Target, opts); err != nil {
 		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
 		return
 	}

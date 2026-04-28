@@ -290,8 +290,22 @@ export function useCloneDatabaseMutation() {
   const addToast = useAppStore((s) => s.addToast);
 
   return useMutation({
-    mutationFn: (vars: { source: string; target: string; mode: string }) =>
-      api.cloneDatabase(vars.source, vars.target, vars.mode),
+    mutationFn: (vars: { 
+      source: string; 
+      target: string; 
+      mode: string;
+      create_db?: boolean;
+      add_drop?: boolean;
+      add_auto_inc?: boolean;
+      add_constraints?: boolean;
+    }) =>
+      api.cloneDatabase(vars.source, vars.target, {
+        mode: vars.mode,
+        create_db: vars.create_db,
+        add_drop: vars.add_drop,
+        add_auto_inc: vars.add_auto_inc,
+        add_constraints: vars.add_constraints
+      }),
     onSuccess: (_, vars) => {
       queryClient.invalidateQueries({ queryKey: dbKeys.list() });
       addToast({ 

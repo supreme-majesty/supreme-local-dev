@@ -807,7 +807,7 @@ func (pm *ProjectManager) CreateProject(options ProjectOptions) error {
 // CloneProject creates a "Ghost" clone of a project for experimentation.
 // It copies the project files (excluding heavy dirs) and optionally clones its database.
 func (pm *ProjectManager) CloneProject(sourcePath, targetName string, cloneDB bool, dbService interface {
-	CloneDatabase(source, target string, mode string) error
+	CloneDatabase(source, target string, opts CloneOptions) error
 }) (string, error) {
 	// 1. Validate source exists
 	if _, err := os.Stat(sourcePath); os.IsNotExist(err) {
@@ -871,7 +871,7 @@ func (pm *ProjectManager) CloneProject(sourcePath, targetName string, cloneDB bo
 					targetDBName = strings.ReplaceAll(targetDBName, "-", "_")
 
 					fmt.Printf("[GHOST MODE] Cloning database %s -> %s\n", sourceDBName, targetDBName)
-					if err := dbService.CloneDatabase(sourceDBName, targetDBName, "both"); err != nil {
+					if err := dbService.CloneDatabase(sourceDBName, targetDBName, CloneOptions{Mode: "both", CreateDatabase: true, AddAutoIncrement: true, AddConstraints: true}); err != nil {
 						fmt.Printf("[GHOST MODE] Warning: DB clone failed: %v\n", err)
 					} else {
 						// Update .env in target to point to new DB

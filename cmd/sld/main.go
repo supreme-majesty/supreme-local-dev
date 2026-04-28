@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/supreme-majesty/supreme-local-dev/pkg/daemon"
 	"github.com/supreme-majesty/supreme-local-dev/pkg/daemon/api"
+	"github.com/supreme-majesty/supreme-local-dev/pkg/services"
 )
 
 var rootCmd = &cobra.Command{
@@ -821,7 +822,7 @@ var dbCloneCmd = &cobra.Command{
 		}
 
 		fmt.Printf("Cloning database %s -> %s...\n", args[0], args[1])
-		if err := d.DatabaseService.CloneDatabase(args[0], args[1], "both"); err != nil {
+		if err := d.DatabaseService.CloneDatabase(args[0], args[1], services.CloneOptions{Mode: "both", CreateDatabase: true, AddAutoIncrement: true, AddConstraints: true}); err != nil {
 			return err
 		}
 		fmt.Println("✅ Database cloned successfully!")

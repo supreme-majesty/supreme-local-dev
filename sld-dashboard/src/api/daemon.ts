@@ -636,10 +636,16 @@ class DaemonApi {
   }
 
   // Database Clone
-  async cloneDatabase(source: string, target: string, mode: string = "both"): Promise<ActionResponse> {
+  async cloneDatabase(source: string, target: string, options: {
+    mode?: string;
+    create_db?: boolean;
+    add_drop?: boolean;
+    add_auto_inc?: boolean;
+    add_constraints?: boolean;
+  } = {}): Promise<ActionResponse> {
     return this.request<ActionResponse>("/db/clone", {
       method: "POST",
-      body: JSON.stringify({ source, target, mode }),
+      body: JSON.stringify({ source, target, ...options }),
     });
   }
 
