@@ -330,6 +330,10 @@ function FileEditor({
                 fontSize: 13,
                 scrollBeyondLastLine: false,
                 automaticLayout: true,
+                suggestOnTriggerCharacters: true,
+                quickSuggestions: true,
+                wordBasedSuggestions: "allDocuments",
+                folding: true,
               }}
             />
           </div>

@@ -26,10 +26,22 @@ export function FileManager({ projectPath }: FileManagerProps) {
   const [selectedFile, setSelectedFile] = useState<FileInfo | null>(null);
   const [editorContent, setEditorContent] = useState("");
   const [isDirty, setIsDirty] = useState(false);
+  const [autoSave, setAutoSave] = useState(false);
   
   const { data: files = [], isLoading, refetch } = useProjectFiles(currentPath);
   const { data: fileContent, isLoading: isLoadingContent } = useProjectFileContent(selectedFile?.path || null);
   const saveMutation = useSaveProjectFileMutation();
+
+  // Auto-save logic
+  useEffect(() => {
+    if (!autoSave || !isDirty || !selectedFile) return;
+
+    const timer = setTimeout(() => {
+      handleSave();
+    }, 2000); // Save after 2 seconds of inactivity
+
+    return () => clearTimeout(timer);
+  }, [editorContent, autoSave, isDirty, selectedFile]);
 
   useEffect(() => {
     if (fileContent) {
@@ -145,6 +157,22 @@ export function FileManager({ projectPath }: FileManagerProps) {
               </div>
               
               <div className="flex items-center gap-2">
+                <label className="flex items-center gap-2 mr-4 cursor-pointer">
+                  <div 
+                    className={cn(
+                      "w-8 h-4 rounded-full relative transition-colors",
+                      autoSave ? "bg-emerald-500" : "bg-[var(--muted)]"
+                    )}
+                    onClick={() => setAutoSave(!autoSave)}
+                  >
+                    <div className={cn(
+                      "absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all",
+                      autoSave ? "left-4.5" : "left-0.5"
+                    )} />
+                  </div>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--muted-foreground)]">Auto Save</span>
+                </label>
+
                 <Button 
                   size="sm" 
                   onClick={handleSave} 
@@ -152,7 +180,7 @@ export function FileManager({ projectPath }: FileManagerProps) {
                   className="h-8 gap-1.5"
                 >
                   <Save size={14} />
-                  Save
+                  {saveMutation.isPending ? "Saving..." : "Save"}
                 </Button>
                 <Button 
                   variant="ghost" 
@@ -188,6 +216,18 @@ export function FileManager({ projectPath }: FileManagerProps) {
                   scrollBeyondLastLine: false,
                   automaticLayout: true,
                   padding: { top: 10, bottom: 10 },
+                  suggestOnTriggerCharacters: true,
+                  quickSuggestions: {
+                    other: true,
+                    comments: true,
+                    strings: true,
+                  },
+                  wordBasedSuggestions: "allDocuments",
+                  parameterHints: { enabled: true },
+                  folding: true,
+                  links: true,
+                  formatOnPaste: true,
+                  formatOnType: true,
                 }}
               />
             </div>
