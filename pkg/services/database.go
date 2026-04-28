@@ -242,20 +242,7 @@ func (d *DatabaseService) RestoreSnapshot(filename string) error {
 	}
 	dbName := strings.Join(parts[:len(parts)-2], "_")
 
-	// Run mysql import
-	cmd := exec.Command("mysql", "-u", "root", dbName)
-	file, err := os.Open(filepath)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	cmd.Stdin = file
-
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("restore failed: %s", string(output))
-	}
-
-	return nil
+	return d.driver.RestoreSnapshot(dbName, filepath)
 }
 
 // DeleteSnapshot deletes a snapshot file
@@ -490,4 +477,11 @@ func (d *DatabaseService) GetTableRelationships(database string) ([]TableRelatio
 		return nil, err
 	}
 	return d.driver.GetTableRelationships(database)
+}
+
+func (d *DatabaseService) GetTableIndexes(database, table string) ([]IndexInfo, error) {
+	if err := d.ensureConnected(); err != nil {
+		return nil, err
+	}
+	return d.driver.GetTableIndexes(database, table)
 }

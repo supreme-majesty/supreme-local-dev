@@ -105,6 +105,14 @@ export interface TableData {
   query_time?: number; // Query execution time in seconds (when profiling enabled)
 }
 
+export interface IndexInfo {
+  name: string;
+  columns: string[];
+  unique: boolean;
+  primary: boolean;
+  type: string;
+}
+
 export interface Snapshot {
   id: string;
   database: string;
@@ -253,6 +261,12 @@ class DaemonApi {
   async getTableSchema(database: string, table: string): Promise<ColumnInfo[]> {
     return this.request<ColumnInfo[]>(
       `/db/schema?db=${database}&table=${table}`,
+    );
+  }
+
+  async getTableIndexes(database: string, table: string): Promise<IndexInfo[]> {
+    return this.request<IndexInfo[]>(
+      `/db/indexes?db=${database}&table=${table}`,
     );
   }
 

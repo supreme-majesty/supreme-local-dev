@@ -454,3 +454,39 @@ func (d *MySQLDriver) RestoreSnapshot(database string, filepath string) error {
 	}
 	return nil
 }
+func (d *MySQLDriver) GetTableIndexes(database, table string) ([]IndexInfo, error) {
+	if _, err := d.db.Exec("USE " + database); err != nil {
+		return nil, err
+	}
+
+	rows, err := d.db.Query(fmt.Sprintf("SHOW INDEX FROM `%s`", table))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	indexMap := make(map[string]*IndexInfo)
+	for rows.Next() {
+		var table, nonUnique, keyName, seq, column, collation, cardinality, subPart, packed, null, indexType, comment, indexComment string
+		if err := rows.Scan(&table, &nonUnique, &keyName, &seq, &column, &collation, &cardinality, &subPart, &packed, &null, &indexType, &comment, &indexComment); err != nil {
+			continue
+		}
+
+		if _, ok := indexMap[keyName]; !ok {
+			indexMap[keyName] = &IndexInfo{
+				Name:    keyName,
+				Columns: []string{},
+				Unique:  nonUnique == "0",
+				Primary: keyName == "PRIMARY",
+				Type:    indexType,
+			}
+		}
+		indexMap[keyName].Columns = append(indexMap[keyName].Columns, column)
+	}
+
+	var indexes []IndexInfo
+	for _, idx := range indexMap {
+		indexes = append(indexes, *idx)
+	}
+	return indexes, nil
+}

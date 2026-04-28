@@ -461,7 +461,7 @@ func (d *PostgresDriver) CreateSnapshot(database, table string, filepath string)
 	return os.WriteFile(filepath, output, 0644)
 }
 
-func (d *PostgresDriver) RestoreSnapshot(database string, filepath string) error {
+func (d *PostgresDriver) RestoreSnapshot(database, filepath string) error {
 	cmd := exec.Command("psql", "-h", "localhost", "-U", "postgres", database)
 	file, err := os.Open(filepath)
 	if err != nil {
@@ -473,4 +473,60 @@ func (d *PostgresDriver) RestoreSnapshot(database string, filepath string) error
 		return fmt.Errorf("restore failed: %s", string(out))
 	}
 	return nil
+}
+func (d *PostgresDriver) GetTableIndexes(database, table string) ([]IndexInfo, error) {
+	targetDSN := strings.Replace(d.dsn, "/postgres?", "/"+database+"?", 1)
+	tempDB, err := sql.Open("postgres", targetDSN)
+	if err != nil {
+		return nil, err
+	}
+	defer tempDB.Close()
+
+	query := `
+		SELECT
+			indexname as index_name,
+			indexdef as index_def
+		FROM
+			pg_indexes
+		WHERE
+			schemaname = 'public'
+			AND tablename = $1
+	`
+	rows, err := tempDB.Query(query, table)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var indexes []IndexInfo
+	for rows.Next() {
+		var name, def string
+		if err := rows.Scan(&name, &def); err != nil {
+			continue
+		}
+
+		unique := strings.Contains(strings.ToUpper(def), "UNIQUE")
+		primary := strings.HasSuffix(name, "_pkey")
+
+		// Extract columns from def: CREATE INDEX ... ON ... USING ... (col1, col2)
+		start := strings.Index(def, "(")
+		end := strings.LastIndex(def, ")")
+		var cols []string
+		if start != -1 && end != -1 && end > start {
+			colStr := def[start+1 : end]
+			parts := strings.Split(colStr, ",")
+			for _, p := range parts {
+				cols = append(cols, strings.TrimSpace(p))
+			}
+		}
+
+		indexes = append(indexes, IndexInfo{
+			Name:    name,
+			Columns: cols,
+			Unique:  unique,
+			Primary: primary,
+			Type:    "btree", // default for pg_indexes
+		})
+	}
+	return indexes, nil
 }

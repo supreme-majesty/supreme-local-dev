@@ -22,7 +22,10 @@ type DatabaseDriver interface {
 
 	// Backup/Restore
 	CreateSnapshot(database, table string, filepath string) error
-	RestoreSnapshot(database string, filepath string) error
+	RestoreSnapshot(database, filepath string) error
+
+	// Advanced Schema
+	GetTableIndexes(database, table string) ([]IndexInfo, error)
 }
 
 type ConnectionConfig struct {
@@ -89,4 +92,12 @@ type QueryResult struct {
 	RowCount        int                      `json:"row_count"`
 	AffectedRows    int64                    `json:"affected_rows,omitempty"`
 	ExecutionTimeMs int64                    `json:"execution_time_ms"`
+}
+
+type IndexInfo struct {
+	Name    string   `json:"name"`
+	Columns []string `json:"columns"`
+	Unique  bool     `json:"unique"`
+	Primary bool     `json:"primary"`
+	Type    string   `json:"type"`
 }

@@ -27,6 +27,7 @@ import {
   Copy,
   X,
   ExternalLink,
+  Network,
 } from "lucide-react";
 import { formatBytes, formatDate } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
@@ -49,6 +50,7 @@ import { DatabaseStructure } from "@/components/database/DatabaseStructure";
 import { TableCreator } from "@/components/database/TableCreator";
 import { CloneDatabaseModal } from "@/components/database/CloneDatabaseModal";
 import { CreateDatabaseModal } from "@/components/database/CreateDatabaseModal";
+import { SchemaCanvas } from "@/components/database/SchemaCanvas";
 import { Modal } from "@/components/ui/Modal";
 import {
   useTableData,
@@ -1139,6 +1141,14 @@ $mysqli->close();
                 >
                   <FileDown size={14} /> Import
                 </Button>
+                <Button
+                  variant={activeTab === "architect" ? "primary" : "ghost"}
+                  size="sm"
+                  onClick={() => setActiveTab("architect")}
+                  className="gap-2 rounded-b-none border-b-2 border-transparent data-[variant=primary]:border-[var(--primary)]"
+                >
+                  <Network size={14} /> Architect
+                </Button>
               </>
             ) : (
               // Server Context Tabs
@@ -2155,6 +2165,13 @@ $mysqli->close();
                   </div>
                 </CardContent>
               </Card>
+            </div>
+          )}
+
+          {/* Context: DB, Tab: Architect */}
+          {activeTab === "architect" && selectedDB && (
+            <div className="h-full min-h-[700px]">
+              <SchemaCanvas database={selectedDB} />
             </div>
           )}
 

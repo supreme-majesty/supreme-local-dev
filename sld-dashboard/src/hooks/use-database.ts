@@ -8,6 +8,8 @@ export const dbKeys = {
   tables: (db: string) => [...dbKeys.all, "tables", db] as const,
   columns: (db: string, table: string) =>
     [...dbKeys.all, "columns", db, table] as const,
+  indexes: (db: string, table: string) =>
+    [...dbKeys.all, "indexes", db, table] as const,
   data: (
     db: string,
     table: string,
@@ -130,6 +132,14 @@ export function useTableColumns(database: string | null, table: string | null) {
   return useQuery({
     queryKey: dbKeys.columns(database || "", table || ""),
     queryFn: () => api.getTableSchema(database!, table!),
+    enabled: !!database && !!table,
+  });
+}
+
+export function useTableIndexes(database: string | null, table: string | null) {
+  return useQuery({
+    queryKey: dbKeys.indexes(database || "", table || ""),
+    queryFn: () => api.getTableIndexes(database!, table!),
     enabled: !!database && !!table,
   });
 }

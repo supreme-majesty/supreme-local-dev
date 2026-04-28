@@ -62,6 +62,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/db/table", s.handleDBTableData)
 	mux.HandleFunc("/api/db/schema", s.handleDBSchema)
 	mux.HandleFunc("/api/db/relationships", s.handleDBRelationships)
+	mux.HandleFunc("/api/db/indexes", s.handleDBIndexes)
 	mux.HandleFunc("/api/db/snapshots", s.handleDBSnapshots)
 	mux.HandleFunc("/api/db/snapshots/download", s.handleDBDownload)
 	mux.HandleFunc("/api/db/snapshots/restore", s.handleDBRestore)
@@ -900,6 +901,23 @@ func (s *Server) handleDBRelationships(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, rels, 200)
+}
+
+func (s *Server) handleDBIndexes(w http.ResponseWriter, r *http.Request) {
+	db := r.URL.Query().Get("db")
+	table := r.URL.Query().Get("table")
+	if db == "" || table == "" {
+		jsonResponse(w, ErrorResponse{Error: "db and table parameters required"}, 400)
+		return
+	}
+
+	d, _ := daemon.GetClient()
+	indexes, err := d.DatabaseService.GetTableIndexes(db, table)
+	if err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+	jsonResponse(w, indexes, 200)
 }
 
 func (s *Server) handleDBCreate(w http.ResponseWriter, r *http.Request) {
