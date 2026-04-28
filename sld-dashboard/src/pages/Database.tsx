@@ -52,6 +52,7 @@ import { TableCreator } from "@/components/database/TableCreator";
 import { CloneDatabaseModal } from "@/components/database/CloneDatabaseModal";
 import { CreateDatabaseModal } from "@/components/database/CreateDatabaseModal";
 import { SchemaCanvas } from "@/components/database/SchemaCanvas";
+import { DatabaseOperations } from "@/components/database/DatabaseOperations";
 import { Modal } from "@/components/ui/Modal";
 import {
   useTableData,
@@ -452,30 +453,6 @@ export default function Database() {
       console.error(`Failed to ${action}`, e);
     }
   };
-
-  const handleDropDatabase = () => {
-    if (!selectedDB) return;
-    if (
-      !confirm(
-        `Are you sure you want to DROP database "${selectedDB}"? This action is IRREVERSIBLE!`,
-      )
-    )
-      return;
-
-    executeQueryMutation.mutate(
-      {
-        database: selectedDB,
-        query: `DROP DATABASE \`${selectedDB}\``,
-      },
-      {
-        onSuccess: () => {
-          setSelectedDB(null);
-          setSelectedTable(null);
-        },
-      },
-    );
-  };
-
   const handleDeleteDatabase = (db: string) => {
     if (
       !confirm(
@@ -1163,6 +1140,14 @@ $mysqli->close();
                   className="gap-2 rounded-b-none border-b-2 border-transparent data-[variant=primary]:border-[var(--primary)]"
                 >
                   <Network size={14} /> Architect
+                </Button>
+                <Button
+                  variant={activeTab === "operations" ? "primary" : "ghost"}
+                  size="sm"
+                  onClick={() => setActiveTab("operations")}
+                  className="gap-2 rounded-b-none border-b-2 border-transparent data-[variant=primary]:border-[var(--primary)]"
+                >
+                  <Settings size={14} /> Operations
                 </Button>
               </>
             ) : (
@@ -2215,7 +2200,133 @@ $mysqli->close();
             </div>
           )}
 
-          {/* Context: Create Table */}
+          {/* Operations Context: Database */}
+          {activeTab === "operations" && selectedDB && !selectedTable && (
+            <DatabaseOperations
+              database={selectedDB}
+              onSelectDb={handleSelectDb}
+              onCreateTable={() => setActiveTab("create-table")}
+            />
+          )}
+
+          {/* Operations Context: Table */}
+          {activeTab === "operations" && selectedDB && selectedTable && (
+            <div className="space-y-6 w-full mt-6 px-6 pb-12">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <Settings size={18} /> Table Options
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Rename table to:</Label>
+                    <div className="flex gap-2">
+                      <Input
+                        defaultValue={selectedTable}
+                        id="rename-table-input"
+                      />
+                      <Button
+                        onClick={() => {
+                          const newName = (
+                            document.getElementById(
+                              "rename-table-input",
+                            ) as HTMLInputElement
+                          ).value;
+                          if (newName && newName !== selectedTable) {
+                            executeQueryMutation.mutate(
+                              {
+                                database: selectedDB!,
+                                query: `RENAME TABLE \`${selectedTable}\` TO \`${newName}\``,
+                              },
+                              {
+                                onSuccess: () => {
+                                  setSelectedTable(newName);
+                                },
+                              },
+                            );
+                          }
+                        }}
+                      >
+                        Go
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2 pt-4 border-t border-[var(--border)]">
+                    <Label>Copy table to (database.table):</Label>
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder={`${selectedTable}_copy`}
+                        id="copy-table-input"
+                      />
+                      <Button
+                        variant="secondary"
+                        onClick={() => {
+                          const newName = (
+                            document.getElementById(
+                              "copy-table-input",
+                            ) as HTMLInputElement
+                          ).value;
+                          if (newName) {
+                            executeQueryMutation.mutate(
+                              {
+                                database: selectedDB!,
+                                query: `CREATE TABLE \`${newName}\` LIKE \`${selectedTable}\`; INSERT INTO \`${newName}\` SELECT * FROM \`${selectedTable}\`;`,
+                              },
+                              {
+                                onSuccess: () => alert("Table copied!"),
+                              },
+                            );
+                          }
+                        }}
+                      >
+                        Copy
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="border-red-500/20 bg-red-500/5">
+                <CardHeader>
+                  <CardTitle className="text-lg text-red-600 flex items-center gap-2">
+                    <Trash2 size={18} /> Table Maintenance
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex flex-col gap-2">
+                    <div className="flex justify-between items-center p-3 rounded-md border border-red-500/20 bg-white/50">
+                      <div className="text-sm font-medium text-red-700">
+                        Empty the table (TRUNCATE)
+                      </div>
+                      <Button
+                        variant="danger"
+                        size="sm"
+                        onClick={handleTruncateTable}
+                      >
+                        Truncate
+                      </Button>
+                    </div>
+                    <div className="flex justify-between items-center p-3 rounded-md border border-red-500/20 bg-white/50">
+                      <div className="text-sm font-medium text-red-700">
+                        Delete the table (DROP)
+                      </div>
+                      <Button
+                        variant="danger"
+                        size="sm"
+                        onClick={handleDropTable}
+                      >
+                        Drop
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
+          {/* SQL Console - Server Level */}
           {activeTab === "create-table" && selectedDB && (
             <div className="p-6">
               <TableCreator
@@ -2227,201 +2338,10 @@ $mysqli->close();
             </div>
           )}
 
-          {/* Context: Operations */}
-          {activeTab === "operations" && selectedDB && (
-            <div className="w-full flex flex-col gap-6">
-              {/* Context: Table, Tab: Operations */}
-              {activeTab === "operations" && selectedTable && (
-                <div className="space-y-6 w-full">
-                  <Card>
-                    <CardHeader>
-                      <CardTitle className="text-lg flex items-center gap-2">
-                        <Settings size={18} /> Table Options
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                      <div className="space-y-2">
-                        <Label>Rename table to:</Label>
-                        <div className="flex gap-2">
-                          <Input
-                            defaultValue={selectedTable}
-                            id="rename-table-input"
-                          />
-                          <Button
-                            onClick={() => {
-                              const newName = (
-                                document.getElementById(
-                                  "rename-table-input",
-                                ) as HTMLInputElement
-                              ).value;
-                              if (newName && newName !== selectedTable) {
-                                executeQueryMutation.mutate(
-                                  {
-                                    database: selectedDB!,
-                                    query: `RENAME TABLE \`${selectedTable}\` TO \`${newName}\``,
-                                  },
-                                  {
-                                    onSuccess: () => {
-                                      setSelectedTable(newName);
-                                      // Refresh tables implicitly
-                                    },
-                                  },
-                                );
-                              }
-                            }}
-                          >
-                            Go
-                          </Button>
-                        </div>
-                      </div>
-
-                      <div className="space-y-2 pt-4 border-t border-[var(--border)]">
-                        <Label>Copy table to (database.table):</Label>
-                        <div className="flex gap-2">
-                          <Input
-                            placeholder={`${selectedTable}_copy`}
-                            id="copy-table-input"
-                          />
-                          <Button
-                            variant="secondary"
-                            onClick={() => {
-                              const newName = (
-                                document.getElementById(
-                                  "copy-table-input",
-                                ) as HTMLInputElement
-                              ).value;
-                              if (newName) {
-                                executeQueryMutation.mutate(
-                                  {
-                                    database: selectedDB!,
-                                    query: `CREATE TABLE \`${newName}\` LIKE \`${selectedTable}\`; INSERT INTO \`${newName}\` SELECT * FROM \`${selectedTable}\`;`,
-                                  },
-                                  {
-                                    onSuccess: () => alert("Table copied!"),
-                                  },
-                                );
-                              }
-                            }}
-                          >
-                            Copy
-                          </Button>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-
-                  <Card className="border-red-200 dark:border-red-900/20">
-                    <CardHeader>
-                      <CardTitle className="text-lg text-red-500 flex items-center gap-2">
-                        <Trash2 size={18} /> Table Maintenance
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                      <div className="flex flex-col gap-2">
-                        <div className="flex justify-between items-center p-3 rounded-md bg-red-50 dark:bg-red-900/10">
-                          <div className="text-sm font-medium">
-                            Empty the table (TRUNCATE)
-                          </div>
-                          <Button
-                            variant="danger"
-                            size="sm"
-                            onClick={handleTruncateTable}
-                          >
-                            Truncate
-                          </Button>
-                        </div>
-                        <div className="flex justify-between items-center p-3 rounded-md bg-red-50 dark:bg-red-900/10">
-                          <div className="text-sm font-medium">
-                            Delete the table (DROP)
-                          </div>
-                          <Button
-                            variant="danger"
-                            size="sm"
-                            onClick={handleDropTable}
-                          >
-                            Drop
-                          </Button>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </div>
-              )}
-              {/* Database Operations */}
-              {!selectedTable && (
-                <Card className="border-red-200 dark:border-red-900/50">
-                  <CardHeader>
-                    <CardTitle className="text-red-600 dark:text-red-400">
-                      Database Operations
-                    </CardTitle>
-                    <CardDescription>
-                      Danger zone for database <strong>{selectedDB}</strong>.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <Button
-                      variant="danger"
-                      className="w-full"
-                      onClick={handleDropDatabase}
-                      loading={executeQueryMutation.isPending}
-                    >
-                      <Trash2 size={16} className="mr-2" /> Drop Database
-                    </Button>
-                  </CardContent>
-                </Card>
-              )}
-
-              {/* Table Operations */}
-              {selectedTable && (
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Table Operations</CardTitle>
-                    <CardDescription>
-                      Manage table <strong>{selectedTable}</strong>.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="flex flex-col gap-4">
-                    <div className="border rounded-md p-4 flex items-center justify-between">
-                      <div>
-                        <h4 className="font-medium text-sm">Truncate Table</h4>
-                        <p className="text-xs text-[var(--muted-foreground)]">
-                          Delete all rows but keep structure.
-                        </p>
-                      </div>
-                      <Button
-                        variant="secondary"
-                        onClick={handleTruncateTable}
-                        loading={executeQueryMutation.isPending}
-                      >
-                        Truncate
-                      </Button>
-                    </div>
-                    <div className="border border-red-200 dark:border-red-900/50 rounded-md p-4 flex items-center justify-between bg-red-50/50 dark:bg-red-900/10">
-                      <div>
-                        <h4 className="font-medium text-sm text-red-600 dark:text-red-400">
-                          Drop Table
-                        </h4>
-                        <p className="text-xs text-red-600/70 dark:text-red-400/70">
-                          Delete the table and all its data.
-                        </p>
-                      </div>
-                      <Button
-                        variant="danger"
-                        onClick={handleDropTable}
-                        loading={executeQueryMutation.isPending}
-                      >
-                        Drop Table
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
-            </div>
-          )}
 
           {/* Context: Databases Management */}
           {activeTab === "databases" && (
-            <div className="max-w-4xl mx-auto mt-8">
+            <div className="w-full mt-8 px-6 pb-12">
               <div className="flex justify-between items-center mb-6">
                 <h2 className="text-xl font-semibold">Databases</h2>
                 <Button onClick={() => setIsCreateModalOpen(true)}>

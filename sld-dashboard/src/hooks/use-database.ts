@@ -285,3 +285,27 @@ export function useImportDatabaseMutation() {
     },
   });
 }
+export function useCloneDatabaseMutation() {
+  const queryClient = useQueryClient();
+  const addToast = useAppStore((s) => s.addToast);
+
+  return useMutation({
+    mutationFn: (vars: { source: string; target: string }) =>
+      api.cloneDatabase(vars.source, vars.target),
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({ queryKey: dbKeys.list() });
+      addToast({ 
+        type: "success", 
+        title: "Database cloned", 
+        description: `Successfully cloned ${vars.source} to ${vars.target}` 
+      });
+    },
+    onError: (err: Error) => {
+      addToast({
+        type: "error",
+        title: "Failed to clone database",
+        description: err.message,
+      });
+    },
+  });
+}
