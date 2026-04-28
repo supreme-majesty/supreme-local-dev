@@ -138,6 +138,14 @@ export interface Editor {
   icon: string;
 }
 
+export interface FileInfo {
+  name: string;
+  path: string;
+  is_dir: boolean;
+  size: number;
+  mod_time: string;
+}
+
 export interface ProjectTemplate {
   id: string;
   name: string;
@@ -228,6 +236,16 @@ class DaemonApi {
     return this.request<ActionResponse>("/db/delete", {
       method: "DELETE",
       body: JSON.stringify({ name }),
+    });
+  }
+
+  async renameDatabase(
+    oldName: string,
+    newName: string,
+  ): Promise<ActionResponse> {
+    return this.request<ActionResponse>("/db/rename", {
+      method: "POST",
+      body: JSON.stringify({ old_name: oldName, new_name: newName }),
     });
   }
 
@@ -446,6 +464,21 @@ class DaemonApi {
 
   async getTemplates(): Promise<ProjectTemplate[]> {
     return this.request<ProjectTemplate[]>("/projects/templates");
+  }
+
+  async getProjectFiles(path: string): Promise<FileInfo[]> {
+    return this.request<FileInfo[]>(`/projects/files?path=${encodeURIComponent(path)}`);
+  }
+
+  async getProjectFileContent(path: string): Promise<{ content: string }> {
+    return this.request<{ content: string }>(`/projects/file/content?path=${encodeURIComponent(path)}`);
+  }
+
+  async saveProjectFile(path: string, content: string): Promise<ActionResponse> {
+    return this.request<ActionResponse>("/projects/file/save", {
+      method: "POST",
+      body: JSON.stringify({ path, content }),
+    });
   }
 
   // Ghost Mode: Clone a project for experimentation

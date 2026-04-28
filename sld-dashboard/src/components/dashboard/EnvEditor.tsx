@@ -12,6 +12,7 @@ import {
   List,
   X,
 } from "lucide-react";
+import Editor from "@monaco-editor/react";
 import { Modal } from "@/components/ui/Modal";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import { Button } from "@/components/ui/Button";
@@ -314,15 +315,24 @@ function FileEditor({
         )}
 
         {activeTab === "raw" && (
-          <textarea
-            value={rawContent}
-            onChange={(e) => {
-              setRawContent(e.target.value);
-              setIsDirty(true);
-            }}
-            className="w-full h-full bg-[var(--background)] p-4 rounded-md font-mono text-sm border border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--primary)] resize-none"
-            spellCheck={false}
-          />
+          <div className="h-full border border-[var(--border)] rounded-md overflow-hidden">
+            <Editor
+              height="100%"
+              theme="vs-dark"
+              language="ini"
+              value={rawContent}
+              onChange={(val) => {
+                setRawContent(val || "");
+                setIsDirty(true);
+              }}
+              options={{
+                minimap: { enabled: false },
+                fontSize: 13,
+                scrollBeyondLastLine: false,
+                automaticLayout: true,
+              }}
+            />
+          </div>
         )}
 
         {activeTab === "backups" && <BackupList path={path} />}

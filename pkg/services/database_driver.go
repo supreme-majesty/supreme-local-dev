@@ -11,6 +11,7 @@ type DatabaseDriver interface {
 	ListDatabases() ([]string, error)
 	CreateDatabase(name string) error
 	DeleteDatabase(name string) error
+	RenameDatabase(oldName, newName string) error
 	ListTables(database string) ([]TableInfo, error)
 	GetTableColumns(database, table string) ([]ColumnInfo, error)
 	GetTableData(database, table string, page, perPage int) (*TableData, error)

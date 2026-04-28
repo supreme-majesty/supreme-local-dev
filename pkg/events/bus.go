@@ -19,6 +19,7 @@ const (
 	ArtisanDone         EventType = "artisan:done"
 	HealerIssueDetected EventType = "healer:issue_detected"
 	HealerIssueResolved EventType = "healer:issue_resolved"
+	DatabaseQuery       EventType = "database:query"
 )
 
 type Event struct {

@@ -12,9 +12,11 @@ import {
   Clock,
   ChevronDown,
   Check,
+  Database,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
+import { QueryBuilder } from "./QueryBuilder";
 
 interface SQLConsoleProps {
   database: string | null;
@@ -125,6 +127,7 @@ export function SQLConsole({ database }: SQLConsoleProps) {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
+  const [showBuilder, setShowBuilder] = useState(false);
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
   const historyRef = useRef<HTMLDivElement>(null);
   const templatesRef = useRef<HTMLDivElement>(null);
@@ -369,6 +372,16 @@ export function SQLConsole({ database }: SQLConsoleProps) {
           )}
         </div>
 
+        <Button
+          variant={showBuilder ? "primary" : "secondary"}
+          size="sm"
+          onClick={() => setShowBuilder(!showBuilder)}
+          className="gap-1"
+        >
+          <Database size={14} />
+          Visual Builder
+        </Button>
+
         <div className="flex-1" />
 
         <Button
@@ -391,8 +404,18 @@ export function SQLConsole({ database }: SQLConsoleProps) {
         </Button>
       </div>
 
+      {showBuilder && database && (
+        <QueryBuilder 
+          database={database}
+          onGenerate={(sql) => {
+            setQuery(sql);
+          }}
+          onClose={() => setShowBuilder(false)}
+        />
+      )}
+
       {/* Editor */}
-      <div className="border border-[var(--border)] rounded-lg overflow-hidden bg-[var(--card)]">
+      <div className="border border-[var(--border)] rounded-lg overflow-hidden bg-[var(--card)] flex-shrink-0">
         <Editor
           height="200px"
           language="sql"

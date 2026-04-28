@@ -109,6 +109,14 @@ func SetupEventBridge(hub *Hub) {
 		}
 	})
 
+	// Subscribe to Database Queries
+	d.Events.Subscribe(events.DatabaseQuery, func(e events.Event) {
+		hub.broadcast <- map[string]interface{}{
+			"type": "database:query",
+			"data": e.Payload,
+		}
+	})
+
 	// Subscribe to Sites updates
 	d.Events.Subscribe(events.SitesUpdated, func(e events.Event) {
 		hub.broadcast <- map[string]interface{}{

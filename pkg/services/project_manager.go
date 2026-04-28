@@ -8,8 +8,10 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type ProjectManager struct {
@@ -943,4 +945,71 @@ func (pm *ProjectManager) ScanNodeRequirement(projectPath string) (string, error
 	}
 
 	return pkg.Engines.Node, nil
+}
+
+// FileInfo represents metadata about a file or directory
+type FileInfo struct {
+	Name    string    `json:"name"`
+	Path    string    `json:"path"`
+	IsDir   bool      `json:"is_dir"`
+	Size    int64     `json:"size"`
+	ModTime time.Time `json:"mod_time"`
+}
+
+// ListFiles returns a list of files and directories in the specified path
+func (pm *ProjectManager) ListFiles(dirPath string) ([]FileInfo, error) {
+	entries, err := os.ReadDir(dirPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var files []FileInfo
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+
+		files = append(files, FileInfo{
+			Name:    entry.Name(),
+			Path:    filepath.Join(dirPath, entry.Name()),
+			IsDir:   entry.IsDir(),
+			Size:    info.Size(),
+			ModTime: info.ModTime(),
+		})
+	}
+
+	// Sort: Directories first, then alphabetical
+	sort.Slice(files, func(i, j int) bool {
+		if files[i].IsDir != files[j].IsDir {
+			return files[i].IsDir
+		}
+		return strings.ToLower(files[i].Name) < strings.ToLower(files[j].Name)
+	})
+
+	return files, nil
+}
+
+// ReadFile returns the content of a file
+func (pm *ProjectManager) ReadFile(filePath string) (string, error) {
+	// Security: In a real app we'd check if path is within project scope
+	// For SLD (local tool), we allow it.
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return "", err
+	}
+	return string(content), nil
+}
+
+// SaveFile writes content to a file
+func (pm *ProjectManager) SaveFile(filePath string, content string) error {
+	// Security: check path scope
+	
+	// Create backup for .env files automatically?
+	if filepath.Base(filePath) == ".env" {
+		em := NewEnvManager()
+		em.CreateBackup(filePath)
+	}
+
+	return os.WriteFile(filePath, []byte(content), 0644)
 }

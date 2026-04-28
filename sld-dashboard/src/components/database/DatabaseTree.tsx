@@ -12,9 +12,10 @@ import {
   Folder,
   Copy,
   Trash2,
+  Edit2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useDatabases, useTables } from "@/hooks/use-database";
+import { useDatabases, useTables, useRenameDatabaseMutation } from "@/hooks/use-database";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { ContextMenu } from "@/components/ui/ContextMenu";
@@ -461,6 +462,7 @@ export function DatabaseTree({
   onDeleteDatabase,
 }: DatabaseTreeProps) {
   const { data: databases = [], isLoading, refetch } = useDatabases();
+  const renameMutation = useRenameDatabaseMutation();
   const [searchTerm, setSearchTerm] = useState("");
   const [contextMenu, setContextMenu] = useState<{
     x: number;
@@ -485,6 +487,13 @@ export function DatabaseTree({
   const handleContextMenu = (e: React.MouseEvent, dbName: string | null) => {
     e.preventDefault();
     setContextMenu({ x: e.clientX, y: e.clientY, dbName });
+  };
+
+  const handleRename = (oldName: string) => {
+    const newName = prompt("Enter new database name:", oldName);
+    if (newName && newName !== oldName) {
+      renameMutation.mutate({ oldName, newName });
+    }
   };
 
   return (
@@ -588,6 +597,11 @@ export function DatabaseTree({
                     label: "Clone Database",
                     icon: <Copy size={14} />,
                     onClick: () => onCloneDatabase(contextMenu.dbName!),
+                  },
+                  {
+                    label: "Rename Database",
+                    icon: <Edit2 size={14} />,
+                    onClick: () => handleRename(contextMenu.dbName!),
                   },
                   {
                     label: "Delete Database",

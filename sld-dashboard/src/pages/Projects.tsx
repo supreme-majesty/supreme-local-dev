@@ -28,7 +28,8 @@ import { CreateProjectModal } from "@/components/CreateProjectModal";
 import { EnvEditor } from "@/components/dashboard/EnvEditor";
 import { ConsoleDrawer } from "@/components/dashboard/ConsoleDrawer";
 import { ProjectTaggingUI } from "@/components/projects/ProjectTaggingUI";
-import { Code, Settings2, Terminal } from "lucide-react";
+import { FileManager } from "@/components/project/FileManager";
+import { Code, Settings2, Terminal, FileCode } from "lucide-react";
 
 export default function Projects() {
   const { data: projects = [], isLoading } = useSites();
@@ -51,6 +52,7 @@ export default function Projects() {
     null,
   );
   const [selectedProjectName, setSelectedProjectName] = useState<string>("");
+  const [isFileManagerOpen, setIsFileManagerOpen] = useState(false);
   const [isTaggingModalOpen, setIsTaggingModalOpen] = useState(false);
   const [taggingProject, setTaggingProject] = useState<Project | null>(null);
 
@@ -283,6 +285,18 @@ export default function Projects() {
                   >
                     <Tag size={16} />
                   </button>
+
+                  <button
+                    onClick={() => {
+                      setSelectedProjectPath(project.path);
+                      setSelectedProjectName(project.name);
+                      setIsFileManagerOpen(true);
+                    }}
+                    className="flex-none flex items-center justify-center w-12 py-2.5 bg-[var(--card)] border border-[var(--border)] hover:bg-[var(--muted)] hover:border-[var(--primary)]/30 text-[var(--foreground)] rounded-lg font-medium transition-all"
+                    title="Quick File Manager"
+                  >
+                    <FileCode size={16} />
+                  </button>
                 </div>
 
                 {/* Share Button / Status */}
@@ -508,6 +522,18 @@ export default function Projects() {
           />
         )}
       </Modal>
+
+      {/* File Manager Modal */}
+      {selectedProjectPath && (
+        <Modal
+          isOpen={isFileManagerOpen}
+          onClose={() => setIsFileManagerOpen(false)}
+          title={`File Manager - ${selectedProjectName}`}
+          className="max-w-6xl"
+        >
+          <FileManager projectPath={selectedProjectPath} />
+        </Modal>
+      )}
     </div>
   );
 }

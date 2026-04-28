@@ -38,6 +38,7 @@ type Daemon struct {
 	EnvManager      *services.EnvManager
 	ArtisanService  *services.ArtisanService
 	HealerService   *services.HealerService
+	QueryWatcher    *services.QueryWatcher
 }
 
 var instance *Daemon
@@ -115,6 +116,15 @@ func Initialize() (*Daemon, error) {
 
 	// Start Healer
 	instance.HealerService.Start()
+	
+	// Start QueryWatcher (try default local MySQL)
+	qw, err := services.NewQueryWatcher(eventBus, "root@tcp(127.0.0.1:3306)/")
+	if err == nil {
+		instance.QueryWatcher = qw
+		qw.Start()
+	} else {
+		fmt.Printf("Warning: Failed to start QueryWatcher: %v\n", err)
+	}
 
 	return instance, nil
 }

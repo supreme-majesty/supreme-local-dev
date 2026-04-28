@@ -86,6 +86,13 @@ func (d *DatabaseService) DeleteDatabase(name string) error {
 	return d.driver.DeleteDatabase(name)
 }
 
+func (d *DatabaseService) RenameDatabase(oldName, newName string) error {
+	if err := d.ensureConnected(); err != nil {
+		return err
+	}
+	return d.driver.RenameDatabase(oldName, newName)
+}
+
 // ListTables returns tables with metadata
 func (d *DatabaseService) ListTables(database string) ([]TableInfo, error) {
 	if err := d.ensureConnected(); err != nil {

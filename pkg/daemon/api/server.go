@@ -58,6 +58,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/db/databases", s.handleDBDatabases)
 	mux.HandleFunc("/api/db/create", s.handleDBCreate)
 	mux.HandleFunc("/api/db/delete", s.handleDBDelete)
+	mux.HandleFunc("/api/db/rename", s.handleDBRename)
 	mux.HandleFunc("/api/db/tables", s.handleDBTables)
 	mux.HandleFunc("/api/db/table", s.handleDBTableData)
 	mux.HandleFunc("/api/db/schema", s.handleDBSchema)
@@ -90,7 +91,10 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/projects/create", s.handleProjectCreate)
 	mux.HandleFunc("/api/projects/ghost", s.handleProjectGhost)
 	mux.HandleFunc("/api/projects/ghost/discard", s.handleProjectGhostDiscard)
-	mux.HandleFunc("/api/projects/templates", s.handleGetTemplates) // New route
+	mux.HandleFunc("/api/projects/templates", s.handleGetTemplates)
+	mux.HandleFunc("/api/projects/files", s.handleProjectFiles)
+	mux.HandleFunc("/api/projects/file/content", s.handleProjectFileContent)
+	mux.HandleFunc("/api/projects/file/save", s.handleProjectFileSave)
 	mux.HandleFunc("/api/system/editors", s.handleSystemEditors)
 	mux.HandleFunc("/api/system/open-editor", s.handleSystemOpenEditor)
 	mux.HandleFunc("/api/system/directories", s.handleSystemDirectories)
@@ -564,6 +568,60 @@ func (s *Server) handleProjectGhostDiscard(w http.ResponseWriter, r *http.Reques
 	jsonResponse(w, SuccessResponse{Success: true, Message: "Ghost project discarded"}, 200)
 }
 
+func (s *Server) handleProjectFiles(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		jsonResponse(w, ErrorResponse{Error: "path is required"}, 400)
+		return
+	}
+
+	d, _ := daemon.GetClient()
+	files, err := d.ProjectManager.ListFiles(path)
+	if err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+	jsonResponse(w, files, 200)
+}
+
+func (s *Server) handleProjectFileContent(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		jsonResponse(w, ErrorResponse{Error: "path is required"}, 400)
+		return
+	}
+
+	d, _ := daemon.GetClient()
+	content, err := d.ProjectManager.ReadFile(path)
+	if err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+	jsonResponse(w, map[string]string{"content": content}, 200)
+}
+
+func (s *Server) handleProjectFileSave(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		return
+	}
+
+	var req struct {
+		Path    string `json:"path"`
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
+		return
+	}
+
+	d, _ := daemon.GetClient()
+	if err := d.ProjectManager.SaveFile(req.Path, req.Content); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+	jsonResponse(w, map[string]string{"message": "File saved successfully"}, 200)
+}
+
 func (s *Server) handleSystemEditors(w http.ResponseWriter, r *http.Request) {
 	d, _ := daemon.GetClient()
 	editors := d.ProjectManager.DetectEditors()
@@ -974,6 +1032,35 @@ func (s *Server) handleDBDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResponse(w, map[string]string{"message": "Database deleted successfully"}, 200)
+}
+
+func (s *Server) handleDBRename(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		jsonResponse(w, ErrorResponse{Error: "POST method required"}, 405)
+		return
+	}
+
+	var req struct {
+		OldName string `json:"old_name"`
+		NewName string `json:"new_name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
+		return
+	}
+
+	if req.OldName == "" || req.NewName == "" {
+		jsonResponse(w, ErrorResponse{Error: "old_name and new_name are required"}, 400)
+		return
+	}
+
+	d, _ := daemon.GetClient()
+	if err := d.DatabaseService.RenameDatabase(req.OldName, req.NewName); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+
+	jsonResponse(w, map[string]string{"message": "Database renamed successfully"}, 200)
 }
 
 func (s *Server) handleDBTableData(w http.ResponseWriter, r *http.Request) {

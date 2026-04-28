@@ -88,6 +88,27 @@ export function useDeleteDatabaseMutation() {
   });
 }
 
+export function useRenameDatabaseMutation() {
+  const queryClient = useQueryClient();
+  const addToast = useAppStore((s) => s.addToast);
+
+  return useMutation({
+    mutationFn: (vars: { oldName: string; newName: string }) =>
+      api.renameDatabase(vars.oldName, vars.newName),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: dbKeys.list() });
+      addToast({ type: "success", title: "Database renamed" });
+    },
+    onError: (err: Error) => {
+      addToast({
+        type: "error",
+        title: "Rename failed",
+        description: err.message,
+      });
+    },
+  });
+}
+
 export interface TableDataOptions {
   perPage?: number;
   sortCol?: string;

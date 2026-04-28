@@ -153,6 +153,32 @@ func (d *MySQLDriver) DeleteDatabase(name string) error {
 	return err
 }
 
+func (d *MySQLDriver) RenameDatabase(oldName, newName string) error {
+	// MySQL doesn't support RENAME DATABASE directly.
+	// We must CREATE new, RENAME TABLEs, DROP old.
+	if err := d.CreateDatabase(newName); err != nil {
+		return fmt.Errorf("failed to create new database: %w", err)
+	}
+
+	tables, err := d.ListTables(oldName)
+	if err != nil {
+		return fmt.Errorf("failed to list tables in old database: %w", err)
+	}
+
+	for _, t := range tables {
+		query := fmt.Sprintf("RENAME TABLE `%s`.`%s` TO `%s`.`%s`", oldName, t.Name, newName, t.Name)
+		if _, err := d.db.Exec(query); err != nil {
+			return fmt.Errorf("failed to move table %s: %w", t.Name, err)
+		}
+	}
+
+	if err := d.DeleteDatabase(oldName); err != nil {
+		return fmt.Errorf("failed to delete old database: %w", err)
+	}
+
+	return nil
+}
+
 func (d *MySQLDriver) ListTables(database string) ([]TableInfo, error) {
 	// USE db
 	if _, err := d.db.Exec("USE " + database); err != nil {

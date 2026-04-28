@@ -109,6 +109,13 @@ func (d *PostgresDriver) DeleteDatabase(name string) error {
 	return err
 }
 
+func (d *PostgresDriver) RenameDatabase(oldName, newName string) error {
+	// Terminate other connections to the database before renaming
+	d.db.Exec(fmt.Sprintf(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '%s' AND pid <> pg_backend_pid()`, oldName))
+	_, err := d.db.Exec(fmt.Sprintf("ALTER DATABASE \"%s\" RENAME TO \"%s\"", oldName, newName))
+	return err
+}
+
 func (d *PostgresDriver) ListTables(database string) ([]TableInfo, error) {
 	// Reconnect to specific database?
 	// Postgres connection is to a specific DB. 'postgres' is default maintenance DB.
