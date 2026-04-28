@@ -965,17 +965,7 @@ func (d *Daemon) Doctor() error {
 
 // Logs returns map of log names to paths
 func (d *Daemon) GetLogPaths() map[string]string {
-	// Ideally adapter gives these paths as they vary by OS.
-	// For now, assuming standard Linux/Nginx locations or getting from config.
-	// TODO: move to Adapter.GetLogPaths()
-
-	logs := make(map[string]string)
-	logs["nginx-error"] = "/var/log/nginx/error.log"
-	logs["nginx-access"] = "/var/log/nginx/access.log"
-	// PHP logs vary
-	logs["php-fpm"] = "/var/log/php-fpm.log" // Generic fallback
-
-	return logs
+	return d.Adapter.GetLogPaths()
 }
 
 // Multi-PHP

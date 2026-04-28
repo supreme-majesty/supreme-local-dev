@@ -55,8 +55,11 @@ func (tm *TunnelManager) EnsureBinary() error {
 	url := ""
 	switch runtime.GOOS {
 	case "linux":
-		url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64"
-		// TODO: Support ARM
+		if runtime.GOARCH == "arm64" {
+			url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64"
+		} else {
+			url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64"
+		}
 	case "darwin":
 		url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-amd64"
 	default:

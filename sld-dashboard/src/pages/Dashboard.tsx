@@ -11,6 +11,7 @@ import {
 import {
   useSldState,
   useSites,
+  usePlugins,
   useParkMutation,
   useSecureMutation,
   useRestartMutation,
@@ -33,13 +34,11 @@ import { PendingProjects } from "@/components/common/PendingProjects";
 const Dashboard = () => {
   const { data: state, isLoading: isStateLoading } = useSldState();
   const { data: sites } = useSites();
+  const { data: plugins } = usePlugins();
 
   // Calculate stats
   const totalProjects = sites?.length || 0;
-  // TODO: Get active plugins count properly. For now, assuming 0 or state.services
-  const activePlugins = state?.services
-    ? Object.keys(state.services).length
-    : 0;
+  const activePlugins = plugins?.filter((p) => p.status === "running").length || 0;
 
   const parkMutation = useParkMutation();
   const secureMutation = useSecureMutation();
