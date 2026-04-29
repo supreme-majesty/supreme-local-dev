@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useMutation } from "@tanstack/react-query";
+import { useTables } from "@/hooks/use-database";
 import Editor from "@monaco-editor/react";
 import {
   Play,
@@ -13,6 +14,7 @@ import {
   ChevronDown,
   Check,
   Database,
+  Save,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -123,6 +125,9 @@ function convertToCSV(columns: string[], rows: Record<string, any>[]): string {
 
 export function SQLConsole({ database }: SQLConsoleProps) {
   const [query, setQuery] = useState("");
+  const [autoSave, setAutoSave] = useState(() => {
+    return localStorage.getItem("sld_sql_autosave") === "true";
+  });
   const [result, setResult] = useState<QueryResult | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [showHistory, setShowHistory] = useState(false);
@@ -132,10 +137,26 @@ export function SQLConsole({ database }: SQLConsoleProps) {
   const historyRef = useRef<HTMLDivElement>(null);
   const templatesRef = useRef<HTMLDivElement>(null);
 
-  // Load history on mount
+  const { data: tables } = useTables(database || "");
+
+  // Load saved query on mount
   useEffect(() => {
+    const saved = localStorage.getItem(`sld_sql_query_${database}`);
+    if (saved) setQuery(saved);
     setHistory(loadHistory());
-  }, []);
+  }, [database]);
+
+  // Auto-save query
+  useEffect(() => {
+    if (autoSave && database) {
+      localStorage.setItem(`sld_sql_query_${database}`, query);
+    }
+  }, [query, autoSave, database]);
+
+  // Persist auto-save preference
+  useEffect(() => {
+    localStorage.setItem("sld_sql_autosave", String(autoSave));
+  }, [autoSave]);
 
   // Close dropdowns when clicking outside
   useEffect(() => {
@@ -189,66 +210,54 @@ export function SQLConsole({ database }: SQLConsoleProps) {
 
   const handleEditorMount = (editor: any, monaco: any) => {
     // Register SQL keywords autocomplete
+    // Register SQL keywords and schema autocomplete
     monaco.languages.registerCompletionItemProvider("sql", {
-      provideCompletionItems: () => {
+      provideCompletionItems: (model: any, position: any) => {
+        const suggestions: any[] = [];
+        
+        // Keywords
         const keywords = [
-          "SELECT",
-          "FROM",
-          "WHERE",
-          "INSERT",
-          "INTO",
-          "VALUES",
-          "UPDATE",
-          "SET",
-          "DELETE",
-          "CREATE",
-          "TABLE",
-          "DROP",
-          "ALTER",
-          "INDEX",
-          "JOIN",
-          "LEFT",
-          "RIGHT",
-          "INNER",
-          "OUTER",
-          "ON",
-          "AND",
-          "OR",
-          "NOT",
-          "NULL",
-          "IS",
-          "LIKE",
-          "IN",
-          "BETWEEN",
-          "ORDER",
-          "BY",
-          "ASC",
-          "DESC",
-          "LIMIT",
-          "OFFSET",
-          "GROUP",
-          "HAVING",
-          "DISTINCT",
-          "AS",
-          "COUNT",
-          "SUM",
-          "AVG",
-          "MAX",
-          "MIN",
-          "SHOW",
-          "TABLES",
-          "DATABASES",
-          "DESCRIBE",
-          "EXPLAIN",
-          "TRUNCATE",
+          "SELECT", "FROM", "WHERE", "INSERT", "INTO", "VALUES", "UPDATE", "SET", 
+          "DELETE", "CREATE", "TABLE", "DROP", "ALTER", "INDEX", "JOIN", "LEFT", 
+          "RIGHT", "INNER", "OUTER", "ON", "AND", "OR", "NOT", "NULL", "IS", 
+          "LIKE", "IN", "BETWEEN", "ORDER", "BY", "ASC", "DESC", "LIMIT", "OFFSET", 
+          "GROUP", "HAVING", "DISTINCT", "AS", "COUNT", "SUM", "AVG", "MAX", "MIN", 
+          "SHOW", "TABLES", "DATABASES", "DESCRIBE", "EXPLAIN", "TRUNCATE"
         ];
-        return {
-          suggestions: keywords.map((kw) => ({
+
+        keywords.forEach(kw => {
+          suggestions.push({
             label: kw,
             kind: monaco.languages.CompletionItemKind.Keyword,
             insertText: kw,
-          })),
-        };
+            range: {
+              startLineNumber: position.lineNumber,
+              endLineNumber: position.lineNumber,
+              startColumn: model.getWordUntilPosition(position).startColumn,
+              endColumn: position.column
+            }
+          });
+        });
+
+        // Tables
+        if (tables) {
+          tables.forEach((t: any) => {
+            suggestions.push({
+              label: t.name,
+              kind: monaco.languages.CompletionItemKind.Struct,
+              insertText: `\`${t.name}\``,
+              detail: `Table (${t.engine})`,
+              range: {
+                startLineNumber: position.lineNumber,
+                endLineNumber: position.lineNumber,
+                startColumn: model.getWordUntilPosition(position).startColumn,
+                endColumn: position.column
+              }
+            });
+          });
+        }
+
+        return { suggestions };
       },
     });
 
@@ -380,6 +389,18 @@ export function SQLConsole({ database }: SQLConsoleProps) {
         >
           <Database size={14} />
           Visual Builder
+        </Button>
+
+        <Button
+          variant={autoSave ? "primary" : "secondary"}
+          size="sm"
+          onClick={() => setAutoSave(!autoSave)}
+          className="gap-1"
+          title={autoSave ? "Auto Save is ON" : "Auto Save is OFF"}
+        >
+          <Save size={14} className={autoSave ? "text-white" : "text-[var(--muted-foreground)]"} />
+          <span className="hidden md:inline">Auto Save</span>
+          <div className={`w-2 h-2 rounded-full ${autoSave ? "bg-green-400" : "bg-gray-400"}`} />
         </Button>
 
         <div className="flex-1" />

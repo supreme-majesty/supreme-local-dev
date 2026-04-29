@@ -539,12 +539,139 @@ func (d *PostgresDriver) GetTableIndexes(database, table string) ([]IndexInfo, e
 }
 
 func (d *PostgresDriver) Maintenance(database string, tables []string, operation string) ([]MaintenanceResult, error) {
-	// Maintenance operations in Postgres are different (VACUUM, ANALYZE, REINDEX)
-	// For now, return empty result to satisfy interface
-	return []MaintenanceResult{}, nil
+	targetDSN := strings.Replace(d.dsn, "/postgres?", "/"+database+"?", 1)
+	tempDB, err := sql.Open("postgres", targetDSN)
+	if err != nil {
+		return nil, err
+	}
+	defer tempDB.Close()
+
+	var results []MaintenanceResult
+
+	// Default to all tables if none specified
+	if len(tables) == 0 {
+		rows, err := tempDB.Query("SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = 'public'")
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var t string
+				if err := rows.Scan(&t); err == nil {
+					tables = append(tables, t)
+				}
+			}
+		}
+	}
+
+	for _, table := range tables {
+		var sqlOp string
+		switch strings.ToUpper(operation) {
+		case "ANALYZE":
+			sqlOp = fmt.Sprintf("ANALYZE %s", table)
+		case "CHECK":
+			// PG doesn't have CHECK TABLE, but we can use ANALYZE for stats
+			sqlOp = fmt.Sprintf("ANALYZE %s", table)
+		case "OPTIMIZE":
+			sqlOp = fmt.Sprintf("VACUUM FULL %s", table)
+		case "REPAIR":
+			sqlOp = fmt.Sprintf("REINDEX TABLE %s", table)
+		default:
+			continue
+		}
+
+		_, err := tempDB.Exec(sqlOp)
+		status := "OK"
+		msg := "Success"
+		if err != nil {
+			status = "Error"
+			msg = err.Error()
+		}
+
+		results = append(results, MaintenanceResult{
+			Table:     table,
+			Operation: operation,
+			MsgType:   status,
+			MsgText:   msg,
+		})
+	}
+
+	return results, nil
 }
 
 func (d *PostgresDriver) GlobalSearch(database string, query string) ([]SearchResult, error) {
-	// Not implemented for Postgres yet
-	return []SearchResult{}, nil
+	targetDSN := strings.Replace(d.dsn, "/postgres?", "/"+database+"?", 1)
+	tempDB, err := sql.Open("postgres", targetDSN)
+	if err != nil {
+		return nil, err
+	}
+	defer tempDB.Close()
+
+	// 1. Find all searchable columns
+	colQuery := `
+        SELECT table_name, column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+        AND data_type IN ('character varying', 'text', 'character', 'uuid')
+    `
+	rows, err := tempDB.Query(colQuery)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	tableCols := make(map[string][]string)
+	for rows.Next() {
+		var t, c string
+		if err := rows.Scan(&t, &c); err == nil {
+			tableCols[t] = append(tableCols[t], c)
+		}
+	}
+
+	var results []SearchResult
+	for table, cols := range tableCols {
+		var whereParts []string
+		for _, col := range cols {
+			whereParts = append(whereParts, fmt.Sprintf("%s::text ILIKE '%%%s%%'", col, query))
+		}
+
+		searchQuery := fmt.Sprintf("SELECT * FROM %s WHERE %s LIMIT 10", table, strings.Join(whereParts, " OR "))
+		rows, err := tempDB.Query(searchQuery)
+		if err != nil {
+			continue
+		}
+
+		columnNames, _ := rows.Columns()
+		var matches []map[string]interface{}
+		for rows.Next() {
+			values := make([]interface{}, len(columnNames))
+			valuePtrs := make([]interface{}, len(columnNames))
+			for i := range values {
+				valuePtrs[i] = &values[i]
+			}
+
+			if err := rows.Scan(valuePtrs...); err == nil {
+				row := make(map[string]interface{})
+				for i, col := range columnNames {
+					val := values[i]
+					if b, ok := val.([]byte); ok {
+						row[col] = string(b)
+					} else {
+						row[col] = val
+					}
+				}
+				matches = append(matches, row)
+			}
+		}
+		rows.Close()
+
+		if len(matches) > 0 {
+			results = append(results, SearchResult{
+				Table:       table,
+				ColumnCount: len(cols),
+				RowCount:    len(matches),
+				Matches:     matches,
+			})
+		}
+	}
+
+	return results, nil
 }

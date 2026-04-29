@@ -6,9 +6,11 @@ import {
   Trash2, 
   Table, 
   Globe,
+  ShieldCheck,
   Search,
   Wrench,
   BarChart2,
+  ExternalLink
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -30,6 +32,7 @@ interface DatabaseOperationsProps {
   database: string;
   onSelectDb: (db: string) => void;
   onSelectTable: (table: string) => void;
+  onNavigateToRecord: (table: string, match: any) => void;
   onCreateTable: () => void;
 }
 
@@ -37,6 +40,7 @@ export function DatabaseOperations({
   database, 
   onSelectDb, 
   onSelectTable,
+  onNavigateToRecord,
   onCreateTable 
 }: DatabaseOperationsProps) {
   const [newName, setNewName] = useState(database);
@@ -183,6 +187,16 @@ export function DatabaseOperations({
             <Button variant="outline" onClick={() => setSearchQuery("")}>Clear</Button>
           </div>
 
+          {searchQuery.length >= 2 && !isSearching && searchResults?.results?.length > 0 && (
+            <div className="mb-4 flex items-center gap-2 text-xs text-[var(--muted-foreground)] animate-in fade-in zoom-in duration-300">
+              <span className="flex items-center gap-1 bg-emerald-500/10 text-emerald-600 px-2 py-0.5 rounded-full font-bold">
+                <ShieldCheck size={12} />
+                Found {searchResults.results.reduce((acc: number, r: any) => acc + r.row_count, 0)} matches
+              </span>
+              <span>across {searchResults.results.length} tables in {database}</span>
+            </div>
+          )}
+
           {searchQuery.length >= 2 && (
             <div className="bg-[var(--background)] border border-[var(--border)] rounded-lg overflow-hidden animate-in fade-in slide-in-from-top-2">
               {isSearching ? (
@@ -194,26 +208,61 @@ export function DatabaseOperations({
                 <div className="max-h-[400px] overflow-y-auto">
                   {searchResults.results.map((res: any, i: number) => (
                     <div key={i} className="p-4 border-b border-[var(--border)] last:border-0 hover:bg-[var(--muted)]/20 transition-colors">
-                      <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center justify-between mb-3">
                         <button 
                           onClick={() => onSelectTable(res.table)}
-                          className="font-bold text-sm text-blue-600 flex items-center gap-2 hover:underline cursor-pointer"
+                          className="font-bold text-sm text-blue-600 flex items-center gap-2 hover:underline cursor-pointer group"
                         >
-                          <Table size={14} /> {res.table}
+                          <Table size={14} className="group-hover:scale-110 transition-transform" /> {res.table}
                         </button>
-                        <span className="text-xs bg-blue-500/10 text-blue-600 px-2 py-0.5 rounded-full">
-                          {res.row_count} matches in {res.column_count} searchable columns
+                        <span className="text-[10px] uppercase tracking-wider font-bold bg-blue-500/10 text-blue-600 px-2 py-0.5 rounded-full">
+                          {res.row_count} matches
                         </span>
                       </div>
-                      <div className="space-y-1">
-                        {res.matches?.slice(0, 3).map((match: any, j: number) => (
-                          <div key={j} className="text-xs font-mono bg-[var(--muted)]/50 p-2 rounded truncate whitespace-nowrap overflow-hidden text-ellipsis">
-                            {JSON.stringify(match)}
-                          </div>
-                        ))}
+                      <div className="space-y-2">
+                        {res.matches?.slice(0, 3).map((match: any, j: number) => {
+                          // Find columns that match the search query
+                          const matchingCols = Object.entries(match).filter(([_, val]) => 
+                            String(val).toLowerCase().includes(searchQuery.toLowerCase())
+                          );
+
+                          return (
+                            <div 
+                              key={j} 
+                              onClick={() => onNavigateToRecord(res.table, match)}
+                              className="group/match text-xs border-l-2 border-blue-500/30 bg-[var(--muted)]/30 rounded-r overflow-hidden hover:border-blue-500 transition-colors cursor-pointer"
+                            >
+                              <div className="flex items-start justify-between p-2">
+                                <div className="flex flex-wrap gap-x-4 gap-y-1 flex-1">
+                                  {matchingCols.map(([col, val], k) => (
+                                    <div key={k} className="flex gap-1.5 items-baseline">
+                                      <span className="text-[var(--muted-foreground)] font-mono text-[10px]">{col}:</span>
+                                      <span className="text-[var(--foreground)] font-medium">
+                                        {String(val).split(new RegExp(`(${searchQuery})`, 'gi')).map((part, idx) => (
+                                          part.toLowerCase() === searchQuery.toLowerCase() 
+                                            ? <mark key={idx} className="bg-yellow-500/30 text-[var(--foreground)] rounded px-0.5">{part}</mark>
+                                            : part
+                                        ))}
+                                      </span>
+                                    </div>
+                                  ))}
+                                  {Object.entries(match).filter(([col]) => !matchingCols.find(([mc]) => mc === col)).slice(0, 2).map(([col, val], k) => (
+                                    <div key={k} className="flex gap-1.5 items-baseline opacity-40 group-hover/match:opacity-70 transition-opacity">
+                                      <span className="text-[var(--muted-foreground)] font-mono text-[10px]">{col}:</span>
+                                      <span className="truncate max-w-[120px]">{String(val)}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                                <div className="h-6 w-6 flex items-center justify-center opacity-0 group-hover/match:opacity-100 transition-opacity text-blue-500">
+                                  <ExternalLink size={12} />
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
                         {res.row_count > 3 && (
-                          <div className="text-[10px] text-center text-[var(--muted-foreground)] pt-1 italic">
-                            + {res.row_count - 3} more matches...
+                          <div className="text-[10px] text-center text-[var(--muted-foreground)] pt-1 italic hover:text-blue-500 cursor-pointer" onClick={() => onSelectTable(res.table)}>
+                            + {res.row_count - 3} more matches in this table...
                           </div>
                         )}
                       </div>

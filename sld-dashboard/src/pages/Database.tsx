@@ -282,6 +282,40 @@ export default function Database() {
     }
   };
 
+
+  const handleNavigateToRecord = (table: string, match: any) => {
+    setSelectedTable(table);
+    setPage(1);
+
+    // Try to find a primary key or unique ID to filter by
+    const criteria: Record<string, { value: string; operator: string }> = {};
+    const pk = Object.keys(match).find(
+      (k) =>
+        k.toLowerCase() === "id" ||
+        k.toLowerCase().endsWith("_id") ||
+        k.toLowerCase() === "uuid",
+    );
+
+    if (pk) {
+      criteria[pk] = { value: String(match[pk]), operator: "=" };
+    } else {
+      // Fallback: search by first 2 columns that exist in the match
+      Object.entries(match)
+        .slice(0, 2)
+        .forEach(([k, v]) => {
+          criteria[k] = { value: String(v), operator: "=" };
+        });
+    }
+
+    setSearchCriteria(criteria);
+    // Switch to search tab to show the filtered result
+    setActiveTab("search");
+
+    // Small delay to ensure state updates before search triggered if needed
+    // (Actually the Search tab in this app usually requires clicking 'Search' button,
+    // but setting criteria and switching tab is the best we can do without refactoring handleSearch)
+  };
+
   const handleBulkTableAction = async (tables: string[], action: string) => {
     if (!selectedDB || tables.length === 0) return;
 
@@ -2238,6 +2272,7 @@ $mysqli->close();
               database={selectedDB}
               onSelectDb={handleSelectDb}
               onSelectTable={setSelectedTable}
+              onNavigateToRecord={handleNavigateToRecord}
               onCreateTable={() => setActiveTab("create-table")}
             />
           )}
