@@ -9,25 +9,32 @@ import (
 	"strings"
 
 	"github.com/supreme-majesty/supreme-local-dev/pkg/adapters"
+	"github.com/supreme-majesty/supreme-local-dev/pkg/util"
 )
 
-type MacOSAdapter struct{}
+type MacOSAdapter struct {
+	runner *util.Runner
+	log    *util.Logger
+}
 
 func NewMacOSAdapter() *MacOSAdapter {
-	return &MacOSAdapter{}
+	return &MacOSAdapter{
+		runner: util.NewRunner(false),
+		log:    &util.Logger{},
+	}
 }
 
 // Service Management (brew services)
 func (m *MacOSAdapter) StartService(name string) error {
-	return exec.Command("brew", "services", "start", name).Run()
+	return m.runner.Run("brew", "services", "start", name)
 }
 
 func (m *MacOSAdapter) StopService(name string) error {
-	return exec.Command("brew", "services", "stop", name).Run()
+	return m.runner.Run("brew", "services", "stop", name)
 }
 
 func (m *MacOSAdapter) RestartService(name string) error {
-	return exec.Command("brew", "services", "restart", name).Run()
+	return m.runner.Run("brew", "services", "restart", name)
 }
 
 func (m *MacOSAdapter) IsServiceRunning(name string) (bool, error) {
@@ -115,11 +122,66 @@ func (m *MacOSAdapter) GetNodePath(version string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-func (m *MacOSAdapter) InstallCertificates() error                          { return nil }
-func (m *MacOSAdapter) InstallMkcert() error                                { return nil }
-func (m *MacOSAdapter) GenerateCert(homeDir string, domains []string) error { return nil }
-func (m *MacOSAdapter) InstallBinary() error                                { return nil }
-func (m *MacOSAdapter) Uninstall() error                                    { return nil }
+func (m *MacOSAdapter) InstallCertificates() error {
+	// On macOS, mkcert -install handles the system keychain automatically.
+	// But we can verify it here.
+	return nil
+}
+
+func (m *MacOSAdapter) InstallMkcert() error {
+	return m.installBrewPackage("mkcert")
+}
+
+func (m *MacOSAdapter) GenerateCert(homeDir string, domains []string) error {
+	// 1. Ensure mkcert is installed and CA is trusted
+	exec.Command("mkcert", "-install").Run()
+
+	// 2. Prepare paths
+	finalDir := "/usr/local/var/lib/sld/certs"
+	if runtime.GOARCH == "arm64" {
+		finalDir = "/opt/homebrew/var/lib/sld/certs"
+	}
+	os.MkdirAll(finalDir, 0755)
+
+	certPath := filepath.Join(finalDir, "dev.pem")
+	keyPath := filepath.Join(finalDir, "dev-key.pem")
+
+	// 3. Generate
+	args := []string{"-cert-file", certPath, "-key-file", keyPath, "*.test", "sld.test", "localhost", "127.0.0.1", "::1"}
+	args = append(args, domains...)
+	
+	cmd := exec.Command("mkcert", args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+func (m *MacOSAdapter) InstallBinary() error {
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	dest := "/usr/local/bin/sld"
+	m.log.Info("Installing binary to %s...", dest)
+	
+	if err := m.runner.RunElevated("cp", exe, dest); err != nil {
+		return err
+	}
+	return m.runner.RunElevated("chmod", "+x", dest)
+}
+
+func (m *MacOSAdapter) Uninstall() error {
+	fmt.Println("Removing SLD from macOS...")
+	dest := "/usr/local/bin/sld"
+	exec.Command("sudo", "rm", dest).Run()
+	
+	prefix := m.getBrewPrefix()
+	configPath := filepath.Join(prefix, "etc", "nginx", "sld-sites.conf")
+	os.Remove(configPath)
+	
+	// Note: We don't remove brew packages as they might be used by other things
+	return nil
+}
 
 // Config Paths
 func (m *MacOSAdapter) getBrewPrefix() string {
@@ -263,8 +325,29 @@ func (m *MacOSAdapter) RestartPHP() error {
 	return nil
 }
 
-func (m *MacOSAdapter) CheckWifi() (bool, string) { return true, "Unknown" }
-func (m *MacOSAdapter) Doctor() error             { return nil }
+func (m *MacOSAdapter) CheckWifi() (bool, string) {
+	out, err := exec.Command("networksetup", "-getairportnetwork", "en0").Output()
+	if err != nil {
+		return false, "Not connected"
+	}
+	// Output: Current Wi-Fi Network: SSID
+	ssid := strings.TrimPrefix(string(out), "Current Wi-Fi Network: ")
+	return true, strings.TrimSpace(ssid)
+}
+
+func (m *MacOSAdapter) Doctor() error {
+	fmt.Println("🏥 SLD macOS Health Check")
+	services := []string{"nginx", "dnsmasq"}
+	for _, s := range services {
+		running, _ := m.IsServiceRunning(s)
+		status := "🔴"
+		if running {
+			status = "🟢"
+		}
+		fmt.Printf("%s %s\n", status, s)
+	}
+	return nil
+}
 func (m *MacOSAdapter) GetLogPaths() map[string]string {
 	prefix := "/usr/local"
 	if runtime.GOARCH == "arm64" {

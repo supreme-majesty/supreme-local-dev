@@ -11,28 +11,33 @@ import (
 	"time"
 
 	"github.com/supreme-majesty/supreme-local-dev/pkg/adapters"
+	"github.com/supreme-majesty/supreme-local-dev/pkg/util"
 )
 
 type LinuxAdapter struct {
-	// We can store configuration paths here
+	runner *util.Runner
+	log    *util.Logger
 }
 
 func NewLinuxAdapter() *LinuxAdapter {
-	return &LinuxAdapter{}
+	return &LinuxAdapter{
+		runner: util.NewRunner(false),
+		log:    &util.Logger{},
+	}
 }
 
 // Service Management using systemctl
 
 func (l *LinuxAdapter) StartService(name string) error {
-	return exec.Command("sudo", "systemctl", "start", name).Run()
+	return l.runner.RunElevated("systemctl", "start", name)
 }
 
 func (l *LinuxAdapter) StopService(name string) error {
-	return exec.Command("sudo", "systemctl", "stop", name).Run()
+	return l.runner.RunElevated("systemctl", "stop", name)
 }
 
 func (l *LinuxAdapter) RestartService(name string) error {
-	return exec.Command("sudo", "systemctl", "restart", name).Run()
+	return l.runner.RunElevated("systemctl", "restart", name)
 }
 
 func (l *LinuxAdapter) IsServiceRunning(name string) (bool, error) {
@@ -47,7 +52,7 @@ func (l *LinuxAdapter) IsServiceRunning(name string) (bool, error) {
 // Installation
 
 func (l *LinuxAdapter) InstallDependencies() error {
-	// Check for apt-get
+	l.log.Info("Checking for system dependencies...")
 	path, err := exec.LookPath("apt-get")
 	if err == nil && path != "" {
 		// Base packages
@@ -86,11 +91,9 @@ func (l *LinuxAdapter) InstallDependencies() error {
 		}
 
 		// Install packages
-		args := append([]string{"apt-get", "install", "-y"}, packages...)
-		cmd := exec.Command("sudo", args...)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
+		l.log.Info("Installing packages: %s", strings.Join(packages, ", "))
+		args := append([]string{"install", "-y"}, packages...)
+		if err := l.runner.RunElevated("apt-get", args...); err != nil {
 			return err
 		}
 

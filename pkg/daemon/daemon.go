@@ -27,6 +27,7 @@ import (
 
 type Daemon struct {
 	State           *state.Manager
+	Manifest        *state.Manifest
 	Events          *events.Bus
 	Adapter         adapters.SystemAdapter
 	PluginManager   *plugins.Manager
@@ -58,6 +59,9 @@ func Initialize() (*Daemon, error) {
 		// Log warning but continue if just empty
 		log.Printf("Warning loading state: %v", err)
 	}
+
+	// 1a. Load Manifest
+	manifest, _ := state.LoadManifest("/var/lib/sld")
 
 	// 2. Initialize Event Bus
 	eventBus := events.NewBus()
@@ -101,6 +105,7 @@ func Initialize() (*Daemon, error) {
 
 	instance = &Daemon{
 		State:           stateManager,
+		Manifest:        manifest,
 		Events:          eventBus,
 		Adapter:         adapter,
 		PluginManager:   pluginManager,
