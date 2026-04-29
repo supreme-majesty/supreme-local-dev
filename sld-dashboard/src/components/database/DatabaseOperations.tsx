@@ -120,21 +120,24 @@ export function DatabaseOperations({
 
   const totalSize = tables?.reduce((acc, t) => acc + t.size, 0) || 0;
 
-  const handleSetCollation = async () => {
-    if (!selectedCollation) return;
+  const handleSetCollation = async (collationOverride?: string, allTablesOverride?: boolean) => {
+    const targetCollation = collationOverride !== undefined ? collationOverride : selectedCollation;
+    const targetAll = allTablesOverride !== undefined ? allTablesOverride : changeAllTables;
+
+    if (!targetCollation) return;
     
-    const collationObj = collations?.find(c => c.name === selectedCollation);
+    const collationObj = collations?.find(c => c.name === targetCollation);
     if (!collationObj) return;
 
     try {
       // 1. Alter Database
       await executeMutation.mutateAsync({
         database,
-        query: `ALTER DATABASE \`${database}\` CHARACTER SET ${collationObj.charset} COLLATE ${selectedCollation}`
+        query: `ALTER DATABASE \`${database}\` CHARACTER SET ${collationObj.charset} COLLATE ${targetCollation}`
       });
 
       // 2. Alter All Tables if checked
-      if (changeAllTables && tables) {
+      if (targetAll && tables) {
         addToast({ 
           type: "info", 
           title: "Updating Tables", 
@@ -144,7 +147,7 @@ export function DatabaseOperations({
         for (const table of tables) {
           await executeMutation.mutateAsync({
             database,
-            query: `ALTER TABLE \`${table.name}\` CONVERT TO CHARACTER SET ${collationObj.charset} COLLATE ${selectedCollation}`
+            query: `ALTER TABLE \`${table.name}\` CONVERT TO CHARACTER SET ${collationObj.charset} COLLATE ${targetCollation}`
           });
         }
       }
@@ -152,7 +155,7 @@ export function DatabaseOperations({
       addToast({ 
         type: "success", 
         title: "Collation updated", 
-        description: `Database ${database} ${changeAllTables ? "and all tables " : ""}updated to ${selectedCollation}` 
+        description: `Database ${database} ${targetAll ? "and all tables " : ""}updated to ${targetCollation}` 
       });
     } catch (err: any) {
       addToast({
@@ -407,29 +410,51 @@ export function DatabaseOperations({
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <select 
-                value={selectedCollation} 
-                onChange={(e) => setSelectedCollation(e.target.value)}
-                className="w-full bg-[var(--background)] border border-[var(--border)] rounded-md h-9 px-3 text-xs focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/50 appearance-none"
-                disabled={loadingCollations}
-              >
-                <option value="">{loadingCollations ? "Loading..." : "Select collation..."}</option>
-                {collations?.map(c => (
-                  <option key={c.name} value={c.name}>{c.name}</option>
-                ))}
-              </select>
-              <label className="flex items-center gap-2 text-[10px] uppercase font-bold tracking-wider text-[var(--muted-foreground)] cursor-pointer">
-                <input type="checkbox" checked={changeAllTables} onChange={(e) => setChangeAllTables(e.target.checked)} className="accent-[var(--primary)]" />
-                Change all tables
+              <div className="relative">
+                <select 
+                  value={selectedCollation} 
+                  onChange={(e) => {
+                    setSelectedCollation(e.target.value);
+                    handleSetCollation(e.target.value);
+                  }}
+                  className="w-full bg-[var(--background)] border border-[var(--border)] rounded-md h-9 px-3 text-xs focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/50 appearance-none pr-8 cursor-pointer hover:border-[var(--primary)]/50 transition-colors"
+                  disabled={loadingCollations || executeMutation.isPending}
+                >
+                  <option value="">{loadingCollations ? "Loading..." : "Select collation..."}</option>
+                  {collations?.map(c => (
+                    <option key={c.name} value={c.name}>{c.name}</option>
+                  ))}
+                </select>
+                <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none opacity-50">
+                  {executeMutation.isPending ? (
+                    <RefreshCw size={12} className="animate-spin text-[var(--primary)]" />
+                  ) : (
+                    <div className="border-l border-t border-[var(--foreground)] w-1.5 h-1.5 rotate-[225deg] mt-[-3px]" />
+                  )}
+                </div>
+              </div>
+              
+              <label className="flex items-center gap-2 text-[10px] uppercase font-bold tracking-wider text-[var(--muted-foreground)] cursor-pointer group">
+                <input 
+                  type="checkbox" 
+                  checked={changeAllTables} 
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setChangeAllTables(checked);
+                    if (selectedCollation) {
+                      handleSetCollation(selectedCollation, checked);
+                    }
+                  }} 
+                  className="accent-[var(--primary)]" 
+                />
+                <span className="group-hover:text-[var(--foreground)] transition-colors">Change all tables</span>
               </label>
-              <Button 
-                onClick={handleSetCollation} 
-                disabled={executeMutation.isPending || !selectedCollation}
-                variant="outline"
-                className="w-full h-9"
-              >
-                {executeMutation.isPending ? "Applying..." : "Update Collation"}
-              </Button>
+              
+              {executeMutation.isPending && (
+                <div className="text-[9px] text-[var(--primary)] font-bold animate-pulse uppercase tracking-widest text-center">
+                  Applying changes...
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
