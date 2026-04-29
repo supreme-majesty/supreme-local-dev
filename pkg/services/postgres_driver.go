@@ -703,3 +703,33 @@ func (d *PostgresDriver) GetDatabaseSettings(database string) (*DatabaseSettings
 	}
 	return &DatabaseSettings{Collation: coll, Charset: "UTF8"}, nil
 }
+
+func (d *PostgresDriver) ExplainQuery(database, query string) (*QueryExplanation, error) {
+	// Connect to target DB
+	targetDSN := strings.Replace(d.dsn, "/postgres?", "/"+database+"?", 1)
+	tempDB, err := sql.Open("postgres", targetDSN)
+	if err != nil {
+		return nil, err
+	}
+	defer tempDB.Close()
+
+	// 1. Run EXPLAIN (VERBOSE, FORMAT JSON)
+	explainQuery := "EXPLAIN (FORMAT JSON) " + query
+	var jsonPlan string
+	err = tempDB.QueryRow(explainQuery).Scan(&jsonPlan)
+	if err != nil {
+		return nil, err
+	}
+
+	// 2. Simple output for now
+	plan := []map[string]interface{}{
+		{"raw_plan": jsonPlan},
+	}
+
+	return &QueryExplanation{
+		Query:         query,
+		ExecutionPlan: plan,
+		Analysis:      []string{"PostgreSQL plan captured in JSON format."},
+		Complexity:    "Moderate",
+	}, nil
+}

@@ -145,6 +145,13 @@ func (d *DatabaseService) ExecuteQuery(database, query string) (*QueryResult, er
 	return d.Driver.ExecuteQuery(database, query)
 }
 
+func (d *DatabaseService) ExplainQuery(database, query string) (*QueryExplanation, error) {
+	if err := d.ensureConnected(); err != nil {
+		return nil, err
+	}
+	return d.Driver.ExplainQuery(database, query)
+}
+
 // CreateSnapshot creates a database snapshot using mysqldump
 func (d *DatabaseService) CreateSnapshot(database, table string) (*Snapshot, error) {
 	// Ensure snapshots directory exists

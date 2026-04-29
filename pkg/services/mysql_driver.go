@@ -691,3 +691,84 @@ func (m *MySQLDriver) GetDatabaseSettings(database string) (*DatabaseSettings, e
 
 	return &settings, nil
 }
+
+func (m *MySQLDriver) ExplainQuery(database, query string) (*QueryExplanation, error) {
+	if _, err := m.db.Exec("USE " + database); err != nil {
+		return nil, err
+	}
+
+	explainQuery := "EXPLAIN " + query
+	rows, err := m.db.Query(explainQuery)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	cols, _ := rows.Columns()
+	var plan []map[string]interface{}
+	var estRows int64
+	
+	for rows.Next() {
+		columns := make([]interface{}, len(cols))
+		columnPointers := make([]interface{}, len(cols))
+		for i := range columns {
+			columnPointers[i] = &columns[i]
+		}
+
+		if err := rows.Scan(columnPointers...); err != nil {
+			return nil, err
+		}
+
+		m := make(map[string]interface{})
+		for i, colName := range cols {
+			val := columns[i]
+			if b, ok := val.([]byte); ok {
+				m[colName] = string(b)
+			} else {
+				m[colName] = val
+			}
+		}
+		plan = append(plan, m)
+
+		// Parse estimated rows
+		if rowVal, ok := m["rows"]; ok {
+			if r, ok := rowVal.(int64); ok {
+				estRows += r
+			} else if rs, ok := rowVal.(string); ok {
+				var r int64
+				fmt.Sscanf(rs, "%d", &r)
+				estRows += r
+			}
+		}
+	}
+
+	// Simple heuristic analysis
+	analysis := []string{}
+	recommendations := []string{}
+	complexity := "Simple"
+
+	for _, row := range plan {
+		accessType, _ := row["type"].(string)
+		extra, _ := row["Extra"].(string)
+
+		if accessType == "ALL" {
+			analysis = append(analysis, fmt.Sprintf("Full Table Scan detected on %s.", row["table"]))
+			recommendations = append(recommendations, fmt.Sprintf("Add an index to %s.", row["table"]))
+			complexity = "Complex"
+		}
+		if strings.Contains(extra, "Using filesort") {
+			analysis = append(analysis, "Sorting requires a temporary file (filesort).")
+			recommendations = append(recommendations, "Ensure ORDER BY columns are indexed.")
+			complexity = "Moderate"
+		}
+	}
+
+	return &QueryExplanation{
+		Query:           query,
+		ExecutionPlan:   plan,
+		Analysis:        analysis,
+		Recommendations: recommendations,
+		EstimatedRows:   estRows,
+		Complexity:      complexity,
+	}, nil
+}

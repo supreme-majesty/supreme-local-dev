@@ -91,9 +91,9 @@ export default function Logs() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ source: activeSource }),
+    }).then(() => {
+        setLogs([]); // Clear logs after watching starts
     });
-
-    setLogs([]); // Clear logs on switch
 
     return () => {
       // Unwatch previous source

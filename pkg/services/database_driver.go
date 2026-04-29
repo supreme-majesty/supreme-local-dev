@@ -33,6 +33,7 @@ type DatabaseDriver interface {
 	GlobalSearch(database string, query string) ([]SearchResult, error)
 	GetCollations() ([]CollationInfo, error)
 	GetDatabaseSettings(database string) (*DatabaseSettings, error)
+	ExplainQuery(database, query string) (*QueryExplanation, error)
 }
 
 type MaintenanceResult struct {
@@ -131,4 +132,13 @@ type IndexInfo struct {
 	Unique  bool     `json:"unique"`
 	Primary bool     `json:"primary"`
 	Type    string   `json:"type"`
+}
+
+type QueryExplanation struct {
+	Query           string                   `json:"query"`
+	ExecutionPlan   []map[string]interface{} `json:"execution_plan"`
+	Analysis        []string                 `json:"analysis"`
+	Recommendations []string                 `json:"recommendations"`
+	EstimatedRows   int64                    `json:"estimated_rows"`
+	Complexity      string                   `json:"complexity"` // Simple, Moderate, Complex
 }

@@ -69,6 +69,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/db/snapshots/restore", s.handleDBRestore)
 	mux.HandleFunc("/api/db/import", s.handleDBImport)
 	mux.HandleFunc("/api/db/query", s.handleDBQuery)
+	mux.HandleFunc("/api/db/explain", s.handleDBExplain)
+	mux.HandleFunc("/api/db/full-schema", s.handleDBFullSchema)
 	mux.HandleFunc("/api/db/clone", s.handleDBClone)
 	mux.HandleFunc("/api/db/rewind", s.handleDBRewind)
 	mux.HandleFunc("/api/db/maintenance", s.handleDBMaintenance)
@@ -1259,6 +1261,54 @@ func (s *Server) handleDBQuery(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResponse(w, result, 200)
+}
+
+func (s *Server) handleDBExplain(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		return
+	}
+
+	var req struct {
+		Database string `json:"database"`
+		Query    string `json:"query"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
+		return
+	}
+
+	d, _ := daemon.GetClient()
+	explanation, err := d.DatabaseService.ExplainQuery(req.Database, req.Query)
+	if err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+
+	jsonResponse(w, explanation, 200)
+}
+
+func (s *Server) handleDBFullSchema(w http.ResponseWriter, r *http.Request) {
+	d, _ := daemon.GetClient()
+	
+	databases, err := d.DatabaseService.ListDatabases()
+	if err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+
+	schema := make(map[string][]string)
+	for _, db := range databases {
+		tables, err := d.DatabaseService.ListTables(db)
+		if err == nil {
+			tableNames := make([]string, len(tables))
+			for i, t := range tables {
+				tableNames[i] = t.Name
+			}
+			schema[db] = tableNames
+		}
+	}
+
+	jsonResponse(w, schema, 200)
 }
 
 func (s *Server) handleDBClone(w http.ResponseWriter, r *http.Request) {

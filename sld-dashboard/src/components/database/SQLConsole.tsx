@@ -32,6 +32,13 @@ interface QueryResult {
   execution_time_ms?: number;
 }
 
+interface QueryExplanation {
+  analysis: string[];
+  recommendations: string[];
+  estimated_rows: number;
+  complexity: string;
+}
+
 interface HistoryEntry {
   query: string;
   database: string;
@@ -61,6 +68,24 @@ const SQL_TEMPLATES = [
   { label: "Show Tables", sql: "SHOW TABLES;" },
   { label: "Show Databases", sql: "SHOW DATABASES;" },
 ];
+
+async function explainQuery(
+  database: string,
+  query: string
+): Promise<QueryExplanation> {
+  const res = await fetch("/api/db/explain", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ database, query }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || "Explain failed");
+  }
+
+  return res.json();
+}
 
 async function executeQuery(
   database: string,
@@ -108,7 +133,7 @@ function formatTime(ms: number): string {
 }
 
 function convertToCSV(columns: string[], rows: Record<string, any>[]): string {
-  const escape = (val: any) => {
+  const escape = (val: string | number | boolean | null | undefined) => {
     if (val === null || val === undefined) return "";
     const str = String(val);
     if (str.includes(",") || str.includes('"') || str.includes("\n")) {
@@ -135,6 +160,9 @@ export function SQLConsole({ database }: SQLConsoleProps) {
   const [showBuilder, setShowBuilder] = useState(false);
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
   const [editingCell, setEditingCell] = useState<{ rowIdx: number; col: string; value: string } | null>(null);
+  
+  const [explanation, setExplanation] = useState<QueryExplanation | null>(null);
+  const [showExplanation, setShowExplanation] = useState(false);
   
   const historyRef = useRef<HTMLDivElement>(null);
   const templatesRef = useRef<HTMLDivElement>(null);
@@ -182,7 +210,15 @@ export function SQLConsole({ database }: SQLConsoleProps) {
 
   const handleRunRef = useRef<() => void>(() => {});
 
-  const mutation = useMutation({
+  const { mutate: runExplain, isPending: explaining, error: explainError } = useMutation({
+    mutationFn: () => explainQuery(database || "", query),
+    onSuccess: (data) => {
+      setExplanation(data);
+      setShowExplanation(true);
+    },
+  });
+
+  const { mutate: runQuery, isPending, error, reset: resetQuery } = useMutation({
     mutationFn: (vars: { database: string; query: string }) => {
       return executeQuery(vars.database, vars.query);
     },
@@ -207,13 +243,13 @@ export function SQLConsole({ database }: SQLConsoleProps) {
 
   const handleRun = () => {
     if (query.trim() && database) {
-      mutation.mutate({ database, query });
+      runQuery({ database, query });
     }
   };
 
   useEffect(() => {
     handleRunRef.current = handleRun;
-  }, [query, database, mutation.isPending]);
+  }, [handleRun]);
 
   const handleEditorMount = (editor: any, monaco: any) => {
     // Register SQL keywords autocomplete
@@ -248,7 +284,7 @@ export function SQLConsole({ database }: SQLConsoleProps) {
 
         // Tables
         if (tables) {
-          tables.forEach((t: any) => {
+          tables.forEach((t: { name: string; engine?: string }) => {
             suggestions.push({
               label: t.name,
               kind: monaco.languages.CompletionItemKind.Struct,
@@ -308,7 +344,7 @@ export function SQLConsole({ database }: SQLConsoleProps) {
     localStorage.removeItem(HISTORY_KEY);
   };
 
-  const handleEditCell = (rowIdx: number, col: string, currentValue: any) => {
+  const handleEditCell = (rowIdx: number, col: string, currentValue: string | number | boolean | null) => {
     // Check if we can identify the table
     const match = query.match(/FROM\s+`?([a-zA-Z0-9_]+)`?/i);
     if (!match) {
@@ -340,7 +376,7 @@ export function SQLConsole({ database }: SQLConsoleProps) {
     }
 
     // Determine a row identifier. Prefer 'id', otherwise use the first column
-    let pkCol = result.columns.includes("id") ? "id" : result.columns[0];
+    const pkCol = result.columns.includes("id") ? "id" : result.columns[0];
     const pkValue = row[pkCol];
 
     if (pkValue === undefined || pkValue === null) {
@@ -367,8 +403,9 @@ export function SQLConsole({ database }: SQLConsoleProps) {
       newResult.rows[rowIdx] = { ...newResult.rows[rowIdx], [col]: value };
       setResult(newResult);
       
-    } catch (err: any) {
-      alert(`Update failed: ${err.message}`);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      alert(`Update failed: ${message}`);
     } finally {
       setEditingCell(null);
     }
@@ -476,7 +513,16 @@ export function SQLConsole({ database }: SQLConsoleProps) {
           <div className={`w-2 h-2 rounded-full ${autoSave ? "bg-green-400" : "bg-gray-400"}`} />
         </Button>
 
-        <div className="flex-1" />
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => runExplain()}
+          disabled={!query || explaining}
+          className="gap-1 border-blue-500/30 text-blue-400 hover:bg-blue-500/10"
+        >
+          <AlertCircle size={14} />
+          {explaining ? "Analyzing..." : "Explain AI"}
+        </Button>
 
         <Button
           size="sm"
@@ -489,8 +535,8 @@ export function SQLConsole({ database }: SQLConsoleProps) {
         <Button
           size="sm"
           onClick={handleRun}
-          disabled={!query.trim() || !database || mutation.isPending}
-          loading={mutation.isPending}
+          disabled={!query.trim() || !database || isPending}
+          loading={isPending}
           className="gap-2"
         >
           <Play size={14} />
@@ -508,28 +554,86 @@ export function SQLConsole({ database }: SQLConsoleProps) {
         />
       )}
 
-      {/* Editor */}
-      <div className="border border-[var(--border)] rounded-lg overflow-hidden bg-[var(--card)] flex-shrink-0">
-        <Editor
-          height="300px"
-          language="sql"
-          theme="vs-dark"
-          value={query}
-          onChange={(val) => setQuery(val || "")}
-          onMount={handleEditorMount}
-          options={{
-            minimap: { enabled: false },
-            fontSize: 14,
-            lineNumbers: "on",
-            scrollBeyondLastLine: false,
-            wordWrap: "on",
-            padding: { top: 12, bottom: 12 },
-            automaticLayout: true,
-            tabSize: 2,
-            suggestOnTriggerCharacters: true,
-            quickSuggestions: true,
-          }}
-        />
+      {/* Editor & Explanation Panel */}
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+        <div className={showExplanation ? "lg:col-span-3" : "lg:col-span-4"}>
+          <div className="border border-[var(--border)] rounded-lg overflow-hidden bg-[#1e1e1e]">
+            <Editor
+              height="300px"
+              defaultLanguage="sql"
+              theme="vs-dark"
+              value={query}
+              onChange={(val) => setQuery(val || "")}
+              options={{
+                minimap: { enabled: false },
+                fontSize: 14,
+                fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                scrollBeyondLastLine: false,
+                automaticLayout: true,
+                padding: { top: 16, bottom: 16 },
+              }}
+            />
+          </div>
+        </div>
+
+        {showExplanation && explanation && (
+          <div className="lg:col-span-1 border border-blue-500/30 rounded-lg bg-blue-500/5 p-4 space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
+            <div className="flex justify-between items-center border-b border-blue-500/20 pb-2">
+              <h3 className="text-sm font-bold text-blue-400 flex items-center gap-2">
+                <AlertCircle size={14} />
+                Query Analysis
+              </h3>
+              <button 
+                onClick={() => setShowExplanation(false)}
+                className="text-blue-500 hover:text-blue-400 text-xs"
+              >
+                Close
+              </button>
+            </div>
+            
+            <div className="space-y-3">
+              <div>
+                <div className="text-[10px] uppercase font-bold text-blue-500/70 mb-1">Complexity</div>
+                <div className={`text-xs px-2 py-0.5 rounded inline-block font-bold ${
+                  explanation.complexity === 'Simple' ? 'bg-green-500/20 text-green-400' :
+                  explanation.complexity === 'Moderate' ? 'bg-yellow-500/20 text-yellow-400' :
+                  'bg-red-500/20 text-red-400'
+                }`}>
+                  {explanation.complexity}
+                </div>
+              </div>
+
+              <div>
+                <div className="text-[10px] uppercase font-bold text-blue-500/70 mb-1">Analysis</div>
+                <ul className="text-xs space-y-1.5 list-disc list-inside text-blue-200/80">
+                  {explanation.analysis.length > 0 ? (
+                    explanation.analysis.map((a, i) => <li key={i}>{a}</li>)
+                  ) : (
+                    <li>Query appears to be well-optimized.</li>
+                  )}
+                </ul>
+              </div>
+
+              <div>
+                <div className="text-[10px] uppercase font-bold text-blue-500/70 mb-1">Recommendations</div>
+                <ul className="text-xs space-y-1.5 list-disc list-inside text-blue-200/80">
+                   {explanation.recommendations.map((r, i) => (
+                    <li key={i} className="text-blue-300 font-medium">{r}</li>
+                  ))}
+                  {explanation.recommendations.length === 0 && (
+                    <li>No changes recommended.</li>
+                  )}
+                </ul>
+              </div>
+
+              <div className="pt-2 border-t border-blue-500/20">
+                <div className="text-[10px] text-blue-500/50">
+                  Estimated rows scanned: <span className="text-blue-400 font-mono">{explanation.estimated_rows.toLocaleString()}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Status Bar */}
@@ -548,13 +652,18 @@ export function SQLConsole({ database }: SQLConsoleProps) {
 
       {/* Results */}
       <div className="mt-4">
-        {mutation.error ? (
+        {error ? (
           <Card className="bg-red-500/5 border-red-500/20 p-4">
-            <div className="flex items-start gap-3 text-red-500">
-              <AlertCircle size={18} className="mt-0.5 flex-shrink-0" />
-              <div className="font-mono text-sm whitespace-pre-wrap break-words">
-                {mutation.error.message}
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start gap-3 text-red-500">
+                <AlertCircle size={18} className="mt-0.5 flex-shrink-0" />
+                <div className="font-mono text-sm whitespace-pre-wrap break-words">
+                  {(error as Error).message}
+                </div>
               </div>
+              <Button size="sm" variant="ghost" onClick={() => resetQuery()}>
+                <Eraser size={14} />
+              </Button>
             </div>
           </Card>
         ) : result ? (
