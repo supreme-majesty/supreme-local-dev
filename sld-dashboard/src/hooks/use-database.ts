@@ -522,3 +522,68 @@ export function useQueryPlanAnalysisMutation() {
       api.analyzeQueryPlan(database, query),
   });
 }
+
+export function useSchemaDocs(database: string) {
+  return useQuery({
+    queryKey: ['db-docs', database],
+    queryFn: () => api.generateDocs(database),
+    enabled: !!database,
+  });
+}
+
+export function useSnippets() {
+  return useQuery({
+    queryKey: ['db-snippets'],
+    queryFn: () => api.getSnippets(),
+  });
+}
+
+export function useSaveSnippetMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (snippet: any) => api.saveSnippet(snippet),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['db-snippets'] });
+    },
+  });
+}
+
+export function useAuditLog() {
+  return useQuery({
+    queryKey: ['db-audit'],
+    queryFn: () => api.getAuditLog(),
+    refetchInterval: 10000,
+  });
+}
+
+export function useImportDataMutation() {
+  return useMutation({
+    mutationFn: (config: any) => api.importData(config),
+  });
+}
+
+export function useProfiles() {
+  return useQuery({
+    queryKey: ['db-profiles'],
+    queryFn: () => api.getProfiles(),
+  });
+}
+
+export function useSaveProfileMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (profile: any) => api.saveProfile(profile),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['db-profiles'] }),
+  });
+}
+
+export function useSwitchEnvironmentMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.switchEnvironment(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries();
+      window.location.reload(); // Hard reload to clear all cached state for the new env
+    },
+  });
+}

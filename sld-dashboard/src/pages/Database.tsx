@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   Database as DatabaseIcon,
   Table as TableIcon,
@@ -32,6 +32,8 @@ import {
   Activity,
   GitCompare,
   Shield,
+  BookOpen,
+  Globe,
 } from "lucide-react";
 import { MigrationManager } from "@/components/database/MigrationManager";
 import { SchemaDiffTool } from "@/components/database/SchemaDiffTool";
@@ -60,6 +62,10 @@ import { AlterTableDesigner } from "@/components/database/AlterTableDesigner";
 import { TableCreator } from "@/components/database/TableCreator";
 import { SecurityDashboard } from "@/components/database/SecurityDashboard";
 import { HealthMonitor } from "@/components/database/HealthMonitor";
+import { DocumentationPortal } from "@/components/database/DocumentationPortal";
+import { AuditTimeline } from "@/components/database/AuditTimeline";
+import { SmartImporter } from "@/components/database/SmartImporter";
+import { EnvironmentManager } from "@/components/database/EnvironmentManager";
 import { CloneDatabaseModal } from "@/components/database/CloneDatabaseModal";
 import { CreateDatabaseModal } from "@/components/database/CreateDatabaseModal";
 import { SchemaCanvas } from "@/components/database/SchemaCanvas";
@@ -74,7 +80,6 @@ import {
   useRestoreSnapshotMutation,
   useDeleteSnapshotMutation,
   useExecuteQueryMutation,
-  useImportDatabaseMutation,
   useDeleteDatabaseMutation,
 } from "@/hooks/use-database";
 import { api } from "@/api/daemon";
@@ -100,7 +105,6 @@ export default function Database() {
   >({});
   const [searchResults, setSearchResults] = useState<any>(null);
   const [isSearching, setIsSearching] = useState(false);
-  const [restoreAfterImport, setRestoreAfterImport] = useState(true);
   const [triggers, setTriggers] = useState<any[]>([]);
   const [loadingTriggers, setLoadingTriggers] = useState(false);
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
@@ -150,7 +154,6 @@ export default function Database() {
     localStorage.setItem("db_perPage", String(perPage));
   }, [perPage]);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Sync activeTab with selection context
   useEffect(() => {
@@ -206,21 +209,7 @@ export default function Database() {
   const restoreSnapshotMutation = useRestoreSnapshotMutation();
   const deleteSnapshotMutation = useDeleteSnapshotMutation();
   const executeQueryMutation = useExecuteQueryMutation();
-  const importDatabaseMutation = useImportDatabaseMutation();
   const deleteDatabaseMutation = useDeleteDatabaseMutation();
-
-  const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file && selectedDB) {
-      importDatabaseMutation.mutate({
-        file,
-        database: selectedDB,
-        restore: restoreAfterImport,
-      });
-      // Reset input
-      e.target.value = "";
-    }
-  };
 
   const handleTruncateTable = () => {
     if (!selectedDB || !selectedTable) return;
@@ -1254,6 +1243,22 @@ $mysqli->close();
                 >
                   <GitCompare size={14} /> Diff & Sync
                 </Button>
+                <Button
+                  variant={activeTab === "docs" ? "primary" : "ghost"}
+                  size="sm"
+                  onClick={() => setActiveTab("docs")}
+                  className="gap-2 rounded-b-none border-b-2 border-transparent data-[variant=primary]:border-[var(--primary)]"
+                >
+                  <BookOpen size={14} /> Docs
+                </Button>
+                <Button
+                  variant={activeTab === "audit" ? "primary" : "ghost"}
+                  size="sm"
+                  onClick={() => setActiveTab("audit")}
+                  className="gap-2 rounded-b-none border-b-2 border-transparent data-[variant=primary]:border-[var(--primary)]"
+                >
+                  <HistoryIcon size={14} /> Audit
+                </Button>
               </>
             ) : (
               // Server Context Tabs
@@ -1273,6 +1278,14 @@ $mysqli->close();
                   className="gap-2 rounded-b-none border-b-2 border-transparent data-[variant=primary]:border-[var(--primary)]"
                 >
                   <Code2 size={14} /> SQL
+                </Button>
+                <Button
+                  variant={activeTab === "environments" ? "primary" : "ghost"}
+                  size="sm"
+                  onClick={() => setActiveTab("environments")}
+                  className="gap-2 rounded-b-none border-b-2 border-transparent data-[variant=primary]:border-[var(--primary)]"
+                >
+                  <Globe size={14} /> Environments
                 </Button>
               </>
             )}
@@ -1335,7 +1348,7 @@ $mysqli->close();
                 <label className="flex items-center gap-2 text-sm cursor-pointer">
                   <Checkbox
                     checked={profiling}
-                    onChange={(e) => setProfiling(e.target.checked)}
+                    onChange={(e: any) => setProfiling(e.target.checked)}
                   />
                   <span>Profiling</span>
                   {profiling && tableData?.query_time !== undefined && (
@@ -1448,7 +1461,7 @@ $mysqli->close();
                 <label className="flex items-center gap-2 text-sm cursor-pointer">
                   <Checkbox
                     checked={showAll}
-                    onChange={(e) => {
+                    onChange={(e: any) => {
                       setShowAll(e.target.checked);
                       setPage(1);
                     }}
@@ -1610,7 +1623,7 @@ $mysqli->close();
                             <th className="w-8 px-4 py-3 text-center">
                               <Checkbox
                                 checked={allSelected}
-                                onChange={(e) =>
+                                onChange={(e: any) =>
                                   handleSelectAll(e.target.checked)
                                 }
                               />
@@ -1669,7 +1682,7 @@ $mysqli->close();
                                       selectedRows.has(String(val))
                                     );
                                   })()}
-                                  onChange={(e) => {
+                                  onChange={(e: any) => {
                                     const val = getValue(row, pkCol);
                                     if (val !== undefined)
                                       handleSelectRow(
@@ -1767,7 +1780,7 @@ $mysqli->close();
                                             return (
                                               <select
                                                 value={editingCell.value}
-                                                onChange={(e) =>
+                                                onChange={(e: any) =>
                                                   setEditingCell({
                                                     ...editingCell,
                                                     value: e.target.value,
@@ -2148,8 +2161,14 @@ $mysqli->close();
 
           {/* Context: All, Tab: SQL */}
           {activeTab === "sql" && (
-            <div className="h-full flex flex-col">
+            <div className="flex-1 overflow-hidden">
               <SQLConsole database={selectedDB || ""} />
+            </div>
+          )}
+
+          {activeTab === "environments" && (
+            <div className="flex-1 overflow-y-auto">
+              <EnvironmentManager />
             </div>
           )}
 
@@ -2317,72 +2336,7 @@ $mysqli->close();
 
           {/* Context: Import */}
           {activeTab === "import" && selectedDB && (
-            <div className="w-full mt-8">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Import Database</CardTitle>
-                  <CardDescription>
-                    Upload a .sql file to import into{" "}
-                    <strong>{selectedDB}</strong>. This will execute the SQL
-                    commands in the file against the selected database.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex flex-col gap-6">
-                    <div
-                      className="border-2 border-dashed border-[var(--border)] rounded-lg p-10 text-center hover:bg-[var(--muted)]/20 transition-all cursor-pointer group"
-                      onClick={() => fileInputRef.current?.click()}
-                    >
-                      <FileUp className="mx-auto h-12 w-12 text-[var(--muted-foreground)] group-hover:text-[var(--primary)] mb-4 transition-colors" />
-                      <p className="font-medium mb-1">Select SQL File</p>
-                      <p className="text-sm text-[var(--muted-foreground)] mb-6">
-                        Click to select or drag and drop a SQL file here
-                      </p>
-                      <input
-                        type="file"
-                        accept=".sql"
-                        className="hidden"
-                        ref={fileInputRef}
-                        onChange={handleImport}
-                        disabled={importDatabaseMutation.isPending}
-                      />
-                      <Button
-                        variant="secondary"
-                        loading={importDatabaseMutation.isPending}
-                      >
-                        Choose File
-                      </Button>
-                    </div>
-
-                    <div className="flex items-center gap-3 p-4 bg-[var(--muted)]/30 rounded-lg">
-                      <Checkbox
-                        id="restore-after-import"
-                        checked={restoreAfterImport}
-                        onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                          setRestoreAfterImport(e.target.checked)
-                        }
-                      />
-                      <label
-                        htmlFor="restore-after-import"
-                        className="text-sm cursor-pointer select-none"
-                      >
-                        <span className="font-medium">
-                          Restore after upload
-                        </span>
-                        <p className="text-xs text-[var(--muted-foreground)]">
-                          Database contents will be replaced with the SQL file
-                          data.
-                        </p>
-                      </label>
-                    </div>
-
-                    <div className="text-xs text-[var(--muted-foreground)] text-center italic">
-                      Note: Large files might take a few moments to process.
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
+            <SmartImporter database={selectedDB} />
           )}
 
           {/* Context: DB, Tab: Architect */}
@@ -2415,6 +2369,16 @@ $mysqli->close();
           {/* Context: DB, Tab: Diff */}
           {activeTab === "diff" && selectedDB && (
             <SchemaDiffTool currentDatabase={selectedDB} />
+          )}
+
+          {/* Context: DB, Tab: Docs */}
+          {activeTab === "docs" && selectedDB && (
+            <DocumentationPortal database={selectedDB} />
+          )}
+
+          {/* Context: DB, Tab: Audit */}
+          {activeTab === "audit" && (
+            <AuditTimeline />
           )}
 
           {/* Operations Context: Database */}

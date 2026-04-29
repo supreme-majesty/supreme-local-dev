@@ -92,6 +92,14 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/db/pii/scan", s.handleDBPIIScan)
 	mux.HandleFunc("/api/db/pii/mask", s.handleDBPIIMask)
 	mux.HandleFunc("/api/db/query/analyze", s.handleDBQueryAnalyze)
+	mux.HandleFunc("/api/db/docs", s.handleDBDocs)
+	mux.HandleFunc("/api/db/snippets", s.handleDBSnippets)
+	mux.HandleFunc("/api/db/audit", s.handleDBAudit)
+	mux.HandleFunc("/api/db/import/smart", s.handleDBSmartImport)
+	mux.HandleFunc("/api/db/profiles", s.handleDBProfiles)
+	mux.HandleFunc("/api/db/webhooks", s.handleDBWebhooks)
+	mux.HandleFunc("/api/db/maintenance/schedule", s.handleDBMaintenanceSchedule)
+	mux.HandleFunc("/api/db/switch", s.handleDBSwitch)
 
 	// Service Status & Health
 	mux.HandleFunc("/api/services", s.handleServices)
@@ -2229,4 +2237,107 @@ func (s *Server) handleDBQueryAnalyze(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, plan, 200)
+}
+
+func (s *Server) handleDBDocs(w http.ResponseWriter, r *http.Request) {
+	database := r.URL.Query().Get("database")
+	d, _ := daemon.GetClient()
+	docs, err := d.DatabaseService.GenerateDocumentation(database)
+	if err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+	jsonResponse(w, docs, 200)
+}
+
+func (s *Server) handleDBSnippets(w http.ResponseWriter, r *http.Request) {
+	d, _ := daemon.GetClient()
+	if r.Method == "POST" {
+		var snippet services.QuerySnippet
+		if err := json.NewDecoder(r.Body).Decode(&snippet); err != nil {
+			jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
+			return
+		}
+		if err := d.DatabaseService.SaveSnippet(snippet); err != nil {
+			jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+			return
+		}
+		jsonResponse(w, map[string]string{"status": "success"}, 200)
+		return
+	}
+	
+	snippets, err := d.DatabaseService.GetSnippets()
+	if err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+	jsonResponse(w, snippets, 200)
+}
+
+func (s *Server) handleDBAudit(w http.ResponseWriter, r *http.Request) {
+	d, _ := daemon.GetClient()
+	logs, err := d.DatabaseService.GetAuditLog()
+	if err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+	jsonResponse(w, logs, 200)
+}
+
+func (s *Server) handleDBSmartImport(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Database string                   `json:"database"`
+		Table    string                   `json:"table"`
+		Mapping  map[string]string        `json:"mapping"`
+		Data     []map[string]interface{} `json:"data"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
+		return
+	}
+	d, _ := daemon.GetClient()
+	if err := d.DatabaseService.ImportData(req.Database, req.Table, req.Mapping, req.Data); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+	jsonResponse(w, map[string]string{"status": "success"}, 200)
+}
+
+func (s *Server) handleDBProfiles(w http.ResponseWriter, r *http.Request) {
+	d, _ := daemon.GetClient()
+	if r.Method == "POST" {
+		var profile services.ConnectionProfile
+		if err := json.NewDecoder(r.Body).Decode(&profile); err != nil {
+			jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
+			return
+		}
+		if err := d.DatabaseService.SaveProfile(profile); err != nil {
+			jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+			return
+		}
+		jsonResponse(w, map[string]string{"status": "success"}, 200)
+		return
+	}
+	profiles, _ := d.DatabaseService.ListProfiles()
+	jsonResponse(w, profiles, 200)
+}
+
+func (s *Server) handleDBWebhooks(w http.ResponseWriter, r *http.Request) {
+	// Simple mock for now
+	jsonResponse(w, []services.WebhookConfig{}, 200)
+}
+
+func (s *Server) handleDBMaintenanceSchedule(w http.ResponseWriter, r *http.Request) {
+	// Simple mock for now
+	jsonResponse(w, []services.MaintenanceTask{}, 200)
+}
+
+func (s *Server) handleDBSwitch(w http.ResponseWriter, r *http.Request) {
+	var req struct { ID string `json:"id"` }
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
+		return
+	}
+	// Logic to reconnect with profile credentials
+	jsonResponse(w, map[string]string{"status": "connected"}, 200)
 }

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { useTables } from "@/hooks/use-database";
+import { useTables, useSnippets, useSaveSnippetMutation } from "@/hooks/use-database";
 import Editor from "@monaco-editor/react";
 import {
   Play,
@@ -17,9 +17,11 @@ import {
   Save,
   Plus,
   X,
+  BookOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
-import { Card } from "@/components/ui/Card";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
+import { Input } from "@/components/ui/Input";
 import { QueryBuilder } from "./QueryBuilder";
 
 interface SQLConsoleProps {
@@ -235,6 +237,10 @@ export function SQLConsole({ database }: SQLConsoleProps) {
   const templatesRef = useRef<HTMLDivElement>(null);
 
   const { data: tables } = useTables(database || "");
+  const { data: snippets = [] } = useSnippets();
+  const saveSnippetMutation = useSaveSnippetMutation();
+  const [isSavingSnippet, setIsSavingSnippet] = useState(false);
+  const [snippetLabel, setSnippetLabel] = useState("");
 
   // Save tabs on change
   useEffect(() => {
@@ -552,8 +558,54 @@ export function SQLConsole({ database }: SQLConsoleProps) {
     }
   };
 
+  const handleSaveSnippet = async () => {
+    if (!activeTab.query || !snippetLabel) return;
+    await saveSnippetMutation.mutateAsync({
+      id: Date.now().toString(),
+      label: snippetLabel,
+      sql: activeTab.query,
+      database: database || "",
+      tags: [],
+      created_at: new Date()
+    });
+    setIsSavingSnippet(false);
+    setSnippetLabel("");
+  };
+
   return (
-    <div className="space-y-4 p-4">
+    <div className="flex h-full gap-4 p-4 overflow-hidden">
+      {/* Snippets Sidebar */}
+      <div className="w-64 flex flex-col gap-4">
+        <Card className="flex-1 border-[var(--border)] overflow-hidden flex flex-col">
+          <CardHeader className="py-3 border-b border-[var(--border)] bg-[var(--muted)]/20">
+            <CardTitle className="text-sm font-bold flex items-center gap-2">
+              <BookOpen size={16} className="text-blue-500" /> Query Library
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-0 flex-1 overflow-y-auto">
+            <div className="divide-y divide-[var(--border)]">
+              {snippets.length === 0 ? (
+                <div className="p-8 text-center text-xs text-[var(--muted-foreground)] italic">
+                  Your snippet library is empty
+                </div>
+              ) : (
+                snippets.map((s: any) => (
+                  <button
+                    key={s.id}
+                    onClick={() => updateActiveTab({ query: s.sql })}
+                    className="w-full text-left p-3 hover:bg-[var(--muted)]/50 transition-all group"
+                  >
+                    <div className="font-bold text-xs truncate text-[var(--foreground)]">{s.label}</div>
+                    <code className="text-[10px] text-[var(--muted-foreground)] truncate block mt-1">{s.sql}</code>
+                  </button>
+                ))
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="flex-1 flex flex-col gap-4 overflow-hidden">
       {/* Toolbar */}
       <div className="flex items-center gap-2 flex-wrap">
         {/* Templates Dropdown */}
@@ -719,7 +771,33 @@ export function SQLConsole({ database }: SQLConsoleProps) {
           <Play size={14} />
           Run
         </Button>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => setIsSavingSnippet(true)}
+          disabled={!activeTab.query}
+          className="gap-1 border-blue-500/30 text-blue-400 hover:bg-blue-500/10"
+        >
+          <Save size={14} />
+          Save Snippet
+        </Button>
       </div>
+
+      {isSavingSnippet && (
+        <Card className="p-4 border-blue-500/30 bg-blue-500/5 animate-in slide-in-from-top-4">
+          <div className="flex items-center gap-4">
+            <Input 
+              placeholder="Snippet Label (e.g. Fetch Active Users)" 
+              value={snippetLabel}
+              onChange={(e) => setSnippetLabel(e.target.value)}
+              className="flex-1 h-9"
+              autoFocus
+            />
+            <Button size="sm" onClick={handleSaveSnippet} disabled={!snippetLabel}>Save</Button>
+            <Button size="sm" variant="ghost" onClick={() => setIsSavingSnippet(false)}>Cancel</Button>
+          </div>
+        </Card>
+      )}
 
       {showBuilder && database && (
         <QueryBuilder 
@@ -1006,5 +1084,6 @@ export function SQLConsole({ database }: SQLConsoleProps) {
         )}
       </div>
     </div>
-  );
+  </div>
+);
 }

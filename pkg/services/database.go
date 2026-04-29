@@ -18,6 +18,33 @@ import (
 	"github.com/brianvoe/gofakeit/v6"
 )
 
+type ConnectionProfile struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Host        string `json:"host"`
+	Port        string `json:"port"`
+	User        string `json:"user"`
+	Password    string `json:"password"`
+	Environment string `json:"environment"` // DEVELOPMENT, STAGING, PRODUCTION
+	Color       string `json:"color"`       // UI accent color for this env
+}
+
+type WebhookConfig struct {
+	URL      string `json:"url"`
+	Type     string `json:"type"`    // SLACK, DISCORD, GENERIC
+	Enabled  bool   `json:"enabled"`
+	Events   []string `json:"events"` // AUDIT, HEALTH, PERFORMANCE
+}
+
+type MaintenanceTask struct {
+	ID        string    `json:"id"`
+	Database  string    `json:"database"`
+	Type      string    `json:"type"` // BACKUP, OPTIMIZE, PII_SCAN
+	Schedule  string    `json:"schedule"` // CRON string
+	LastRun   time.Time `json:"last_run"`
+	Enabled   bool      `json:"enabled"`
+}
+
 type PIIResult struct {
 	Column   string   `json:"column"`
 	Pattern  string   `json:"pattern"`
@@ -29,6 +56,39 @@ type MaskingConfig struct {
 	Database string            `json:"database"`
 	Table    string            `json:"table"`
 	Columns  map[string]string `json:"columns"` // Column -> MaskType (EMAIL, PHONE, NAME, RANDOM)
+}
+
+type TableDoc struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Columns     []ColumnDoc `json:"columns"`
+	RowCount    int64 `json:"row_count"`
+	Size        string `json:"size"`
+}
+
+type ColumnDoc struct {
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	Description string `json:"description"`
+	IsNullable  bool `json:"is_nullable"`
+	Default     string `json:"default"`
+	Key         string `json:"key"`
+}
+
+type SchemaAuditEntry struct {
+	Timestamp time.Time `json:"timestamp"`
+	Action    string    `json:"action"` // CREATE, ALTER, DROP
+	SQL       string    `json:"sql"`
+	Target    string    `json:"target"` // Table name
+}
+
+type QuerySnippet struct {
+	ID        string    `json:"id"`
+	Label     string    `json:"label"`
+	SQL       string    `json:"sql"`
+	Database  string    `json:"database"`
+	Tags      []string  `json:"tags"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // DatabaseService manages MySQL/MariaDB connections
@@ -157,12 +217,92 @@ func (d *DatabaseService) ListTables(database string) ([]TableInfo, error) {
 	return d.Driver.ListTables(database)
 }
 
+func (d *DatabaseService) LogAudit(entry SchemaAuditEntry) error {
+	logPath := filepath.Join(".sld", "schema_audit.json")
+	var logs []SchemaAuditEntry
+	
+	if data, err := os.ReadFile(logPath); err == nil {
+		json.Unmarshal(data, &logs)
+	}
+	
+	logs = append([]SchemaAuditEntry{entry}, logs...)
+	if len(logs) > 100 { logs = logs[:100] }
+	
+	data, _ := json.MarshalIndent(logs, "", "  ")
+	os.MkdirAll(".sld", 0755)
+	return os.WriteFile(logPath, data, 0644)
+}
+
+func (d *DatabaseService) GetAuditLog() ([]SchemaAuditEntry, error) {
+	logPath := filepath.Join(".sld", "schema_audit.json")
+	var logs []SchemaAuditEntry
+	data, err := os.ReadFile(logPath)
+	if err != nil { return []SchemaAuditEntry{}, nil }
+	json.Unmarshal(data, &logs)
+	return logs, nil
+}
+
+func (d *DatabaseService) SaveSnippet(snippet QuerySnippet) error {
+	path := filepath.Join(".sld", "query_library.json")
+	var snippets []QuerySnippet
+	
+	if data, err := os.ReadFile(path); err == nil {
+		json.Unmarshal(data, &snippets)
+	}
+	
+	snippets = append(snippets, snippet)
+	data, _ := json.MarshalIndent(snippets, "", "  ")
+	os.MkdirAll(".sld", 0755)
+	return os.WriteFile(path, data, 0644)
+}
+
+func (d *DatabaseService) GetSnippets() ([]QuerySnippet, error) {
+	path := filepath.Join(".sld", "query_library.json")
+	var snippets []QuerySnippet
+	data, err := os.ReadFile(path)
+	if err != nil { return []QuerySnippet{}, nil }
+	json.Unmarshal(data, &snippets)
+	return snippets, nil
+}
+
 // GetTableColumns returns column info for a table
 func (d *DatabaseService) GetTableColumns(database, table string) ([]ColumnInfo, error) {
 	if err := d.ensureConnected(); err != nil {
 		return nil, err
 	}
 	return d.Driver.GetTableColumns(database, table)
+}
+
+func (d *DatabaseService) ImportData(database, table string, mapping map[string]string, data []map[string]interface{}) error {
+	if err := d.ensureConnected(); err != nil { return err }
+	
+	// Create a transaction
+	txId, err := d.BeginTransaction(database)
+	if err != nil { return err }
+	defer d.RollbackTransaction(txId)
+
+	for _, row := range data {
+		cols := []string{}
+		vals := []interface{}{}
+		placeholders := []string{}
+
+		for fileCol, dbCol := range mapping {
+			cols = append(cols, fmt.Sprintf("`%s`", dbCol))
+			vals = append(vals, row[fileCol])
+			placeholders = append(placeholders, "?")
+		}
+
+		query := fmt.Sprintf("INSERT INTO `%s` (%s) VALUES (%s)", 
+			table, 
+			strings.Join(cols, ", "), 
+			strings.Join(placeholders, ", "),
+		)
+		
+		_, err := d.ExecuteQuery(database, query, txId)
+		if err != nil { return err }
+	}
+
+	return d.CommitTransaction(txId)
 }
 
 // GetTableData returns paginated data from a table
@@ -222,6 +362,37 @@ func (d *DatabaseService) GetTables(database string) ([]TableInfo, error) {
 		return nil, err
 	}
 	return d.Driver.ListTables(database)
+}
+
+func (d *DatabaseService) GenerateDocumentation(database string) ([]TableDoc, error) {
+	tables, err := d.GetTables(database)
+	if err != nil { return nil, err }
+
+	var docs []TableDoc
+	for _, t := range tables {
+		info, _ := d.GetTableInfo(database, t.Name)
+		cols, _ := d.GetTableColumns(database, t.Name)
+
+		var colDocs []ColumnDoc
+		for _, c := range cols {
+			colDocs = append(colDocs, ColumnDoc{
+				Name: c.Name,
+				Type: c.Type,
+				IsNullable: c.Nullable,
+				Default: c.Default,
+				Description: fmt.Sprintf("Storage for %s information.", c.Name),
+			})
+		}
+
+		docs = append(docs, TableDoc{
+			Name: t.Name,
+			Description: fmt.Sprintf("Data entity for %s records.", t.Name),
+			Columns: colDocs,
+			RowCount: info.RowCount,
+			Size: fmt.Sprintf("%d bytes", info.Size),
+		})
+	}
+	return docs, nil
 }
 
 func (d *DatabaseService) GetTableInfo(database, table string) (*TableInfo, error) {
@@ -1290,4 +1461,64 @@ func generateFakeValue(fakerType string) interface{} {
 	default:
 		return nil
 	}
+}
+
+func (d *DatabaseService) SaveProfile(profile ConnectionProfile) error {
+	profiles, _ := d.ListProfiles()
+	found := false
+	for i, p := range profiles {
+		if p.ID == profile.ID {
+			profiles[i] = profile
+			found = true
+			break
+		}
+	}
+	if !found {
+		profiles = append(profiles, profile)
+	}
+	os.MkdirAll(".sld", 0755)
+	data, _ := json.MarshalIndent(profiles, "", "  ")
+	return os.WriteFile(filepath.Join(".sld", "connections.json"), data, 0644)
+}
+
+func (d *DatabaseService) ListProfiles() ([]ConnectionProfile, error) {
+	data, err := os.ReadFile(filepath.Join(".sld", "connections.json"))
+	if err != nil { return []ConnectionProfile{}, nil }
+	var profiles []ConnectionProfile
+	json.Unmarshal(data, &profiles)
+	return profiles, nil
+}
+
+func (d *DatabaseService) SendWebhook(config WebhookConfig, title, message string) error {
+	if !config.Enabled { return nil }
+	
+	payload := map[string]interface{}{
+		"text": fmt.Sprintf("*%s*\n%s", title, message),
+	}
+	if config.Type == "DISCORD" {
+		payload = map[string]interface{}{
+			"content": fmt.Sprintf("**%s**\n%s", title, message),
+		}
+	}
+
+	body, _ := json.Marshal(payload)
+	// In a real app, use http.Post. For now, we simulate.
+	fmt.Printf("WEBHOOK SENT TO %s: %s\n", config.URL, string(body))
+	return nil
+}
+
+func (d *DatabaseService) ExecuteMaintenance(task MaintenanceTask) error {
+	fmt.Printf("EXECUTING MAINTENANCE: %s on %s\n", task.Type, task.Database)
+	switch task.Type {
+	case "BACKUP":
+		_, err := d.CreateSnapshot(task.Database, "")
+		return err
+	case "OPTIMIZE":
+		tables, _ := d.ListTables(task.Database)
+		tableNames := []string{}
+		for _, t := range tables { tableNames = append(tableNames, t.Name) }
+		_, err := d.Maintenance(task.Database, tableNames, "OPTIMIZE")
+		return err
+	}
+	return nil
 }

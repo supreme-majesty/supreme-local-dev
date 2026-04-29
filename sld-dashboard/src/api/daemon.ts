@@ -815,6 +815,50 @@ class DaemonApi {
       body: JSON.stringify({ database, query }),
     });
   }
+
+  async generateDocs(database: string): Promise<any[]> {
+    return this.request<any[]>(`/db/docs?database=${database}`);
+  }
+
+  async getSnippets(): Promise<any[]> {
+    return this.request<any[]>(`/db/snippets`);
+  }
+
+  async saveSnippet(snippet: any): Promise<void> {
+    await this.request<void>(`/db/snippets`, {
+      method: 'POST',
+      body: JSON.stringify(snippet),
+    });
+  }
+
+  async getAuditLog(): Promise<any[]> {
+    return this.request<any[]>(`/db/audit`);
+  }
+
+  async importData(config: any): Promise<void> {
+    await this.request<void>(`/db/import/smart`, {
+      method: 'POST',
+      body: JSON.stringify(config),
+    });
+  }
+
+  async getProfiles(): Promise<any[]> {
+    return this.request<any[]>(`/db/profiles`);
+  }
+
+  async saveProfile(profile: any): Promise<void> {
+    await this.request<void>(`/db/profiles`, {
+      method: 'POST',
+      body: JSON.stringify(profile),
+    });
+  }
+
+  async switchEnvironment(id: string): Promise<void> {
+    await this.request<void>(`/db/switch`, {
+      method: 'POST',
+      body: JSON.stringify({ id }),
+    });
+  }
 }
 
 export const api = new DaemonApi();
