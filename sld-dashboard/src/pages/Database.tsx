@@ -10,6 +10,7 @@ import {
   Camera,
   RotateCcw,
   ArrowRight,
+  ArrowLeft,
   ArrowUp,
   ArrowDown,
   ChevronLeft,
@@ -26,7 +27,6 @@ import {
   Clock,
   Copy,
   X,
-  ExternalLink,
   Network,
 } from "lucide-react";
 import { formatBytes, formatDate } from "@/lib/utils";
@@ -93,6 +93,7 @@ export default function Database() {
   const [triggers, setTriggers] = useState<any[]>([]);
   const [loadingTriggers, setLoadingTriggers] = useState(false);
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
+  const [navHistory, setNavHistory] = useState<string[]>([]);
 
   // Table controls state - load from localStorage
   const [perPage, setPerPage] = useState(() => {
@@ -537,16 +538,6 @@ export default function Database() {
     });
   };
 
-  const handleDeleteRow = (row: Record<string, any>) => {
-    if (!selectedDB || !selectedTable || !pkCol) return;
-
-    if (!confirm("Are you sure you want to delete this row?")) return;
-
-    const query = `DELETE FROM \`${selectedTable}\` WHERE \`${pkCol}\` = ${escapeValue(
-      row[pkCol],
-    )} LIMIT 1`;
-    executeQueryMutation.mutate({ database: selectedDB, query });
-  };
 
   const handleSaveRow = (
     data: Record<string, any>,
@@ -656,6 +647,7 @@ export default function Database() {
             columns: tableSchema.map((col) => ({
               name: col.name,
               type: col.type,
+              foreign_key: col.foreign_key,
             })),
             total: data.rowCount,
             total_pages: 1, // Simple result set for now
@@ -676,10 +668,6 @@ export default function Database() {
     setSearchResults(null);
   };
 
-  const startEdit = (row: Record<string, any>) => {
-    setEditingRow(row);
-    setActiveTab("edit");
-  };
 
   // Reset page when table changes
   useEffect(() => {
@@ -1265,6 +1253,29 @@ $mysqli->close();
                 >
                   Create PHP code
                 </button>
+                {searchResults && (
+                  <button
+                    className="ml-auto text-[var(--primary)] hover:underline flex items-center gap-1"
+                    onClick={() => {
+                      if (navHistory.length > 0) {
+                        const prev = navHistory[navHistory.length - 1];
+                        setSelectedTable(prev);
+                        setNavHistory((p) => p.slice(0, -1));
+                      }
+                      setSearchResults(null);
+                    }}
+                  >
+                    {navHistory.length > 0 ? (
+                      <>
+                        <ArrowLeft size={14} /> Back to previous table
+                      </>
+                    ) : (
+                      <>
+                        <X size={14} /> Clear Search Results
+                      </>
+                    )}
+                  </button>
+                )}
               </div>
 
               {/* Controls Bar */}
@@ -1505,7 +1516,6 @@ $mysqli->close();
                               />
                             </th>
                           )}
-                          <th className="px-4 py-3 font-medium">Actions</th>
                           {(searchResults || tableData).columns?.map(
                             (col: any) => {
                               const colName =
@@ -1570,28 +1580,6 @@ $mysqli->close();
                                 />
                               </td>
                             )}
-                            <td className="px-4 py-2 w-20">
-                              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <button
-                                  className="p-1 hover:text-blue-400"
-                                  onClick={() => startEdit(row)}
-                                >
-                                  <Code2 size={14} />
-                                </button>
-                                <button
-                                  className="p-1 hover:text-red-400 disabled:opacity-30"
-                                  disabled={!pkCol}
-                                  onClick={() => handleDeleteRow(row)}
-                                  title={
-                                    !pkCol
-                                      ? "No Primary Key found"
-                                      : "Delete Row"
-                                  }
-                                >
-                                  <Trash2 size={14} />
-                                </button>
-                              </div>
-                            </td>
                             {(searchResults || tableData).columns?.map(
                               (col: any) => {
                                 const colName =
@@ -1601,8 +1589,10 @@ $mysqli->close();
                                   editingCell?.rowIndex === i &&
                                   editingCell?.colName === colName;
 
-                                const isFK =
-                                  typeof col !== "string" && !!col.foreign_key;
+                                const schemaCol = tableSchema?.find(
+                                  (c) => c.name === colName,
+                                );
+                                const isFK = !!schemaCol?.foreign_key;
 
                                 return (
                                   <td
@@ -1621,7 +1611,40 @@ $mysqli->close();
                                         startInlineEdit(i, colName, val, row);
                                       }
                                     }}
-                                    onClick={undefined} // Remove cell click navigation
+                                    onClick={() => {
+                                      if (!isEditing && isFK && val && schemaCol) {
+                                        const fkTable = schemaCol.foreign_key!.table;
+                                        const fkColumn = schemaCol.foreign_key!.column;
+                                        const fkValue = String(val);
+
+                                        // Record history before jumping
+                                        setNavHistory((prev) => [
+                                          ...prev,
+                                          selectedTable!,
+                                        ]);
+
+                                        setSelectedTable(fkTable);
+                                        setPage(1);
+                                        setSortCol("");
+                                        setFilterText("");
+                                        
+                                        const query = `SELECT * FROM \`${fkTable}\` WHERE \`${fkColumn}\` = ${escapeValue(fkValue)}`;
+                                        setIsSearching(true);
+                                        executeQueryMutation.mutate(
+                                          { database: selectedDB!, query },
+                                          {
+                                            onSuccess: (data) => {
+                                              setSearchResults(data);
+                                              setActiveTab("browse");
+                                              setIsSearching(false);
+                                            },
+                                            onError: () => {
+                                              setIsSearching(false);
+                                            },
+                                          }
+                                        );
+                                      }
+                                    }}
                                     title={
                                       pkCol
                                         ? "Double-click to edit"
@@ -1773,47 +1796,7 @@ $mysqli->close();
                                             String(val)
                                           )}
                                         </span>
-                                        {!isEditing && isFK && val && (
-                                          <button
-                                            className="opacity-0 group-hover/cell:opacity-100 p-0.5 text-[var(--muted-foreground)] hover:text-[var(--primary)] transition-opacity bg-[var(--card)] rounded shadow-sm border border-[var(--border)] absolute right-0 top-1/2 -translate-y-1/2 z-10 cursor-pointer"
-                                            onClick={(e) => {
-                                              e.preventDefault();
-                                              e.stopPropagation();
-
-                                              const fkTable =
-                                                col.foreign_key!.table;
-                                              const fkColumn =
-                                                col.foreign_key!.column;
-                                              const fkValue = String(val);
-
-                                              setSelectedDB(selectedDB!);
-                                              setSelectedTable(fkTable);
-                                              setPage(1);
-                                              setSortCol("");
-                                              setFilterText("");
-
-                                              // Set search criteria to filter by FK value
-                                              setSearchCriteria({
-                                                [fkColumn]: {
-                                                  value: fkValue,
-                                                  operator: "=",
-                                                },
-                                              });
-
-                                              // Trigger search after navigating
-                                              setTimeout(() => {
-                                                setActiveTab("search");
-                                              }, 100);
-                                            }}
-                                            title={`Navigate to ${
-                                              col.foreign_key!.table
-                                            } where ${
-                                              col.foreign_key!.column
-                                            } = ${val}`}
-                                          >
-                                            <ExternalLink size={10} />
-                                          </button>
-                                        )}
+                                        {/* External link icon removed, as value is now directly clickable */}
                                       </div>
                                     )}
                                   </td>

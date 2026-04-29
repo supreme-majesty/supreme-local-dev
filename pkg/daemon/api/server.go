@@ -1207,9 +1207,15 @@ func (s *Server) handleDBSnapshots(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		if req.ID == "" {
+			jsonResponse(w, ErrorResponse{Error: "snapshot id is required"}, 400)
+			return
+		}
+
 		// ID is filename
 		if err := d.DatabaseService.DeleteSnapshot(req.ID); err != nil {
-			jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+			fmt.Printf("Error deleting snapshot %s: %v\n", req.ID, err)
+			jsonResponse(w, ErrorResponse{Error: fmt.Sprintf("Failed to delete snapshot: %v", err)}, 500)
 			return
 		}
 		jsonResponse(w, SuccessResponse{Success: true}, 200)

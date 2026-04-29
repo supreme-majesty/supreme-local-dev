@@ -316,14 +316,14 @@ class DaemonApi {
   async restoreSnapshot(filename: string): Promise<void> {
     return this.request("/db/restore", {
       method: "POST",
-      body: JSON.stringify({ filename }),
+      body: JSON.stringify({ path: filename }),
     });
   }
 
   async deleteSnapshot(filename: string): Promise<void> {
     return this.request("/db/snapshots", {
       method: "DELETE",
-      body: JSON.stringify({ filename }),
+      body: JSON.stringify({ id: filename }),
     });
   }
 

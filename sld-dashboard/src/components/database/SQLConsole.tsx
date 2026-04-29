@@ -210,7 +210,7 @@ export function SQLConsole({ database }: SQLConsoleProps) {
 
   const handleRunRef = useRef<() => void>(() => {});
 
-  const { mutate: runExplain, isPending: explaining, error: explainError } = useMutation({
+  const { mutate: runExplain, isPending: explaining } = useMutation({
     mutationFn: () => explainQuery(database || "", query),
     onSuccess: (data) => {
       setExplanation(data);
@@ -572,6 +572,7 @@ export function SQLConsole({ database }: SQLConsoleProps) {
                 automaticLayout: true,
                 padding: { top: 16, bottom: 16 },
               }}
+              onMount={handleEditorMount}
             />
           </div>
         </div>
