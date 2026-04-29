@@ -134,17 +134,19 @@ export function SQLConsole({ database }: SQLConsoleProps) {
   const [showTemplates, setShowTemplates] = useState(false);
   const [showBuilder, setShowBuilder] = useState(false);
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
+  const [editingCell, setEditingCell] = useState<{ rowIdx: number; col: string; value: string } | null>(null);
+  
   const historyRef = useRef<HTMLDivElement>(null);
   const templatesRef = useRef<HTMLDivElement>(null);
 
   const { data: tables } = useTables(database || "");
 
-  // Load saved query on mount
+  // Load query history on mount
   useEffect(() => {
     const saved = localStorage.getItem(`sld_sql_query_${database}`);
-    if (saved) setQuery(saved);
+    if (autoSave && saved) setQuery(saved);
     setHistory(loadHistory());
-  }, [database]);
+  }, [database, autoSave]);
 
   // Auto-save query
   useEffect(() => {
@@ -178,10 +180,11 @@ export function SQLConsole({ database }: SQLConsoleProps) {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  const handleRunRef = useRef<() => void>(() => {});
+
   const mutation = useMutation({
-    mutationFn: () => {
-      if (!database) throw new Error("No database selected");
-      return executeQuery(database, query);
+    mutationFn: (vars: { database: string; query: string }) => {
+      return executeQuery(vars.database, vars.query);
     },
     onSuccess: (data) => {
       setResult(data);
@@ -204,9 +207,13 @@ export function SQLConsole({ database }: SQLConsoleProps) {
 
   const handleRun = () => {
     if (query.trim() && database) {
-      mutation.mutate();
+      mutation.mutate({ database, query });
     }
   };
+
+  useEffect(() => {
+    handleRunRef.current = handleRun;
+  }, [query, database, mutation.isPending]);
 
   const handleEditorMount = (editor: any, monaco: any) => {
     // Register SQL keywords autocomplete
@@ -263,7 +270,7 @@ export function SQLConsole({ database }: SQLConsoleProps) {
 
     // Add Cmd/Ctrl+Enter to run query
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
-      handleRun();
+      handleRunRef.current();
     });
   };
 
@@ -301,8 +308,74 @@ export function SQLConsole({ database }: SQLConsoleProps) {
     localStorage.removeItem(HISTORY_KEY);
   };
 
+  const handleEditCell = (rowIdx: number, col: string, currentValue: any) => {
+    // Check if we can identify the table
+    const match = query.match(/FROM\s+`?([a-zA-Z0-9_]+)`?/i);
+    if (!match) {
+      alert("Cannot edit cell: Could not automatically determine the table name from your query. Please use a simple SELECT query.");
+      return;
+    }
+    setEditingCell({ rowIdx, col, value: String(currentValue === null ? "" : currentValue) });
+  };
+
+  const handleSaveCell = async () => {
+    if (!editingCell || !result || !database) return;
+    
+    const { rowIdx, col, value } = editingCell;
+    const row = result.rows[rowIdx];
+    const originalValue = row[col];
+    
+    if (String(originalValue) === value) {
+      setEditingCell(null); // No change
+      return;
+    }
+
+    const match = query.match(/FROM\s+`?([a-zA-Z0-9_]+)`?/i);
+    const tableName = match ? match[1] : null;
+    
+    if (!tableName) {
+      alert("Could not determine table name.");
+      setEditingCell(null);
+      return;
+    }
+
+    // Determine a row identifier. Prefer 'id', otherwise use the first column
+    let pkCol = result.columns.includes("id") ? "id" : result.columns[0];
+    const pkValue = row[pkCol];
+
+    if (pkValue === undefined || pkValue === null) {
+      alert("Could not determine a safe identifier (primary key) for this row.");
+      setEditingCell(null);
+      return;
+    }
+
+    const escapeValue = (val: string) => {
+      if (val === "" && originalValue === null) return "NULL"; // rough guess
+      const num = Number(val);
+      if (!isNaN(num) && val.trim() !== "") return val;
+      return `'${val.replace(/'/g, "''")}'`;
+    };
+
+    const updateQuery = `UPDATE \`${tableName}\` SET \`${col}\` = ${escapeValue(value)} WHERE \`${pkCol}\` = '${pkValue}' LIMIT 1`;
+
+    try {
+      await executeQuery(database, updateQuery);
+      
+      // Update local state to reflect change without re-running the main query
+      const newResult = { ...result };
+      newResult.rows = [...result.rows];
+      newResult.rows[rowIdx] = { ...newResult.rows[rowIdx], [col]: value };
+      setResult(newResult);
+      
+    } catch (err: any) {
+      alert(`Update failed: ${err.message}`);
+    } finally {
+      setEditingCell(null);
+    }
+  };
+
   return (
-    <div className="space-y-4 h-full flex flex-col p-4">
+    <div className="space-y-4 p-4">
       {/* Toolbar */}
       <div className="flex items-center gap-2 flex-wrap">
         {/* Templates Dropdown */}
@@ -438,7 +511,7 @@ export function SQLConsole({ database }: SQLConsoleProps) {
       {/* Editor */}
       <div className="border border-[var(--border)] rounded-lg overflow-hidden bg-[var(--card)] flex-shrink-0">
         <Editor
-          height="200px"
+          height="300px"
           language="sql"
           theme="vs-dark"
           value={query}
@@ -474,7 +547,7 @@ export function SQLConsole({ database }: SQLConsoleProps) {
       </div>
 
       {/* Results */}
-      <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+      <div className="mt-4">
         {mutation.error ? (
           <Card className="bg-red-500/5 border-red-500/20 p-4">
             <div className="flex items-start gap-3 text-red-500">
@@ -485,7 +558,7 @@ export function SQLConsole({ database }: SQLConsoleProps) {
             </div>
           </Card>
         ) : result ? (
-          <div className="flex-1 flex flex-col min-h-0 border border-[var(--border)] rounded-lg overflow-hidden bg-[var(--card)]">
+          <div className="border border-[var(--border)] rounded-lg overflow-hidden bg-[var(--card)] shadow-sm">
             {/* Results Header */}
             <div className="p-2 border-b border-[var(--border)] bg-[var(--muted)]/30 text-xs text-[var(--muted-foreground)] font-mono flex items-center gap-4 flex-wrap">
               <span className="flex items-center gap-1">
@@ -537,7 +610,7 @@ export function SQLConsole({ database }: SQLConsoleProps) {
             </div>
 
             {/* Results Table */}
-            <div className="flex-1 overflow-auto">
+            <div className="overflow-x-auto">
               <table className="w-full text-sm font-mono whitespace-nowrap">
                 <thead className="bg-[var(--muted)]/50 sticky top-0">
                   <tr>
@@ -560,9 +633,23 @@ export function SQLConsole({ database }: SQLConsoleProps) {
                       {result.columns.map((col, j) => (
                         <td
                           key={j}
-                          className="px-4 py-1.5 border-r border-[var(--border)] last:border-0 text-[var(--foreground)]"
+                          className="px-4 py-1.5 border-r border-[var(--border)] last:border-0 text-[var(--foreground)] cursor-pointer group hover:bg-[var(--primary)]/10"
+                          onDoubleClick={() => handleEditCell(i, col, row[col])}
                         >
-                          {row[col] === null ? (
+                          {editingCell?.rowIdx === i && editingCell.col === col ? (
+                            <input
+                              type="text"
+                              autoFocus
+                              className="w-full bg-[var(--background)] border border-[var(--primary)] rounded px-1 outline-none text-sm text-[var(--foreground)]"
+                              value={editingCell.value}
+                              onChange={(e) => setEditingCell({ ...editingCell, value: e.target.value })}
+                              onBlur={handleSaveCell}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") handleSaveCell();
+                                if (e.key === "Escape") setEditingCell(null);
+                              }}
+                            />
+                          ) : row[col] === null ? (
                             <span className="text-[var(--muted-foreground)] italic">
                               NULL
                             </span>
@@ -590,7 +677,7 @@ export function SQLConsole({ database }: SQLConsoleProps) {
             </div>
           </div>
         ) : (
-          <div className="flex-1 flex items-center justify-center border border-dashed border-[var(--border)] rounded-lg text-[var(--muted-foreground)] bg-[var(--card)]/50">
+          <div className="flex items-center justify-center border border-dashed border-[var(--border)] rounded-lg text-[var(--muted-foreground)] bg-[var(--card)]/50 py-16">
             <div className="text-center">
               <code className="block mb-2 text-xs opacity-50">READY</code>
               <p className="text-sm">Execute a query to see results here</p>

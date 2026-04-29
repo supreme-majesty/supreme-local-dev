@@ -28,6 +28,7 @@ export function QueryBuilder({ database, onGenerate, onClose }: QueryBuilderProp
   
   const [selectedColumns, setSelectedColumns] = useState<string[]>([]);
   const [conditions, setConditions] = useState<Condition[]>([]);
+  const [matchType, setMatchType] = useState<"AND" | "OR">("AND");
   const [orderBy, setOrderBy] = useState<OrderBy | null>(null);
   const [limit, setLimit] = useState<string>("100");
 
@@ -78,22 +79,23 @@ export function QueryBuilder({ database, onGenerate, onClose }: QueryBuilderProp
     sql += `\nFROM \`${selectedTable}\``;
     
     if (conditions.length > 0) {
-      const validConditions = conditions.filter(c => c.value !== "");
+      const validConditions = conditions.filter(c => c.operator.includes("NULL") || c.value.trim() !== "");
       if (validConditions.length > 0) {
         sql += "\nWHERE " + validConditions.map(c => {
           // Add quotes if value doesn't look like a number and operator isn't IS NULL
-          const isNumeric = !isNaN(Number(c.value)) && c.value.trim() !== "";
+          const trimmedValue = c.value.trim();
+          const isNumeric = !isNaN(Number(trimmedValue)) && trimmedValue !== "";
           const needsQuotes = !isNumeric && !c.operator.includes("NULL");
-          const val = needsQuotes ? `'${c.value.replace(/'/g, "''")}'` : c.value;
+          const val = needsQuotes ? `'${trimmedValue.replace(/'/g, "''")}'` : trimmedValue;
           
           if (c.operator.includes("NULL")) {
             return `\`${c.column}\` ${c.operator}`;
           }
           if (c.operator === "LIKE") {
-            return `\`${c.column}\` LIKE '%${c.value.replace(/'/g, "''")}%'`;
+            return `\`${c.column}\` LIKE '%${trimmedValue.replace(/'/g, "''")}%'`;
           }
           return `\`${c.column}\` ${c.operator} ${val}`;
-        }).join(" AND ");
+        }).join(` ${matchType} `);
       }
     }
     
@@ -166,9 +168,27 @@ export function QueryBuilder({ database, onGenerate, onClose }: QueryBuilderProp
           {/* WHERE Conditions */}
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <label className="text-xs font-medium text-[var(--muted-foreground)] flex items-center gap-1">
-                <Filter size={12} /> Conditions (WHERE)
-              </label>
+              <div className="flex items-center gap-3">
+                <label className="text-xs font-medium text-[var(--muted-foreground)] flex items-center gap-1">
+                  <Filter size={12} /> Conditions (WHERE)
+                </label>
+                {conditions.length > 1 && (
+                  <div className="flex items-center gap-1 bg-[var(--muted)]/50 p-0.5 rounded text-[10px]">
+                    <button 
+                      onClick={() => setMatchType("AND")}
+                      className={`px-1.5 py-0.5 rounded ${matchType === "AND" ? "bg-[var(--primary)] text-white" : "hover:bg-[var(--muted)]"}`}
+                    >
+                      ALL
+                    </button>
+                    <button 
+                      onClick={() => setMatchType("OR")}
+                      className={`px-1.5 py-0.5 rounded ${matchType === "OR" ? "bg-[var(--primary)] text-white" : "hover:bg-[var(--muted)]"}`}
+                    >
+                      ANY
+                    </button>
+                  </div>
+                )}
+              </div>
               <Button variant="secondary" size="sm" className="h-6 px-2 text-xs gap-1" onClick={handleAddCondition}>
                 <Plus size={12} /> Add
               </Button>
