@@ -12,12 +12,15 @@ import (
 )
 
 type MySQLDriver struct {
-	db  *sql.DB
-	dsn string
+	db        *sql.DB
+	dsn       string
+	activeTxs map[string]*sql.Tx
 }
 
 func NewMySQLDriver() *MySQLDriver {
-	return &MySQLDriver{}
+	return &MySQLDriver{
+		activeTxs: make(map[string]*sql.Tx),
+	}
 }
 
 func (d *MySQLDriver) Connect(config ConnectionConfig) error {
@@ -361,31 +364,75 @@ func (d *MySQLDriver) GetTableDataEx(database, table string, page, perPage int, 
 	}, nil
 }
 
-func (d *MySQLDriver) ExecuteQuery(database, query string) (*QueryResult, error) {
-	if _, err := d.db.Exec("USE " + database); err != nil {
-		return nil, err
+// ExecuteQuery executes a SQL query
+func (d *MySQLDriver) ExecuteQuery(database, query string, txId string) (*QueryResult, error) {
+	if d.db == nil {
+		return nil, fmt.Errorf("database not connected")
 	}
 
-	startTime := time.Now()
-	trimmed := strings.TrimSpace(strings.ToUpper(query))
-	isSelect := strings.HasPrefix(trimmed, "SELECT") || strings.HasPrefix(trimmed, "SHOW") || strings.HasPrefix(trimmed, "DESCRIBE") || strings.HasPrefix(trimmed, "EXPLAIN")
-
-	if !isSelect {
-		res, err := d.db.Exec(query)
-		elapsed := time.Since(startTime).Milliseconds()
+	if database != "" {
+		_, err := d.db.Exec("USE `" + database + "`")
 		if err != nil {
 			return nil, err
 		}
-		affected, _ := res.RowsAffected()
+	}
+
+	start := time.Now()
+
+	var rows *sql.Rows
+	var result sql.Result
+	var err error
+
+	// Use transaction if provided
+	if txId != "" {
+		tx, ok := d.activeTxs[txId]
+		if !ok {
+			return nil, fmt.Errorf("transaction %s not found or expired", txId)
+		}
+
+		if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(query)), "SELECT") || 
+		   strings.HasPrefix(strings.ToUpper(strings.TrimSpace(query)), "SHOW") ||
+		   strings.HasPrefix(strings.ToUpper(strings.TrimSpace(query)), "DESC") ||
+		   strings.HasPrefix(strings.ToUpper(strings.TrimSpace(query)), "EXPLAIN") {
+			rows, err = tx.Query(query)
+		} else {
+			result, err = tx.Exec(query)
+		}
+	} else {
+		if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(query)), "SELECT") || 
+		   strings.HasPrefix(strings.ToUpper(strings.TrimSpace(query)), "SHOW") ||
+		   strings.HasPrefix(strings.ToUpper(strings.TrimSpace(query)), "DESC") ||
+		   strings.HasPrefix(strings.ToUpper(strings.TrimSpace(query)), "EXPLAIN") {
+			rows, err = d.db.Query(query)
+		} else {
+			result, err = d.db.Exec(query)
+		}
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	
+	elapsed := time.Since(start).Milliseconds()
+
+	if result != nil {
+		affected, _ := result.RowsAffected()
 		return &QueryResult{
 			AffectedRows:    affected,
 			ExecutionTimeMs: elapsed,
 		}, nil
 	}
 
-	rows, err := d.db.Query(query)
-	if err != nil {
-		return nil, err
+	if rows == nil {
+		if txId != "" {
+			tx := d.activeTxs[txId]
+			rows, err = tx.Query(query)
+		} else {
+			rows, err = d.db.Query(query)
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
 	defer rows.Close()
 
@@ -416,8 +463,262 @@ func (d *MySQLDriver) ExecuteQuery(database, query string) (*QueryResult, error)
 		Columns:         cols,
 		Rows:            data,
 		RowCount:        len(data),
-		ExecutionTimeMs: time.Since(startTime).Milliseconds(),
+		ExecutionTimeMs: time.Since(start).Milliseconds(),
 	}, nil
+}
+
+func (d *MySQLDriver) BeginTransaction(database string) (string, error) {
+	if d.db == nil {
+		return "", fmt.Errorf("database not connected")
+	}
+
+	if database != "" {
+		_, err := d.db.Exec("USE `" + database + "`")
+		if err != nil {
+			return "", err
+		}
+	}
+
+	tx, err := d.db.Begin()
+	if err != nil {
+		return "", err
+	}
+
+	txId := fmt.Sprintf("tx_%d", time.Now().UnixNano())
+	d.activeTxs[txId] = tx
+
+	// Set a timeout to auto-rollback after 5 minutes of inactivity?
+	// For now, keep it simple.
+	return txId, nil
+}
+
+func (d *MySQLDriver) CommitTransaction(txId string) error {
+	tx, ok := d.activeTxs[txId]
+	if !ok {
+		return fmt.Errorf("transaction %s not found", txId)
+	}
+
+	err := tx.Commit()
+	delete(d.activeTxs, txId)
+	return err
+}
+
+func (d *MySQLDriver) RollbackTransaction(txId string) error {
+	tx, ok := d.activeTxs[txId]
+	if !ok {
+		return fmt.Errorf("transaction %s not found", txId)
+	}
+
+	err := tx.Rollback()
+	delete(d.activeTxs, txId)
+	return err
+}
+
+func (d *MySQLDriver) BatchInsert(database, table string, columns []string, data [][]interface{}, txId string) error {
+	if d.db == nil {
+		return fmt.Errorf("database not connected")
+	}
+
+	if database != "" {
+		_, err := d.db.Exec("USE `" + database + "`")
+		if err != nil {
+			return err
+		}
+	}
+
+	if len(data) == 0 {
+		return nil
+	}
+
+	// Prepare column names
+	colNames := make([]string, len(columns))
+	for i, col := range columns {
+		colNames[i] = "`" + col + "`"
+	}
+	colsStr := strings.Join(colNames, ", ")
+
+	// Use transaction if provided
+	var tx *sql.Tx
+	if txId != "" {
+		var ok bool
+		tx, ok = d.activeTxs[txId]
+		if !ok {
+			return fmt.Errorf("transaction %s not found", txId)
+		}
+	}
+
+	// Batch size
+	const batchSize = 500
+	for i := 0; i < len(data); i += batchSize {
+		end := i + batchSize
+		if end > len(data) {
+			end = len(data)
+		}
+		batch := data[i:end]
+
+		placeholders := make([]string, len(batch))
+		values := make([]interface{}, 0, len(batch)*len(columns))
+		for j, row := range batch {
+			rowPlaceholders := make([]string, len(columns))
+			for k := range columns {
+				rowPlaceholders[k] = "?"
+			}
+			placeholders[j] = "(" + strings.Join(rowPlaceholders, ", ") + ")"
+			values = append(values, row...)
+		}
+
+		query := fmt.Sprintf("INSERT INTO `%s` (%s) VALUES %s", table, colsStr, strings.Join(placeholders, ", "))
+
+		var err error
+		if tx != nil {
+			_, err = tx.Exec(query, values...)
+		} else {
+			_, err = d.db.Exec(query, values...)
+		}
+
+		if err != nil {
+			return fmt.Errorf("batch insert failed at index %d: %w", i, err)
+		}
+	}
+
+	return nil
+}
+
+func (d *MySQLDriver) Query(database, query string, args []interface{}) ([]map[string]interface{}, error) {
+	if d.db == nil {
+		return nil, fmt.Errorf("database not connected")
+	}
+
+	if database != "" {
+		if _, err := d.db.Exec("USE `" + database + "`"); err != nil {
+			return nil, err
+		}
+	}
+
+	rows, err := d.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	cols, err := rows.Columns()
+	if err != nil {
+		return nil, err
+	}
+
+	var results []map[string]interface{}
+	for rows.Next() {
+		columns := make([]interface{}, len(cols))
+		columnPointers := make([]interface{}, len(cols))
+		for i := range columns {
+			columnPointers[i] = &columns[i]
+		}
+
+		if err := rows.Scan(columnPointers...); err != nil {
+			return nil, err
+		}
+
+		m := make(map[string]interface{})
+		for i, colName := range cols {
+			val := columns[i]
+			b, ok := val.([]byte)
+			if ok {
+				m[colName] = string(b)
+			} else {
+				m[colName] = val
+			}
+		}
+		results = append(results, m)
+	}
+
+	return results, nil
+}
+
+func (d *MySQLDriver) GetTableInfo(database, table string) (*TableInfo, error) {
+	query := `
+		SELECT 
+			TABLE_NAME, 
+			TABLE_ROWS, 
+			ENGINE, 
+			TABLE_COLLATION, 
+			DATA_LENGTH + INDEX_LENGTH as SIZE,
+			DATA_FREE as OVERHEAD
+		FROM INFORMATION_SCHEMA.TABLES 
+		WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+	`
+	rows, err := d.Query("", query, []interface{}{database, table})
+	if err != nil || len(rows) == 0 {
+		return nil, fmt.Errorf("table info not found: %v", err)
+	}
+
+	row := rows[0]
+	info := &TableInfo{
+		Name:      row["TABLE_NAME"].(string),
+		Engine:    row["ENGINE"].(string),
+		Collation: row["TABLE_COLLATION"].(string),
+	}
+	
+	// Handle numeric types safely
+	if v, ok := row["TABLE_ROWS"].(int64); ok { info.RowCount = v }
+	if v, ok := row["SIZE"].(int64); ok { info.Size = v }
+	if v, ok := row["OVERHEAD"].(int64); ok { info.Overhead = v }
+
+	return info, nil
+}
+
+func (d *MySQLDriver) GetStats(database string) (map[string]interface{}, error) {
+	if d.db == nil {
+		return nil, fmt.Errorf("database not connected")
+	}
+
+	stats := make(map[string]interface{})
+
+	// 1. Get Global Status
+	rows, err := d.db.Query("SHOW GLOBAL STATUS")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	status := make(map[string]string)
+	for rows.Next() {
+		var name, value string
+		if err := rows.Scan(&name, &value); err == nil {
+			status[name] = value
+		}
+	}
+	stats["status"] = status
+
+	// 2. Get Process List
+	pRows, err := d.db.Query("SHOW FULL PROCESSLIST")
+	if err != nil {
+		return nil, err
+	}
+	defer pRows.Close()
+
+	var processes []map[string]interface{}
+	cols, _ := pRows.Columns()
+	for pRows.Next() {
+		values := make([]interface{}, len(cols))
+		valuePtrs := make([]interface{}, len(cols))
+		for i := range values {
+			valuePtrs[i] = &values[i]
+		}
+		pRows.Scan(valuePtrs...)
+		proc := make(map[string]interface{})
+		for i, col := range cols {
+			val := values[i]
+			if b, ok := val.([]byte); ok {
+				proc[col] = string(b)
+			} else {
+				proc[col] = val
+			}
+		}
+		processes = append(processes, proc)
+	}
+	stats["processes"] = processes
+
+	return stats, nil
 }
 
 func (d *MySQLDriver) GetForeignValues(database, table, column string) ([]string, error) {

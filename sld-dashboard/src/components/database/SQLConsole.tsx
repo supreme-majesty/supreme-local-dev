@@ -15,6 +15,8 @@ import {
   Check,
   Database,
   Save,
+  Plus,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -45,6 +47,16 @@ interface HistoryEntry {
   timestamp: number;
 }
 
+interface QueryTab {
+  id: string;
+  title: string;
+  query: string;
+  result: QueryResult | null;
+  isExecuting: boolean;
+  error: string | null;
+  txId?: string;
+}
+
 const HISTORY_KEY = "sld_sql_history";
 const MAX_HISTORY = 50;
 
@@ -73,7 +85,7 @@ async function explainQuery(
   database: string,
   query: string
 ): Promise<QueryExplanation> {
-  const res = await fetch("/api/db/explain", {
+  const res = await fetch("/api/db/query/analyze", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ database, query }),
@@ -84,18 +96,61 @@ async function explainQuery(
     throw new Error(err.error || "Explain failed");
   }
 
-  return res.json();
+  const plan = await res.json();
+  
+  // Intelligence Logic: Parse plan rows to generate a human explanation
+  const analysis: string[] = [];
+  const recommendations: string[] = [];
+  let estimatedRows = 0;
+  let complexity = "Simple";
+
+  if (plan.rows && plan.rows.length > 0) {
+    plan.rows.forEach((row: any) => {
+      estimatedRows += parseInt(row.rows || 0);
+      
+      const type = row.type || "";
+      const extra = row.Extra || "";
+
+      if (type === "ALL") {
+        analysis.push(`Full table scan on \`${row.table}\`.`);
+        complexity = "High";
+        recommendations.push(`Add an index to columns used in WHERE/JOIN clauses for table \`${row.table}\`.`);
+      }
+      
+      if (extra.includes("Using temporary") || extra.includes("Using filesort")) {
+        analysis.push(`Query uses temporary tables or disk-based sorting for \`${row.table}\`.`);
+        complexity = complexity === "High" ? "Critical" : "Moderate";
+        recommendations.push(`Optimize ORDER BY or GROUP BY clauses to use existing indexes.`);
+      }
+
+      if (type === "index") {
+        analysis.push(`Full index scan on \`${row.table}\`. Better than table scan but still potentially slow.`);
+      }
+    });
+  }
+
+  if (analysis.length === 0) {
+     analysis.push("Query is using efficient index lookups.");
+  }
+
+  return {
+    analysis,
+    recommendations,
+    estimated_rows: estimatedRows,
+    complexity
+  };
 }
 
 async function executeQuery(
   database: string,
-  query: string
+  query: string,
+  txId?: string
 ): Promise<QueryResult> {
   const startTime = performance.now();
   const res = await fetch("/api/db/query", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ database, query }),
+    body: JSON.stringify({ database, query, tx_id: txId }),
   });
 
   if (!res.ok) {
@@ -111,14 +166,6 @@ async function executeQuery(
   return result;
 }
 
-function loadHistory(): HistoryEntry[] {
-  try {
-    const data = localStorage.getItem(HISTORY_KEY);
-    return data ? JSON.parse(data) : [];
-  } catch {
-    return [];
-  }
-}
 
 function saveHistory(history: HistoryEntry[]) {
   localStorage.setItem(
@@ -149,18 +196,38 @@ function convertToCSV(columns: string[], rows: Record<string, any>[]): string {
 }
 
 export function SQLConsole({ database }: SQLConsoleProps) {
-  const [query, setQuery] = useState("");
+  const [tabs, setTabs] = useState<QueryTab[]>(() => {
+    const saved = localStorage.getItem(`sld_sql_tabs_${database}`);
+    if (saved) return JSON.parse(saved);
+    return [
+      {
+        id: "1",
+        title: "Query 1",
+        query: "",
+        result: null,
+        isExecuting: false,
+        error: null,
+      },
+    ];
+  });
+  const [activeTabId, setActiveTabId] = useState<string>("1");
+
+  const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
+
   const [autoSave, setAutoSave] = useState(() => {
     return localStorage.getItem("sld_sql_autosave") === "true";
   });
-  const [result, setResult] = useState<QueryResult | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
   const [showBuilder, setShowBuilder] = useState(false);
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
-  const [editingCell, setEditingCell] = useState<{ rowIdx: number; col: string; value: string } | null>(null);
-  
+  const [editingCell, setEditingCell] = useState<{
+    rowIdx: number;
+    col: string;
+    value: string;
+  } | null>(null);
+
   const [explanation, setExplanation] = useState<QueryExplanation | null>(null);
   const [showExplanation, setShowExplanation] = useState(false);
   
@@ -169,24 +236,47 @@ export function SQLConsole({ database }: SQLConsoleProps) {
 
   const { data: tables } = useTables(database || "");
 
-  // Load query history on mount
+  // Save tabs on change
   useEffect(() => {
-    const saved = localStorage.getItem(`sld_sql_query_${database}`);
-    if (autoSave && saved) setQuery(saved);
-    setHistory(loadHistory());
-  }, [database, autoSave]);
-
-  // Auto-save query
-  useEffect(() => {
-    if (autoSave && database) {
-      localStorage.setItem(`sld_sql_query_${database}`, query);
+    if (database) {
+      localStorage.setItem(`sld_sql_tabs_${database}`, JSON.stringify(tabs));
     }
-  }, [query, autoSave, database]);
+  }, [tabs, database]);
 
   // Persist auto-save preference
   useEffect(() => {
     localStorage.setItem("sld_sql_autosave", String(autoSave));
   }, [autoSave]);
+
+  const addTab = () => {
+    const id = Date.now().toString();
+    const newTab: QueryTab = {
+      id,
+      title: `Query ${tabs.length + 1}`,
+      query: "",
+      result: null,
+      isExecuting: false,
+      error: null,
+    };
+    setTabs([...tabs, newTab]);
+    setActiveTabId(id);
+  };
+
+  const closeTab = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (tabs.length === 1) return;
+    const newTabs = tabs.filter((t) => t.id !== id);
+    setTabs(newTabs);
+    if (activeTabId === id) {
+      setActiveTabId(newTabs[newTabs.length - 1].id);
+    }
+  };
+
+  const updateActiveTab = (updates: Partial<QueryTab>) => {
+    setTabs(
+      tabs.map((t) => (t.id === activeTabId ? { ...t, ...updates } : t))
+    );
+  };
 
   // Close dropdowns when clicking outside
   useEffect(() => {
@@ -211,23 +301,24 @@ export function SQLConsole({ database }: SQLConsoleProps) {
   const handleRunRef = useRef<() => void>(() => {});
 
   const { mutate: runExplain, isPending: explaining } = useMutation({
-    mutationFn: () => explainQuery(database || "", query),
+    mutationFn: ({ query }: { query: string }) =>
+      explainQuery(database || "", query),
     onSuccess: (data) => {
       setExplanation(data);
       setShowExplanation(true);
     },
   });
 
-  const { mutate: runQuery, isPending, error, reset: resetQuery } = useMutation({
-    mutationFn: (vars: { database: string; query: string }) => {
-      return executeQuery(vars.database, vars.query);
+  const { mutate: runQuery, isPending, error: queryError, reset: resetQuery } = useMutation({
+    mutationFn: (vars: { database: string; query: string; txId?: string }) => {
+      return executeQuery(vars.database, vars.query, vars.txId);
     },
     onSuccess: (data) => {
-      setResult(data);
+      updateActiveTab({ result: data, error: null });
       // Add to history
-      if (query.trim() && database) {
+      if (activeTab.query.trim() && database) {
         const entry: HistoryEntry = {
-          query: query.trim(),
+          query: activeTab.query.trim(),
           database,
           timestamp: Date.now(),
         };
@@ -240,16 +331,66 @@ export function SQLConsole({ database }: SQLConsoleProps) {
       }
     },
   });
-
   const handleRun = () => {
-    if (query.trim() && database) {
-      runQuery({ database, query });
+    if (activeTab.query.trim() && database) {
+      runQuery({ database, query: activeTab.query, txId: activeTab.txId });
     }
   };
 
   useEffect(() => {
     handleRunRef.current = handleRun;
-  }, [handleRun]);
+  }, [activeTab.query, database, activeTab.txId]);
+
+  const handleBeginTx = async () => {
+    if (!database) return;
+    try {
+      const res = await fetch("/api/db/transaction", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ database, operation: "begin" }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        updateActiveTab({ txId: data.tx_id });
+      }
+    } catch (e) {
+      console.error("Failed to begin transaction", e);
+    }
+  };
+
+  const handleCommitTx = async () => {
+    if (!activeTab.txId) return;
+    try {
+      const res = await fetch("/api/db/transaction", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ operation: "commit", tx_id: activeTab.txId }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        updateActiveTab({ txId: undefined });
+      }
+    } catch (e) {
+      console.error("Failed to commit transaction", e);
+    }
+  };
+
+  const handleRollbackTx = async () => {
+    if (!activeTab.txId) return;
+    try {
+      const res = await fetch("/api/db/transaction", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ operation: "rollback", tx_id: activeTab.txId }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        updateActiveTab({ txId: undefined });
+      }
+    } catch (e) {
+      console.error("Failed to rollback transaction", e);
+    }
+  };
 
   const handleEditorMount = (editor: any, monaco: any) => {
     // Register SQL keywords autocomplete
@@ -317,25 +458,25 @@ export function SQLConsole({ database }: SQLConsoleProps) {
   };
 
   const handleCopyCSV = () => {
-    if (result) {
-      const csv = convertToCSV(result.columns, result.rows);
+    if (activeTab.result) {
+      const csv = convertToCSV(activeTab.result.columns, activeTab.result.rows);
       copyToClipboard(csv, "csv");
     }
   };
 
   const handleCopyJSON = () => {
-    if (result) {
-      copyToClipboard(JSON.stringify(result.rows, null, 2), "json");
+    if (activeTab.result) {
+      copyToClipboard(JSON.stringify(activeTab.result.rows, null, 2), "json");
     }
   };
 
   const insertTemplate = (sql: string) => {
-    setQuery(sql);
+    updateActiveTab({ query: sql });
     setShowTemplates(false);
   };
 
   const insertFromHistory = (entry: HistoryEntry) => {
-    setQuery(entry.query);
+    updateActiveTab({ query: entry.query });
     setShowHistory(false);
   };
 
@@ -346,7 +487,7 @@ export function SQLConsole({ database }: SQLConsoleProps) {
 
   const handleEditCell = (rowIdx: number, col: string, currentValue: string | number | boolean | null) => {
     // Check if we can identify the table
-    const match = query.match(/FROM\s+`?([a-zA-Z0-9_]+)`?/i);
+    const match = activeTab.query.match(/FROM\s+`?([a-zA-Z0-9_]+)`?/i);
     if (!match) {
       alert("Cannot edit cell: Could not automatically determine the table name from your query. Please use a simple SELECT query.");
       return;
@@ -355,10 +496,10 @@ export function SQLConsole({ database }: SQLConsoleProps) {
   };
 
   const handleSaveCell = async () => {
-    if (!editingCell || !result || !database) return;
+    if (!editingCell || !activeTab.result || !database) return;
     
     const { rowIdx, col, value } = editingCell;
-    const row = result.rows[rowIdx];
+    const row = activeTab.result.rows[rowIdx];
     const originalValue = row[col];
     
     if (String(originalValue) === value) {
@@ -366,7 +507,7 @@ export function SQLConsole({ database }: SQLConsoleProps) {
       return;
     }
 
-    const match = query.match(/FROM\s+`?([a-zA-Z0-9_]+)`?/i);
+    const match = activeTab.query.match(/FROM\s+`?([a-zA-Z0-9_]+)`?/i);
     const tableName = match ? match[1] : null;
     
     if (!tableName) {
@@ -376,7 +517,7 @@ export function SQLConsole({ database }: SQLConsoleProps) {
     }
 
     // Determine a row identifier. Prefer 'id', otherwise use the first column
-    const pkCol = result.columns.includes("id") ? "id" : result.columns[0];
+    const pkCol = activeTab.result.columns.includes("id") ? "id" : activeTab.result.columns[0];
     const pkValue = row[pkCol];
 
     if (pkValue === undefined || pkValue === null) {
@@ -398,10 +539,10 @@ export function SQLConsole({ database }: SQLConsoleProps) {
       await executeQuery(database, updateQuery);
       
       // Update local state to reflect change without re-running the main query
-      const newResult = { ...result };
-      newResult.rows = [...result.rows];
+      const newResult = { ...activeTab.result };
+      newResult.rows = [...activeTab.result.rows];
       newResult.rows[rowIdx] = { ...newResult.rows[rowIdx], [col]: value };
-      setResult(newResult);
+      updateActiveTab({ result: newResult });
       
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -516,26 +657,62 @@ export function SQLConsole({ database }: SQLConsoleProps) {
         <Button
           variant="secondary"
           size="sm"
-          onClick={() => runExplain()}
-          disabled={!query || explaining}
+          onClick={() => runExplain({ query: activeTab.query })}
+          disabled={!activeTab.query || explaining}
           className="gap-1 border-blue-500/30 text-blue-400 hover:bg-blue-500/10"
         >
           <AlertCircle size={14} />
           {explaining ? "Analyzing..." : "Explain AI"}
         </Button>
 
+        <div className="h-4 w-px bg-[var(--border)] mx-1" />
+
+        {/* Transaction Controls */}
+        {!activeTab.txId ? (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={handleBeginTx}
+            disabled={!database}
+            className="gap-1 border-yellow-500/30 text-yellow-500 hover:bg-yellow-500/10"
+          >
+            <Clock size={14} />
+            Begin Tx
+          </Button>
+        ) : (
+          <div className="flex items-center gap-1 bg-yellow-500/10 border border-yellow-500/30 rounded px-1 py-0.5">
+            <span className="text-[10px] text-yellow-500 font-bold px-2 uppercase animate-pulse">TX Active</span>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleCommitTx}
+              className="h-7 text-green-500 hover:text-green-600 hover:bg-green-500/20 px-2 text-xs gap-1"
+            >
+              <Check size={12} /> Commit
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleRollbackTx}
+              className="h-7 text-red-500 hover:text-red-600 hover:bg-red-500/20 px-2 text-xs gap-1"
+            >
+              <X size={12} /> Rollback
+            </Button>
+          </div>
+        )}
+
         <Button
           size="sm"
           variant="secondary"
-          onClick={() => setQuery("")}
-          disabled={!query}
+          onClick={() => updateActiveTab({ query: "" })}
+          disabled={!activeTab.query}
         >
           <Eraser size={14} />
         </Button>
         <Button
           size="sm"
           onClick={handleRun}
-          disabled={!query.trim() || !database || isPending}
+          disabled={!activeTab.query.trim() || !database || isPending}
           loading={isPending}
           className="gap-2"
         >
@@ -546,15 +723,45 @@ export function SQLConsole({ database }: SQLConsoleProps) {
 
       {showBuilder && database && (
         <QueryBuilder 
-          database={database}
-          onGenerate={(sql) => {
-            setQuery(sql);
-          }}
-          onClose={() => setShowBuilder(false)}
+          database={database} 
+          onGenerate={(q) => updateActiveTab({ query: q })} 
+          onClose={() => setShowBuilder(false)} 
         />
       )}
 
       {/* Editor & Explanation Panel */}
+      {/* Tab Bar */}
+      <div className="flex items-center gap-1 overflow-x-auto pb-2 scrollbar-hide border-b border-[var(--border)] mb-2">
+        {tabs.map((tab) => (
+          <div
+            key={tab.id}
+            onClick={() => setActiveTabId(tab.id)}
+            className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-t-lg cursor-pointer border-t border-l border-r transition-all min-w-[120px] max-w-[200px] ${
+              activeTabId === tab.id
+                ? "bg-[var(--card)] border-[var(--border)] text-[var(--primary)] -mb-px shadow-[0_-2px_10px_rgba(var(--primary-rgb),0.1)]"
+                : "bg-[var(--muted)]/30 border-transparent text-[var(--muted-foreground)] hover:bg-[var(--muted)]/50"
+            }`}
+          >
+            <span className="truncate flex-1 font-mono text-xs">{tab.title}</span>
+            {tabs.length > 1 && (
+              <button
+                onClick={(e) => closeTab(tab.id, e)}
+                className="p-1 hover:bg-[var(--muted)] rounded-full transition-colors"
+              >
+                <X size={10} />
+              </button>
+            )}
+          </div>
+        ))}
+        <button
+          onClick={addTab}
+          className="p-2 hover:bg-[var(--muted)]/50 text-[var(--muted-foreground)] rounded-lg transition-colors flex items-center justify-center ml-2"
+          title="Add New Query Tab"
+        >
+          <Plus size={16} />
+        </button>
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
         <div className={showExplanation ? "lg:col-span-3" : "lg:col-span-4"}>
           <div className="border border-[var(--border)] rounded-lg overflow-hidden bg-[#1e1e1e]">
@@ -562,8 +769,8 @@ export function SQLConsole({ database }: SQLConsoleProps) {
               height="300px"
               defaultLanguage="sql"
               theme="vs-dark"
-              value={query}
-              onChange={(val) => setQuery(val || "")}
+              value={activeTab.query}
+              onChange={(val) => updateActiveTab({ query: val || "" })}
               options={{
                 minimap: { enabled: false },
                 fontSize: 14,
@@ -653,13 +860,13 @@ export function SQLConsole({ database }: SQLConsoleProps) {
 
       {/* Results */}
       <div className="mt-4">
-        {error ? (
+        {queryError ? (
           <Card className="bg-red-500/5 border-red-500/20 p-4">
             <div className="flex items-start justify-between gap-3">
               <div className="flex items-start gap-3 text-red-500">
                 <AlertCircle size={18} className="mt-0.5 flex-shrink-0" />
                 <div className="font-mono text-sm whitespace-pre-wrap break-words">
-                  {(error as Error).message}
+                  {(queryError as Error).message}
                 </div>
               </div>
               <Button size="sm" variant="ghost" onClick={() => resetQuery()}>
@@ -667,126 +874,129 @@ export function SQLConsole({ database }: SQLConsoleProps) {
               </Button>
             </div>
           </Card>
-        ) : result ? (
-          <div className="border border-[var(--border)] rounded-lg overflow-hidden bg-[var(--card)] shadow-sm">
-            {/* Results Header */}
-            <div className="p-2 border-b border-[var(--border)] bg-[var(--muted)]/30 text-xs text-[var(--muted-foreground)] font-mono flex items-center gap-4 flex-wrap">
-              <span className="flex items-center gap-1">
-                {result.row_count} rows
-              </span>
-              {result.affected_rows !== undefined &&
-                result.affected_rows > 0 && (
-                  <span className="text-green-500">
-                    {result.affected_rows} affected
+        ) : activeTab.result ? (() => {
+          const currentResult = activeTab.result;
+          return (
+            <div className="border border-[var(--border)] rounded-lg overflow-hidden bg-[var(--card)] shadow-sm">
+              {/* Results Header */}
+              <div className="p-2 border-b border-[var(--border)] bg-[var(--muted)]/30 text-xs text-[var(--muted-foreground)] font-mono flex items-center gap-4 flex-wrap">
+                <span className="flex items-center gap-1">
+                  {currentResult.row_count} rows
+                </span>
+                {currentResult.affected_rows !== undefined &&
+                  currentResult.affected_rows > 0 && (
+                    <span className="text-green-500">
+                      {currentResult.affected_rows} affected
+                    </span>
+                  )}
+                {currentResult.execution_time_ms !== undefined && (
+                  <span className="flex items-center gap-1">
+                    <Clock size={12} />
+                    {formatTime(currentResult.execution_time_ms)}
                   </span>
                 )}
-              {result.execution_time_ms !== undefined && (
-                <span className="flex items-center gap-1">
-                  <Clock size={12} />
-                  {formatTime(result.execution_time_ms)}
-                </span>
-              )}
-              <div className="flex-1" />
-              {result.rows.length > 0 && (
-                <div className="flex gap-2">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={handleCopyCSV}
-                    className="h-6 px-2 text-xs gap-1"
-                  >
-                    {copyFeedback === "csv" ? (
-                      <Check size={12} className="text-green-500" />
-                    ) : (
-                      <Copy size={12} />
-                    )}
-                    CSV
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={handleCopyJSON}
-                    className="h-6 px-2 text-xs gap-1"
-                  >
-                    {copyFeedback === "json" ? (
-                      <Check size={12} className="text-green-500" />
-                    ) : (
-                      <Download size={12} />
-                    )}
-                    JSON
-                  </Button>
-                </div>
-              )}
-            </div>
-
-            {/* Results Table */}
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm font-mono whitespace-nowrap">
-                <thead className="bg-[var(--muted)]/50 sticky top-0">
-                  <tr>
-                    {result.columns.map((col) => (
-                      <th
-                        key={col}
-                        className="px-4 py-2 text-left font-medium border-b border-[var(--border)] text-[var(--muted-foreground)]"
-                      >
-                        {col}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {result.rows.map((row, i) => (
-                    <tr
-                      key={i}
-                      className="hover:bg-[var(--card-hover)] border-b border-[var(--border)] last:border-0"
+                <div className="flex-1" />
+                {currentResult.rows.length > 0 && (
+                  <div className="flex gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleCopyCSV}
+                      className="h-6 px-2 text-xs gap-1"
                     >
-                      {result.columns.map((col, j) => (
-                        <td
-                          key={j}
-                          className="px-4 py-1.5 border-r border-[var(--border)] last:border-0 text-[var(--foreground)] cursor-pointer group hover:bg-[var(--primary)]/10"
-                          onDoubleClick={() => handleEditCell(i, col, row[col])}
+                      {copyFeedback === "csv" ? (
+                        <Check size={12} className="text-green-500" />
+                      ) : (
+                        <Copy size={12} />
+                      )}
+                      CSV
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleCopyJSON}
+                      className="h-6 px-2 text-xs gap-1"
+                    >
+                      {copyFeedback === "json" ? (
+                        <Check size={12} className="text-green-500" />
+                      ) : (
+                        <Download size={12} />
+                      )}
+                      JSON
+                    </Button>
+                  </div>
+                )}
+              </div>
+
+              {/* Results Table */}
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm font-mono whitespace-nowrap">
+                  <thead className="bg-[var(--muted)]/50 sticky top-0">
+                    <tr>
+                      {currentResult.columns.map((col) => (
+                        <th
+                          key={col}
+                          className="px-4 py-2 text-left font-medium border-b border-[var(--border)] text-[var(--muted-foreground)]"
                         >
-                          {editingCell?.rowIdx === i && editingCell.col === col ? (
-                            <input
-                              type="text"
-                              autoFocus
-                              className="w-full bg-[var(--background)] border border-[var(--primary)] rounded px-1 outline-none text-sm text-[var(--foreground)]"
-                              value={editingCell.value}
-                              onChange={(e) => setEditingCell({ ...editingCell, value: e.target.value })}
-                              onBlur={handleSaveCell}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") handleSaveCell();
-                                if (e.key === "Escape") setEditingCell(null);
-                              }}
-                            />
-                          ) : row[col] === null ? (
-                            <span className="text-[var(--muted-foreground)] italic">
-                              NULL
-                            </span>
-                          ) : (
-                            String(row[col])
-                          )}
-                        </td>
+                          {col}
+                        </th>
                       ))}
                     </tr>
-                  ))}
-                  {result.rows.length === 0 && (
-                    <tr>
-                      <td
-                        colSpan={result.columns.length || 1}
-                        className="px-4 py-8 text-center text-[var(--muted-foreground)]"
+                  </thead>
+                  <tbody>
+                    {currentResult.rows.map((row, i) => (
+                      <tr
+                        key={i}
+                        className="hover:bg-[var(--card-hover)] border-b border-[var(--border)] last:border-0"
                       >
-                        {result.columns.length > 0
-                          ? "Query returned no rows."
-                          : "Query executed successfully."}
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+                        {currentResult.columns.map((col, j) => (
+                          <td
+                            key={j}
+                            className="px-4 py-1.5 border-r border-[var(--border)] last:border-0 text-[var(--foreground)] cursor-pointer group hover:bg-[var(--primary)]/10"
+                            onDoubleClick={() => handleEditCell(i, col, row[col])}
+                          >
+                            {editingCell?.rowIdx === i && editingCell.col === col ? (
+                              <input
+                                type="text"
+                                autoFocus
+                                className="w-full bg-[var(--background)] border border-[var(--primary)] rounded px-1 outline-none text-sm text-[var(--foreground)]"
+                                value={editingCell.value}
+                                onChange={(e) => setEditingCell({ ...editingCell, value: e.target.value })}
+                                onBlur={handleSaveCell}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") handleSaveCell();
+                                  if (e.key === "Escape") setEditingCell(null);
+                                }}
+                              />
+                            ) : row[col] === null ? (
+                              <span className="text-[var(--muted-foreground)] italic">
+                                NULL
+                              </span>
+                            ) : (
+                              String(row[col])
+                            )}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                    {currentResult.rows.length === 0 && (
+                      <tr>
+                        <td
+                          colSpan={currentResult.columns.length || 1}
+                          className="px-4 py-8 text-center text-[var(--muted-foreground)] italic"
+                        >
+                          {currentResult.columns.length > 0
+                            ? "No rows returned"
+                            : "Query executed successfully"}
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
-          </div>
-        ) : (
+          );
+        })() : (
           <div className="flex items-center justify-center border border-dashed border-[var(--border)] rounded-lg text-[var(--muted-foreground)] bg-[var(--card)]/50 py-16">
             <div className="text-center">
               <code className="block mb-2 text-xs opacity-50">READY</code>

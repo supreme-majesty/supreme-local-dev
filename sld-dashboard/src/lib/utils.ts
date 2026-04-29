@@ -74,3 +74,56 @@ export function formatDate(dateStr: string): string {
     return dateStr;
   }
 }
+
+/**
+ * Convert rows to CSV string
+ */
+export function convertToCSV(columns: string[], rows: any[]): string {
+  const header = columns.join(",");
+  const body = rows
+    .map((row) =>
+      columns
+        .map((col) => {
+          const val = row[col];
+          if (val === null || val === undefined) return "";
+          const str = String(val);
+          return str.includes(",") || str.includes("\"") ? `"${str.replace(/"/g, '""')}"` : str;
+        })
+        .join(",")
+    )
+    .join("\n");
+  return `${header}\n${body}`;
+}
+
+/**
+ * Convert rows to SQL INSERT statements
+ */
+export function convertToSQL(tableName: string, columns: string[], rows: any[]): string {
+  if (rows.length === 0) return "";
+  
+  const escape = (val: any) => {
+    if (val === null || val === undefined) return "NULL";
+    if (typeof val === "number") return val;
+    return `'${String(val).replace(/'/g, "''")}'`;
+  };
+
+  const chunks = rows.map(row => {
+    const vals = columns.map(col => escape(row[col])).join(", ");
+    return `INSERT INTO \`${tableName}\` (\`${columns.join("`, `")}\`) VALUES (${vals});`;
+  });
+  
+  return chunks.join("\n");
+}
+
+/**
+ * Copy text to clipboard with feedback support
+ */
+export async function copyToClipboard(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch (err) {
+    console.error("Failed to copy text: ", err);
+    return false;
+  }
+}

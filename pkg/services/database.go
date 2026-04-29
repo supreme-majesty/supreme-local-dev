@@ -2,17 +2,61 @@ package services
 
 import (
 	"database/sql"
+	"encoding/csv"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/brianvoe/gofakeit/v6"
 )
 
+type PIIResult struct {
+	Column   string   `json:"column"`
+	Pattern  string   `json:"pattern"`
+	Risk     string   `json:"risk"` // LOW, MEDIUM, HIGH
+	Examples []string `json:"examples"`
+}
+
+type MaskingConfig struct {
+	Database string            `json:"database"`
+	Table    string            `json:"table"`
+	Columns  map[string]string `json:"columns"` // Column -> MaskType (EMAIL, PHONE, NAME, RANDOM)
+}
+
 // DatabaseService manages MySQL/MariaDB connections
+type Migration struct {
+	ID        int       `json:"id"`
+	Version   string    `json:"version"`
+	Name      string    `json:"name"`
+	AppliedAt time.Time `json:"applied_at"`
+	Status    string    `json:"status"` // 'pending', 'applied'
+	Content   string    `json:"content,omitempty"`
+}
+
+type SchemaDiff struct {
+	TablesToCreate []string `json:"tables_to_create"`
+	TablesToDrop   []string `json:"tables_to_drop"`
+	TableDiffs     []TableDiff `json:"table_diffs"`
+	SyncSQL        string `json:"sync_sql"`
+}
+
+type TableDiff struct {
+	TableName      string   `json:"table_name"`
+	ColumnsToAdd   []string `json:"columns_to_add"`
+	ColumnsToDrop  []string `json:"columns_to_drop"`
+	ColumnsToAlter []string `json:"columns_to_alter"`
+	IndexesToAdd   []string `json:"indexes_to_add"`
+	IndexesToDrop  []string `json:"indexes_to_drop"`
+}
+
 // DatabaseService manages database connections via drivers
 type DatabaseService struct {
 	db      *sql.DB // Legacy, to be replaced by driver
@@ -138,11 +182,464 @@ func (d *DatabaseService) GetTableDataEx(database, table string, page, perPage i
 }
 
 // ExecuteQuery executes a SQL query
-func (d *DatabaseService) ExecuteQuery(database, query string) (*QueryResult, error) {
+func (d *DatabaseService) ExecuteQuery(database, query string, txId string) (*QueryResult, error) {
 	if err := d.ensureConnected(); err != nil {
 		return nil, err
 	}
-	return d.Driver.ExecuteQuery(database, query)
+	return d.Driver.ExecuteQuery(database, query, txId)
+}
+
+func (d *DatabaseService) BeginTransaction(database string) (string, error) {
+	if err := d.ensureConnected(); err != nil {
+		return "", err
+	}
+	return d.Driver.BeginTransaction(database)
+}
+
+func (d *DatabaseService) CommitTransaction(txId string) error {
+	if err := d.ensureConnected(); err != nil {
+		return err
+	}
+	return d.Driver.CommitTransaction(txId)
+}
+
+func (d *DatabaseService) RollbackTransaction(txId string) error {
+	if err := d.ensureConnected(); err != nil {
+		return err
+	}
+	return d.Driver.RollbackTransaction(txId)
+}
+
+func (d *DatabaseService) Query(database, query string, args []interface{}) ([]map[string]interface{}, error) {
+	if err := d.ensureConnected(); err != nil {
+		return nil, err
+	}
+	return d.Driver.Query(database, query, args)
+}
+
+func (d *DatabaseService) GetTables(database string) ([]TableInfo, error) {
+	if err := d.ensureConnected(); err != nil {
+		return nil, err
+	}
+	return d.Driver.ListTables(database)
+}
+
+func (d *DatabaseService) GetTableInfo(database, table string) (*TableInfo, error) {
+	if err := d.ensureConnected(); err != nil {
+		return nil, err
+	}
+	return d.Driver.GetTableInfo(database, table)
+}
+
+func (d *DatabaseService) BatchInsert(database, table string, columns []string, data [][]interface{}, txId string) error {
+	if err := d.ensureConnected(); err != nil {
+		return err
+	}
+	return d.Driver.BatchInsert(database, table, columns, data, txId)
+}
+
+func (d *DatabaseService) GetStats(database string) (map[string]interface{}, error) {
+	if err := d.ensureConnected(); err != nil {
+		return nil, err
+	}
+	return d.Driver.GetStats(database)
+}
+
+func (d *DatabaseService) InitializeMigrations(database string) error {
+	if err := d.ensureConnected(); err != nil {
+		return err
+	}
+
+	query := `
+		CREATE TABLE IF NOT EXISTS _sld_migrations (
+			id INT AUTO_INCREMENT PRIMARY KEY,
+			version VARCHAR(255) NOT NULL UNIQUE,
+			name VARCHAR(255) NOT NULL,
+			applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		) ENGINE=InnoDB;
+	`
+	// Adjust for Postgres if needed, but for now we'll stick to MySQL compatible or use Driver specific logic
+	// In a real multi-db app, we'd put this in the driver.
+	
+	_, err := d.Query(database, query, nil)
+	return err
+}
+
+func (d *DatabaseService) GetAppliedMigrations(database string) ([]Migration, error) {
+	if err := d.ensureConnected(); err != nil {
+		return nil, err
+	}
+
+	rows, err := d.Query(database, "SELECT id, version, name, applied_at FROM _sld_migrations ORDER BY version DESC", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var migrations []Migration
+	for _, row := range rows {
+		m := Migration{
+			ID:      int(row["id"].(int64)),
+			Version: row["version"].(string),
+			Name:    row["name"].(string),
+		}
+		if t, ok := row["applied_at"].(time.Time); ok {
+			m.AppliedAt = t
+		}
+		m.Status = "applied"
+		migrations = append(migrations, m)
+	}
+	return migrations, nil
+}
+
+func (d *DatabaseService) GetPendingMigrations(database string) ([]Migration, error) {
+	applied, err := d.GetAppliedMigrations(database)
+	if err != nil {
+		return nil, err
+	}
+	
+	appliedMap := make(map[string]bool)
+	for _, m := range applied {
+		appliedMap[m.Version] = true
+	}
+	
+	dir := filepath.Join("migrations", database)
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []Migration{}, nil
+		}
+		return nil, err
+	}
+	
+	var pending []Migration
+	for _, f := range files {
+		if f.IsDir() || !strings.HasSuffix(f.Name(), ".sql") {
+			continue
+		}
+		
+		version := strings.Split(f.Name(), "_")[0]
+		if !appliedMap[version] {
+			name := strings.TrimSuffix(strings.TrimPrefix(f.Name(), version+"_"), ".sql")
+			pending = append(pending, Migration{
+				Version: version,
+				Name:    name,
+				Status:  "pending",
+			})
+		}
+	}
+	
+	return pending, nil
+}
+
+func (d *DatabaseService) CreateMigration(database, name string) (string, error) {
+	version := time.Now().Format("20060102150405")
+	filename := fmt.Sprintf("%s_%s.sql", version, name)
+	
+	// Create migrations dir if not exists
+	dir := filepath.Join("migrations", database)
+	os.MkdirAll(dir, 0755)
+	
+	path := filepath.Join(dir, filename)
+	content := "-- UP\n\n\n-- DOWN\n\n"
+	
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		return "", err
+	}
+	
+	return filename, nil
+}
+
+func (d *DatabaseService) RunMigration(database, filename string) error {
+	dir := filepath.Join("migrations", database)
+	path := filepath.Join(dir, filename)
+	
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	
+	// Parse UP section
+	parts := strings.Split(string(content), "-- DOWN")
+	upSection := parts[0]
+	upSection = strings.TrimPrefix(upSection, "-- UP")
+	
+	// Split version from filename
+	version := strings.Split(filename, "_")[0]
+	name := strings.TrimSuffix(strings.TrimPrefix(filename, version+"_"), ".sql")
+	
+	// Run in transaction
+	txId, err := d.BeginTransaction(database)
+	if err != nil {
+		return err
+	}
+	
+	// Split queries by semicolon and execute
+	queries := strings.Split(upSection, ";")
+	for _, q := range queries {
+		trimmed := strings.TrimSpace(q)
+		if trimmed == "" {
+			continue
+		}
+		if _, err := d.ExecuteQuery(database, trimmed, txId); err != nil {
+			d.RollbackTransaction(txId)
+			return err
+		}
+	}
+	
+	// Record migration
+	recordQuery := fmt.Sprintf("INSERT INTO _sld_migrations (version, name) VALUES ('%s', '%s')", version, name)
+	if _, err := d.ExecuteQuery(database, recordQuery, txId); err != nil {
+		d.RollbackTransaction(txId)
+		return err
+	}
+	
+	return d.CommitTransaction(txId)
+}
+
+func (d *DatabaseService) CompareSchemas(sourceDB, targetDB string) (*SchemaDiff, error) {
+	if err := d.ensureConnected(); err != nil {
+		return nil, err
+	}
+
+	diff := &SchemaDiff{}
+	var syncSQL strings.Builder
+
+	sourceTables, _ := d.Driver.ListTables(sourceDB)
+	targetTables, _ := d.Driver.ListTables(targetDB)
+
+	sourceTableMap := make(map[string]bool)
+	for _, t := range sourceTables {
+		sourceTableMap[t.Name] = true
+	}
+
+	targetTableMap := make(map[string]bool)
+	for _, t := range targetTables {
+		targetTableMap[t.Name] = true
+	}
+
+	// Tables to create
+	for _, t := range targetTables {
+		if !sourceTableMap[t.Name] {
+			diff.TablesToCreate = append(diff.TablesToCreate, t.Name)
+			// For simplicity, we'd need GetCreateTable SQL from target and run on source
+			// But for now we just record it.
+			syncSQL.WriteString(fmt.Sprintf("-- Missing table in source: %s\n", t.Name))
+		}
+	}
+
+	// Tables to drop
+	for _, t := range sourceTables {
+		if !targetTableMap[t.Name] {
+			diff.TablesToDrop = append(diff.TablesToDrop, t.Name)
+			syncSQL.WriteString(fmt.Sprintf("DROP TABLE `%s`;\n", t.Name))
+		}
+	}
+
+	// Compare existing tables
+	for _, t := range targetTables {
+		if sourceTableMap[t.Name] {
+			tableDiff, err := d.compareTableStructure(sourceDB, targetDB, t.Name)
+			if err == nil && (len(tableDiff.ColumnsToAdd) > 0 || len(tableDiff.ColumnsToDrop) > 0 || len(tableDiff.ColumnsToAlter) > 0) {
+				diff.TableDiffs = append(diff.TableDiffs, tableDiff)
+				
+				// Generate ALTER SQL
+				for _, col := range tableDiff.ColumnsToAdd {
+					syncSQL.WriteString(fmt.Sprintf("ALTER TABLE `%s` ADD %s;\n", t.Name, col))
+				}
+				for _, col := range tableDiff.ColumnsToDrop {
+					syncSQL.WriteString(fmt.Sprintf("ALTER TABLE `%s` DROP COLUMN `%s`;\n", t.Name, col))
+				}
+				for _, col := range tableDiff.ColumnsToAlter {
+					syncSQL.WriteString(fmt.Sprintf("ALTER TABLE `%s` MODIFY %s;\n", t.Name, col))
+				}
+			}
+		}
+	}
+
+	diff.SyncSQL = syncSQL.String()
+	return diff, nil
+}
+
+func (d *DatabaseService) compareTableStructure(sourceDB, targetDB, table string) (TableDiff, error) {
+	diff := TableDiff{TableName: table}
+	
+	sourceCols, _ := d.GetTableColumns(sourceDB, table)
+	targetCols, _ := d.GetTableColumns(targetDB, table)
+	
+	sourceColMap := make(map[string]ColumnInfo)
+	for _, c := range sourceCols {
+		sourceColMap[c.Name] = c
+	}
+	
+	targetColMap := make(map[string]ColumnInfo)
+	for _, c := range targetCols {
+		targetColMap[c.Name] = c
+	}
+	
+	// Columns to add
+	for _, tc := range targetCols {
+		if _, exists := sourceColMap[tc.Name]; !exists {
+			colDef := fmt.Sprintf("`%s` %s", tc.Name, tc.Type)
+			if !tc.Nullable { colDef += " NOT NULL" }
+			if tc.Default != "" { colDef += " DEFAULT " + tc.Default }
+			diff.ColumnsToAdd = append(diff.ColumnsToAdd, colDef)
+		} else {
+			// Compare definition
+			sc := sourceColMap[tc.Name]
+			if sc.Type != tc.Type || sc.Nullable != tc.Nullable {
+				colDef := fmt.Sprintf("`%s` %s", tc.Name, tc.Type)
+				if !tc.Nullable { colDef += " NOT NULL" }
+				if tc.Default != "" { colDef += " DEFAULT " + tc.Default }
+				diff.ColumnsToAlter = append(diff.ColumnsToAlter, colDef)
+			}
+		}
+	}
+	
+	// Columns to drop
+	for _, sc := range sourceCols {
+		if _, exists := targetColMap[sc.Name]; !exists {
+			diff.ColumnsToDrop = append(diff.ColumnsToDrop, sc.Name)
+		}
+	}
+	
+	return diff, nil
+}
+
+func (d *DatabaseService) ScanPII(database, table string) ([]PIIResult, error) {
+	cols, err := d.GetTableColumns(database, table)
+	if err != nil { return nil, err }
+
+	patterns := map[string]struct{regex *regexp.Regexp; risk string}{
+		"EMAIL": {regexp.MustCompile(`(?i)[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}`), "HIGH"},
+		"PHONE": {regexp.MustCompile(`(?i)\+?[\d\s\-()]{7,}`), "MEDIUM"},
+		"CC":    {regexp.MustCompile(`\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}`), "HIGH"},
+		"IP":    {regexp.MustCompile(`\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}`), "MEDIUM"},
+	}
+
+	var results []PIIResult
+	for _, col := range cols {
+		// Fetch sample data
+		query := fmt.Sprintf("SELECT `%s` FROM `%s` WHERE `%s` IS NOT NULL LIMIT 50", col.Name, table, col.Name)
+		rows, err := d.Query(database, query, nil)
+		if err != nil { continue }
+
+		for name, p := range patterns {
+			matchCount := 0
+			var examples []string
+			for _, row := range rows {
+				val := fmt.Sprintf("%v", row[col.Name])
+				if p.regex.MatchString(val) {
+					matchCount++
+					if len(examples) < 3 { examples = append(examples, val) }
+				}
+			}
+
+			if matchCount > 5 { // Threshold for detection
+				results = append(results, PIIResult{
+					Column: col.Name,
+					Pattern: name,
+					Risk: p.risk,
+					Examples: examples,
+				})
+				break
+			}
+		}
+	}
+	return results, nil
+}
+
+func (d *DatabaseService) AnonymizeTable(config MaskingConfig) error {
+	// For each row in the table, update the values with fakes
+	// In a real app, we'd use a more efficient batch update
+	rows, err := d.Query(config.Database, "SELECT * FROM `"+config.Table+"`", nil)
+	if err != nil { return err }
+
+	txId, err := d.BeginTransaction(config.Database)
+	if err != nil { return err }
+
+	for _, row := range rows {
+		pkCol := "" // Simple assumption for now: first column is ID
+		// Find PK...
+		for k := range row { pkCol = k; break }
+		
+		var updates []string
+		var args []interface{}
+		for col, maskType := range config.Columns {
+			var fakeVal interface{}
+			switch maskType {
+			case "EMAIL": fakeVal = gofakeit.Email()
+			case "PHONE": fakeVal = gofakeit.Phone()
+			case "NAME":  fakeVal = gofakeit.Name()
+			default:      fakeVal = gofakeit.Word()
+			}
+			updates = append(updates, fmt.Sprintf("`%s` = ?", col))
+			args = append(args, fakeVal)
+		}
+		
+		if len(updates) > 0 {
+			sql := fmt.Sprintf("UPDATE `%s` SET %s WHERE `%s` = ?", config.Table, strings.Join(updates, ", "), pkCol)
+			args = append(args, row[pkCol])
+			if _, err := d.ExecuteQuery(config.Database, sql, txId); err != nil {
+				d.RollbackTransaction(txId)
+				return err
+			}
+		}
+	}
+
+	return d.CommitTransaction(txId)
+}
+func (d *DatabaseService) AnalyzeQueryPlan(database, query string) (*QueryResult, error) {
+	explainQuery := "EXPLAIN " + query
+	return d.ExecuteQuery(database, explainQuery, "")
+}
+
+func (d *DatabaseService) GetOptimizationSuggestions(database, table string) ([]map[string]string, error) {
+	if err := d.ensureConnected(); err != nil {
+		return nil, err
+	}
+
+	var suggestions []map[string]string
+	
+	cols, _ := d.GetTableColumns(database, table)
+	indexes, _ := d.GetTableIndexes(database, table)
+	
+	// 1. Check for Foreign Keys without Indexes
+	for _, col := range cols {
+		if col.ForeignKey != nil {
+			hasIndex := false
+			for _, idx := range indexes {
+				for _, idxCol := range idx.Columns {
+					if idxCol == col.Name {
+						hasIndex = true
+						break
+					}
+				}
+				if hasIndex { break }
+			}
+			
+			if !hasIndex {
+				suggestions = append(suggestions, map[string]string{
+					"type": "index",
+					"title": "Missing Index on Foreign Key",
+					"description": fmt.Sprintf("The column `%s` is a foreign key but lacks an index. This can severely degrade JOIN performance.", col.Name),
+					"sql": fmt.Sprintf("CREATE INDEX idx_%s_%s ON `%s`(`%s`);", table, col.Name, table, col.Name),
+				})
+			}
+		}
+	}
+	
+	// 2. Check for Table Overhead (MySQL only mostly)
+	info, _ := d.GetTableInfo(database, table)
+	if info != nil && info.Overhead > 1024*1024*10 { // > 10MB overhead
+		suggestions = append(suggestions, map[string]string{
+			"type": "maintenance",
+			"title": "High Fragmentation",
+			"description": fmt.Sprintf("Table `%s` has %d bytes of overhead. Running OPTIMIZE will reclaim space and improve performance.", table, info.Overhead),
+			"sql": fmt.Sprintf("OPTIMIZE TABLE `%s`;", table),
+		})
+	}
+
+	return suggestions, nil
 }
 
 func (d *DatabaseService) ExplainQuery(database, query string) (*QueryExplanation, error) {
@@ -540,10 +1037,257 @@ func (d *DatabaseService) GetTableRelationships(database string) ([]TableRelatio
 	}
 	return d.Driver.GetTableRelationships(database)
 }
+// ImportAnalysis represents the result of analyzing an import file
+type ImportAnalysis struct {
+	Columns []string                 `json:"columns"`
+	Preview []map[string]interface{} `json:"preview"`
+	Format  string                   `json:"format"`
+}
+
+// AnalyzeImport analyzes a file for import
+func (d *DatabaseService) AnalyzeImport(filePath, format string) (*ImportAnalysis, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	analysis := &ImportAnalysis{
+		Format:  format,
+		Columns: []string{},
+		Preview: []map[string]interface{}{},
+	}
+
+	if format == "csv" {
+		reader := csv.NewReader(file)
+		// Read header
+		header, err := reader.Read()
+		if err != nil {
+			return nil, err
+		}
+		analysis.Columns = header
+
+		// Read preview (up to 5 rows)
+		for i := 0; i < 5; i++ {
+			record, err := reader.Read()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				continue
+			}
+			row := make(map[string]interface{})
+			for j, col := range header {
+				if j < len(record) {
+					row[col] = record[j]
+				}
+			}
+			analysis.Preview = append(analysis.Preview, row)
+		}
+	} else if format == "json" {
+		var data []map[string]interface{}
+		if err := json.NewDecoder(file).Decode(&data); err != nil {
+			return nil, err
+		}
+
+		if len(data) > 0 {
+			// Get columns from first object
+			for col := range data[0] {
+				analysis.Columns = append(analysis.Columns, col)
+			}
+			// Sort columns for consistency
+			sort.Strings(analysis.Columns)
+
+			// Preview up to 5 rows
+			for i := 0; i < len(data) && i < 5; i++ {
+				analysis.Preview = append(analysis.Preview, data[i])
+			}
+		}
+	}
+
+	return analysis, nil
+}
+
+// ExecuteImport performs the actual import
+func (d *DatabaseService) ExecuteImport(database, table, filePath, format string, mapping map[string]string) error {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	var data [][]interface{}
+	var targetCols []string
+	for _, target := range mapping {
+		if target != "" {
+			targetCols = append(targetCols, target)
+		}
+	}
+
+	if format == "csv" {
+		reader := csv.NewReader(file)
+		header, err := reader.Read()
+		if err != nil {
+			return err
+		}
+
+		// Find indices for mapped columns
+		colIndices := make(map[string]int)
+		for i, h := range header {
+			if target, ok := mapping[h]; ok && target != "" {
+				colIndices[target] = i
+			}
+		}
+
+		for {
+			record, err := reader.Read()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				continue
+			}
+
+			row := make([]interface{}, len(targetCols))
+			for i, target := range targetCols {
+				idx := colIndices[target]
+				if idx < len(record) {
+					row[i] = record[idx]
+				} else {
+					row[i] = nil
+				}
+			}
+			data = append(data, row)
+
+			// Batch insert every 1000 rows to save memory
+			if len(data) >= 1000 {
+				if err := d.BatchInsert(database, table, targetCols, data, ""); err != nil {
+					return err
+				}
+				data = [][]interface{}{}
+			}
+		}
+	} else if format == "json" {
+		var rawData []map[string]interface{}
+		if err := json.NewDecoder(file).Decode(&rawData); err != nil {
+			return err
+		}
+
+		for _, item := range rawData {
+			row := make([]interface{}, len(targetCols))
+			for i, target := range targetCols {
+				// Find source key for this target
+				var sourceKey string
+				for s, t := range mapping {
+					if t == target {
+						sourceKey = s
+						break
+					}
+				}
+				row[i] = item[sourceKey]
+			}
+			data = append(data, row)
+
+			if len(data) >= 1000 {
+				if err := d.BatchInsert(database, table, targetCols, data, ""); err != nil {
+					return err
+				}
+				data = [][]interface{}{}
+			}
+		}
+	}
+
+	// Final batch
+	if len(data) > 0 {
+		return d.BatchInsert(database, table, targetCols, data, "")
+	}
+
+	return nil
+}
 
 func (d *DatabaseService) GetTableIndexes(database, table string) ([]IndexInfo, error) {
 	if err := d.ensureConnected(); err != nil {
 		return nil, err
 	}
 	return d.Driver.GetTableIndexes(database, table)
+}
+
+// SeedData generates and inserts mock data
+func (d *DatabaseService) SeedData(database, table string, count int, fakers map[string]string) error {
+	if err := d.ensureConnected(); err != nil {
+		return err
+	}
+
+	var columns []string
+	for col := range fakers {
+		columns = append(columns, col)
+	}
+
+	var data [][]interface{}
+	for i := 0; i < count; i++ {
+		row := make([]interface{}, len(columns))
+		for j, col := range columns {
+			fakerType := fakers[col]
+			row[j] = generateFakeValue(fakerType)
+		}
+		data = append(data, row)
+
+		if len(data) >= 1000 {
+			if err := d.BatchInsert(database, table, columns, data, ""); err != nil {
+				return err
+			}
+			data = [][]interface{}{}
+		}
+	}
+
+	if len(data) > 0 {
+		return d.BatchInsert(database, table, columns, data, "")
+	}
+
+	return nil
+}
+
+func generateFakeValue(fakerType string) interface{} {
+	switch fakerType {
+	case "name":
+		return gofakeit.Name()
+	case "email":
+		return gofakeit.Email()
+	case "phone":
+		return gofakeit.Phone()
+	case "address":
+		return gofakeit.Address().Address
+	case "city":
+		return gofakeit.City()
+	case "country":
+		return gofakeit.Country()
+	case "company":
+		return gofakeit.Company()
+	case "job_title":
+		return gofakeit.JobTitle()
+	case "date":
+		return gofakeit.Date().Format("2006-01-02")
+	case "datetime":
+		return gofakeit.Date().Format("2006-01-02 15:04:05")
+	case "sentence":
+		return gofakeit.Sentence(5)
+	case "paragraph":
+		return gofakeit.Paragraph(3, 5, 10, "\n")
+	case "number":
+		return gofakeit.Number(1, 1000)
+	case "float":
+		return gofakeit.Float64Range(1, 1000)
+	case "bool":
+		return gofakeit.Bool()
+	case "uuid":
+		return gofakeit.UUID()
+	case "color":
+		return gofakeit.Color()
+	case "username":
+		return gofakeit.Username()
+	case "password":
+		return gofakeit.Password(true, true, true, true, false, 12)
+	default:
+		return nil
+	}
 }

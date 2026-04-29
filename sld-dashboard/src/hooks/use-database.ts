@@ -10,6 +10,8 @@ export const dbKeys = {
     [...dbKeys.all, "columns", db, table] as const,
   indexes: (db: string, table: string) =>
     [...dbKeys.all, "indexes", db, table] as const,
+  relationships: (db: string) =>
+    [...dbKeys.all, "relationships", db] as const,
   data: (
     db: string,
     table: string,
@@ -162,6 +164,14 @@ export function useTableIndexes(database: string | null, table: string | null) {
     queryKey: dbKeys.indexes(database || "", table || ""),
     queryFn: () => api.getTableIndexes(database!, table!),
     enabled: !!database && !!table,
+  });
+}
+
+export function useTableRelationships(database: string | null) {
+  return useQuery({
+    queryKey: dbKeys.relationships(database || ""),
+    queryFn: () => api.getDbRelationships(database!),
+    enabled: !!database,
   });
 }
 
@@ -363,5 +373,152 @@ export function useDatabaseSettings(db: string) {
     queryKey: [...dbKeys.all, "settings", db],
     queryFn: () => api.getDatabaseSettings(db),
     enabled: !!db,
+  });
+}
+
+export function useAnalyzeImportMutation() {
+  return useMutation({
+    mutationFn: (vars: { file: File; format?: string }) =>
+      api.analyzeImport(vars.file, vars.format),
+  });
+}
+
+export function useExecuteImportMutation() {
+  const queryClient = useQueryClient();
+  const addToast = useAppStore((s) => s.addToast);
+
+  return useMutation({
+    mutationFn: (vars: {
+      database: string;
+      table: string;
+      temp_path: string;
+      format: string;
+      mapping: Record<string, string>;
+    }) => api.executeImport(vars),
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({ queryKey: dbKeys.data(vars.database, vars.table, 1, 50, "", "ASC", false) });
+      addToast({ type: "success", title: "Import successful" });
+    },
+    onError: (err: Error) => {
+      addToast({
+        type: "error",
+        title: "Import failed",
+        description: err.message,
+      });
+    },
+  });
+}
+
+export function useSeedTableMutation() {
+  const queryClient = useQueryClient();
+  const addToast = useAppStore((s) => s.addToast);
+
+  return useMutation({
+    mutationFn: (vars: {
+      database: string;
+      table: string;
+      count: number;
+      fakers: Record<string, string>;
+    }) => api.seedTable(vars),
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({ queryKey: dbKeys.data(vars.database, vars.table, 1, 50, "", "ASC", false) });
+      addToast({ type: "success", title: `Successfully seeded ${vars.count} rows` });
+    },
+    onError: (err: Error) => {
+      addToast({
+        type: "error",
+        title: "Seeding failed",
+        description: err.message,
+      });
+    },
+  });
+}
+
+export function useDatabaseStats(database: string) {
+  return useQuery({
+    queryKey: [...dbKeys.all, "stats", database],
+    queryFn: () => api.getStats(database),
+    enabled: !!database,
+    refetchInterval: 5000, // Refresh every 5s
+  });
+}
+
+export function useMigrations(database: string) {
+  return useQuery({
+    queryKey: [...dbKeys.all, "migrations", database],
+    queryFn: () => api.getMigrations(database),
+    enabled: !!database,
+  });
+}
+
+export function useInitMigrationsMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { database: string }) => api.initMigrations(vars.database),
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({ queryKey: [...dbKeys.all, "migrations", vars.database] });
+    },
+  });
+}
+
+export function useCreateMigrationMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { database: string, name: string }) => api.createMigration(vars.database, vars.name),
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({ queryKey: [...dbKeys.all, "migrations", vars.database] });
+    },
+  });
+}
+
+export function useRunMigrationMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { database: string, filename: string }) => api.runMigration(vars.database, vars.filename),
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({ queryKey: [...dbKeys.all, "migrations", vars.database] });
+      queryClient.invalidateQueries({ queryKey: [...dbKeys.all, "tables", vars.database] });
+    },
+  });
+}
+
+export function useSchemaDiff(source: string, target: string) {
+  return useQuery({
+    queryKey: [...dbKeys.all, "diff", source, target],
+    queryFn: () => api.compareSchemas(source, target),
+    enabled: !!source && !!target,
+  });
+}
+
+export function useOptimizationSuggestions(database: string, table: string) {
+  return useQuery({
+    queryKey: [...dbKeys.all, "optimize", database, table],
+    queryFn: () => api.getOptimizationSuggestions(database, table),
+    enabled: !!database && !!table,
+  });
+}
+
+export function usePIIScan(database: string, table: string) {
+  return useQuery({
+    queryKey: ['db-pii-scan', database, table],
+    queryFn: () => api.scanPII(database, table),
+    enabled: !!database && !!table,
+  });
+}
+
+export function useMaskDataMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (config: any) => api.maskData(config),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['db-data'] });
+    },
+  });
+}
+
+export function useQueryPlanAnalysisMutation() {
+  return useMutation({
+    mutationFn: ({ database, query }: { database: string; query: string }) => 
+      api.analyzeQueryPlan(database, query),
   });
 }

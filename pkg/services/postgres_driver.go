@@ -12,12 +12,15 @@ import (
 )
 
 type PostgresDriver struct {
-	db  *sql.DB
-	dsn string
+	db        *sql.DB
+	dsn       string
+	activeTxs map[string]*sql.Tx
 }
 
 func NewPostgresDriver() *PostgresDriver {
-	return &PostgresDriver{}
+	return &PostgresDriver{
+		activeTxs: make(map[string]*sql.Tx),
+	}
 }
 
 func (d *PostgresDriver) Connect(config ConnectionConfig) error {
@@ -347,19 +350,38 @@ func (d *PostgresDriver) GetTableDataEx(database, table string, page, perPage in
 	}, nil
 }
 
-func (d *PostgresDriver) ExecuteQuery(database, query string) (*QueryResult, error) {
-	targetDSN := strings.Replace(d.dsn, "/postgres?", "/"+database+"?", 1)
-	tempDB, err := sql.Open("postgres", targetDSN)
-	if err != nil {
-		return nil, err
+func (d *PostgresDriver) ExecuteQuery(database, query string, txId string) (*QueryResult, error) {
+	var targetDB *sql.DB
+	var tx *sql.Tx
+	var err error
+
+	if txId != "" {
+		var ok bool
+		tx, ok = d.activeTxs[txId]
+		if !ok {
+			return nil, fmt.Errorf("transaction %s not found", txId)
+		}
+	} else {
+		targetDSN := strings.Replace(d.dsn, "/postgres?", "/"+database+"?", 1)
+		targetDB, err = sql.Open("postgres", targetDSN)
+		if err != nil {
+			return nil, err
+		}
+		defer targetDB.Close()
 	}
-	defer tempDB.Close()
 
 	start := time.Now()
-	// Detect SELECT
 	trimmed := strings.ToUpper(strings.TrimSpace(query))
-	if strings.HasPrefix(trimmed, "SELECT") {
-		rows, err := tempDB.Query(query)
+	isSelect := strings.HasPrefix(trimmed, "SELECT") || strings.HasPrefix(trimmed, "SHOW") || strings.HasPrefix(trimmed, "DESC") || strings.HasPrefix(trimmed, "EXPLAIN")
+
+	if isSelect {
+		var rows *sql.Rows
+		if tx != nil {
+			rows, err = tx.Query(query)
+		} else {
+			rows, err = targetDB.Query(query)
+		}
+		
 		if err != nil {
 			return nil, err
 		}
@@ -394,7 +416,12 @@ func (d *PostgresDriver) ExecuteQuery(database, query string) (*QueryResult, err
 			ExecutionTimeMs: time.Since(start).Milliseconds(),
 		}, nil
 	} else {
-		res, err := tempDB.Exec(query)
+		var res sql.Result
+		if tx != nil {
+			res, err = tx.Exec(query)
+		} else {
+			res, err = targetDB.Exec(query)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -404,6 +431,185 @@ func (d *PostgresDriver) ExecuteQuery(database, query string) (*QueryResult, err
 			ExecutionTimeMs: time.Since(start).Milliseconds(),
 		}, nil
 	}
+}
+
+func (d *PostgresDriver) BeginTransaction(database string) (string, error) {
+	if d.db == nil {
+		return "", fmt.Errorf("database not connected")
+	}
+
+	tx, err := d.db.Begin()
+	if err != nil {
+		return "", err
+	}
+
+	txId := fmt.Sprintf("tx_%d", time.Now().UnixNano())
+	d.activeTxs[txId] = tx
+	return txId, nil
+}
+
+func (d *PostgresDriver) CommitTransaction(txId string) error {
+	tx, ok := d.activeTxs[txId]
+	if !ok {
+		return fmt.Errorf("transaction %s not found", txId)
+	}
+
+	err := tx.Commit()
+	delete(d.activeTxs, txId)
+	return err
+}
+
+func (d *PostgresDriver) RollbackTransaction(txId string) error {
+	tx, ok := d.activeTxs[txId]
+	if !ok {
+		return fmt.Errorf("transaction %s not found", txId)
+	}
+
+	err := tx.Rollback()
+	delete(d.activeTxs, txId)
+	return err
+}
+
+func (d *PostgresDriver) BatchInsert(database, table string, columns []string, data [][]interface{}, txId string) error {
+	if d.db == nil {
+		return fmt.Errorf("database not connected")
+	}
+
+	if len(data) == 0 {
+		return nil
+	}
+
+	// Prepare column names
+	colNames := make([]string, len(columns))
+	for i, col := range columns {
+		colNames[i] = "\"" + col + "\""
+	}
+	colsStr := strings.Join(colNames, ", ")
+
+	// Use transaction if provided
+	var tx *sql.Tx
+	if txId != "" {
+		var ok bool
+		tx, ok = d.activeTxs[txId]
+		if !ok {
+			return fmt.Errorf("transaction %s not found", txId)
+		}
+	}
+
+	// Batch size
+	const batchSize = 500
+	for i := 0; i < len(data); i += batchSize {
+		end := i + batchSize
+		if end > len(data) {
+			end = len(data)
+		}
+		batch := data[i:end]
+
+		placeholders := make([]string, len(batch))
+		values := make([]interface{}, 0, len(batch)*len(columns))
+		for j, row := range batch {
+			rowPlaceholders := make([]string, len(columns))
+			for k := range columns {
+				// PostgreSQL uses $1, $2, etc.
+				rowPlaceholders[k] = fmt.Sprintf("$%d", j*len(columns)+k+1)
+			}
+			placeholders[j] = "(" + strings.Join(rowPlaceholders, ", ") + ")"
+			values = append(values, row...)
+		}
+
+		query := fmt.Sprintf("INSERT INTO \"%s\" (%s) VALUES %s", table, colsStr, strings.Join(placeholders, ", "))
+
+		var err error
+		if tx != nil {
+			_, err = tx.Exec(query, values...)
+		} else {
+			// If not in a persistent transaction, we still need the right database connection.
+			// Reusing the logic from ExecuteQuery for simple connection per query.
+			targetDSN := strings.Replace(d.dsn, "/postgres?", "/"+database+"?", 1)
+			tempDB, err := sql.Open("postgres", targetDSN)
+			if err != nil {
+				return err
+			}
+			_, err = tempDB.Exec(query, values...)
+			tempDB.Close()
+		}
+
+		if err != nil {
+			return fmt.Errorf("batch insert failed at index %d: %w", i, err)
+		}
+	}
+
+	return nil
+}
+
+func (d *PostgresDriver) Query(database, query string, args []interface{}) ([]map[string]interface{}, error) {
+	return nil, fmt.Errorf("Query not implemented for Postgres")
+}
+
+func (d *PostgresDriver) GetTableInfo(database, table string) (*TableInfo, error) {
+	return nil, fmt.Errorf("GetTableInfo not implemented for Postgres")
+}
+
+func (d *PostgresDriver) GetStats(database string) (map[string]interface{}, error) {
+	if d.db == nil {
+		return nil, fmt.Errorf("database not connected")
+	}
+
+	stats := make(map[string]interface{})
+
+	// 1. Get Database Stats
+	query := fmt.Sprintf("SELECT * FROM pg_stat_database WHERE datname = '%s'", database)
+	rows, err := d.db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	if rows.Next() {
+		cols, _ := rows.Columns()
+		values := make([]interface{}, len(cols))
+		valuePtrs := make([]interface{}, len(cols))
+		for i := range values {
+			valuePtrs[i] = &values[i]
+		}
+		rows.Scan(valuePtrs...)
+		dbStats := make(map[string]interface{})
+		for i, col := range cols {
+			dbStats[col] = values[i]
+		}
+		stats["db_stats"] = dbStats
+	}
+
+	// 2. Get Activity
+	aRows, err := d.db.Query("SELECT * FROM pg_stat_activity")
+	if err != nil {
+		return nil, err
+	}
+	defer aRows.Close()
+
+	var processes []map[string]interface{}
+	cols, _ := aRows.Columns()
+	for aRows.Next() {
+		values := make([]interface{}, len(cols))
+		valuePtrs := make([]interface{}, len(cols))
+		for i := range values {
+			valuePtrs[i] = &values[i]
+		}
+		aRows.Scan(valuePtrs...)
+		proc := make(map[string]interface{})
+		for i, col := range cols {
+			val := values[i]
+			if b, ok := val.([]byte); ok {
+				proc[col] = string(b)
+			} else {
+				proc[col] = val
+			}
+		}
+		processes = append(processes, proc)
+	}
+	stats["processes"] = processes
+
+	return stats, nil
 }
 
 func (d *PostgresDriver) GetForeignValues(database, table, column string) ([]string, error) {

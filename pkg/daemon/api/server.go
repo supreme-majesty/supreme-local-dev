@@ -69,6 +69,11 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/db/snapshots/restore", s.handleDBRestore)
 	mux.HandleFunc("/api/db/import", s.handleDBImport)
 	mux.HandleFunc("/api/db/query", s.handleDBQuery)
+	mux.HandleFunc("/api/db/transaction", s.handleDBTransaction)
+	mux.HandleFunc("/api/db/import/analyze", s.handleDBImportAnalyze)
+	mux.HandleFunc("/api/db/import/execute", s.handleDBImportExecute)
+	mux.HandleFunc("/api/db/seed", s.handleDBSeed)
+	mux.HandleFunc("/api/db/stats", s.handleDBStats)
 	mux.HandleFunc("/api/db/explain", s.handleDBExplain)
 	mux.HandleFunc("/api/db/full-schema", s.handleDBFullSchema)
 	mux.HandleFunc("/api/db/clone", s.handleDBClone)
@@ -78,6 +83,15 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/db/foreign-values", s.handleDBForeignValues)
 	mux.HandleFunc("/api/db/collations", s.handleDBCollations)
 	mux.HandleFunc("/api/db/settings", s.handleDBSettings)
+	mux.HandleFunc("/api/db/migrations", s.handleDBMigrations)
+	mux.HandleFunc("/api/db/migrations/init", s.handleDBMigrationsInit)
+	mux.HandleFunc("/api/db/migrations/create", s.handleDBMigrationsCreate)
+	mux.HandleFunc("/api/db/migrations/run", s.handleDBMigrationsRun)
+	mux.HandleFunc("/api/db/compare", s.handleDBCompare)
+	mux.HandleFunc("/api/db/optimize", s.handleDBOptimize)
+	mux.HandleFunc("/api/db/pii/scan", s.handleDBPIIScan)
+	mux.HandleFunc("/api/db/pii/mask", s.handleDBPIIMask)
+	mux.HandleFunc("/api/db/query/analyze", s.handleDBQueryAnalyze)
 
 	// Service Status & Health
 	mux.HandleFunc("/api/services", s.handleServices)
@@ -1253,6 +1267,7 @@ func (s *Server) handleDBQuery(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Database string `json:"database"`
 		Query    string `json:"query"`
+		TxID     string `json:"tx_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
@@ -1260,13 +1275,192 @@ func (s *Server) handleDBQuery(w http.ResponseWriter, r *http.Request) {
 	}
 
 	d, _ := daemon.GetClient()
-	result, err := d.DatabaseService.ExecuteQuery(req.Database, req.Query)
+	result, err := d.DatabaseService.ExecuteQuery(req.Database, req.Query, req.TxID)
 	if err != nil {
 		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
 		return
 	}
 
 	jsonResponse(w, result, 200)
+}
+
+func (s *Server) handleDBTransaction(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		return
+	}
+
+	var req struct {
+		Database  string `json:"database"`
+		Operation string `json:"operation"` // begin, commit, rollback
+		TxID      string `json:"tx_id"`     // only for commit/rollback
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
+		return
+	}
+
+	d, _ := daemon.GetClient()
+	var txId string
+	var err error
+
+	switch strings.ToLower(req.Operation) {
+	case "begin":
+		txId, err = d.DatabaseService.BeginTransaction(req.Database)
+	case "commit":
+		err = d.DatabaseService.CommitTransaction(req.TxID)
+	case "rollback":
+		err = d.DatabaseService.RollbackTransaction(req.TxID)
+	default:
+		err = fmt.Errorf("invalid transaction operation: %s", req.Operation)
+	}
+
+	if err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+
+	jsonResponse(w, map[string]interface{}{"success": true, "tx_id": txId}, 200)
+}
+
+func (s *Server) handleDBImportAnalyze(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		return
+	}
+
+	const maxUploadSize = 50 << 20 // 50MB
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
+	if err := r.ParseMultipartForm(maxUploadSize); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
+		return
+	}
+
+	file, handler, err := r.FormFile("file")
+	if err != nil {
+		jsonResponse(w, ErrorResponse{Error: "file is required"}, 400)
+		return
+	}
+	defer file.Close()
+
+	format := r.FormValue("format")
+	if format == "" {
+		// Detect from filename
+		if strings.HasSuffix(strings.ToLower(handler.Filename), ".csv") {
+			format = "csv"
+		} else if strings.HasSuffix(strings.ToLower(handler.Filename), ".json") {
+			format = "json"
+		}
+	}
+
+	d, _ := daemon.GetClient()
+	tempPath := filepath.Join(os.TempDir(), "sld_import_"+handler.Filename)
+	
+	dst, err := os.Create(tempPath)
+	if err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+	defer dst.Close()
+
+	if _, err := io.Copy(dst, file); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+
+	analysis, err := d.DatabaseService.AnalyzeImport(tempPath, format)
+	if err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+
+	jsonResponse(w, map[string]interface{}{
+		"analysis":  analysis,
+		"temp_path": tempPath,
+	}, 200)
+}
+
+func (s *Server) handleDBImportExecute(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		return
+	}
+
+	var req struct {
+		Database string            `json:"database"`
+		Table    string            `json:"table"`
+		TempPath string            `json:"temp_path"`
+		Format   string            `json:"format"`
+		Mapping  map[string]string `json:"mapping"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
+		return
+	}
+
+	d, _ := daemon.GetClient()
+	err := d.DatabaseService.ExecuteImport(req.Database, req.Table, req.TempPath, req.Format, req.Mapping)
+	
+	// Clean up temp file
+	os.Remove(req.TempPath)
+
+	if err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+
+	jsonResponse(w, SuccessResponse{Success: true}, 200)
+}
+
+func (s *Server) handleDBSeed(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		return
+	}
+
+	var req struct {
+		Database string            `json:"database"`
+		Table    string            `json:"table"`
+		Count    int               `json:"count"`
+		Fakers   map[string]string `json:"fakers"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
+		return
+	}
+
+	if req.Count <= 0 {
+		jsonResponse(w, ErrorResponse{Error: "count must be positive"}, 400)
+		return
+	}
+
+	d, _ := daemon.GetClient()
+	if err := d.DatabaseService.SeedData(req.Database, req.Table, req.Count, req.Fakers); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+
+	jsonResponse(w, SuccessResponse{Success: true}, 200)
+}
+
+func (s *Server) handleDBStats(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		return
+	}
+
+	database := r.URL.Query().Get("database")
+	if database == "" {
+		jsonResponse(w, ErrorResponse{Error: "database is required"}, 400)
+		return
+	}
+
+	d, _ := daemon.GetClient()
+	stats, err := d.DatabaseService.GetStats(database)
+	if err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+
+	jsonResponse(w, stats, 200)
 }
 
 func (s *Server) handleDBExplain(w http.ResponseWriter, r *http.Request) {
@@ -1277,6 +1471,7 @@ func (s *Server) handleDBExplain(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Database string `json:"database"`
 		Query    string `json:"query"`
+		TxID     string `json:"tx_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
@@ -1911,4 +2106,127 @@ func (s *Server) handleServiceControl(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResponse(w, SuccessResponse{Success: true, Message: fmt.Sprintf("Service %s action %s completed", req.Service, req.Action)}, 200)
+}
+func (s *Server) handleDBMigrations(w http.ResponseWriter, r *http.Request) {
+	database := r.URL.Query().Get("database")
+	d, _ := daemon.GetClient()
+	
+	applied, _ := d.DatabaseService.GetAppliedMigrations(database)
+	pending, _ := d.DatabaseService.GetPendingMigrations(database)
+	
+	jsonResponse(w, map[string]interface{}{
+		"applied": applied,
+		"pending": pending,
+	}, 200)
+}
+
+func (s *Server) handleDBMigrationsInit(w http.ResponseWriter, r *http.Request) {
+	var req struct { Database string `json:"database"` }
+	json.NewDecoder(r.Body).Decode(&req)
+	d, _ := daemon.GetClient()
+	if err := d.DatabaseService.InitializeMigrations(req.Database); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+	jsonResponse(w, SuccessResponse{Success: true}, 200)
+}
+
+func (s *Server) handleDBMigrationsCreate(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Database string `json:"database"`
+		Name     string `json:"name"`
+	}
+	json.NewDecoder(r.Body).Decode(&req)
+	d, _ := daemon.GetClient()
+	filename, err := d.DatabaseService.CreateMigration(req.Database, req.Name)
+	if err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+	jsonResponse(w, map[string]string{"filename": filename}, 200)
+}
+
+func (s *Server) handleDBMigrationsRun(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Database string `json:"database"`
+		Filename string `json:"filename"`
+	}
+	json.NewDecoder(r.Body).Decode(&req)
+	d, _ := daemon.GetClient()
+	if err := d.DatabaseService.RunMigration(req.Database, req.Filename); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+	jsonResponse(w, SuccessResponse{Success: true}, 200)
+}
+
+func (s *Server) handleDBCompare(w http.ResponseWriter, r *http.Request) {
+	source := r.URL.Query().Get("source")
+	target := r.URL.Query().Get("target")
+	d, _ := daemon.GetClient()
+	
+	diff, err := d.DatabaseService.CompareSchemas(source, target)
+	if err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+	jsonResponse(w, diff, 200)
+}
+
+func (s *Server) handleDBOptimize(w http.ResponseWriter, r *http.Request) {
+	database := r.URL.Query().Get("database")
+	table := r.URL.Query().Get("table")
+	d, _ := daemon.GetClient()
+	
+	suggestions, err := d.DatabaseService.GetOptimizationSuggestions(database, table)
+	if err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+	jsonResponse(w, suggestions, 200)
+}
+
+func (s *Server) handleDBPIIScan(w http.ResponseWriter, r *http.Request) {
+	database := r.URL.Query().Get("database")
+	table := r.URL.Query().Get("table")
+	d, _ := daemon.GetClient()
+	
+	results, err := d.DatabaseService.ScanPII(database, table)
+	if err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+	jsonResponse(w, results, 200)
+}
+
+func (s *Server) handleDBPIIMask(w http.ResponseWriter, r *http.Request) {
+	var config services.MaskingConfig
+	if err := json.NewDecoder(r.Body).Decode(&config); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
+		return
+	}
+	d, _ := daemon.GetClient()
+	if err := d.DatabaseService.AnonymizeTable(config); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+	jsonResponse(w, map[string]string{"status": "success"}, 200)
+}
+
+func (s *Server) handleDBQueryAnalyze(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Database string `json:"database"`
+		Query    string `json:"query"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
+		return
+	}
+	d, _ := daemon.GetClient()
+	plan, err := d.DatabaseService.AnalyzeQueryPlan(req.Database, req.Query)
+	if err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+	jsonResponse(w, plan, 200)
 }

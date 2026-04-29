@@ -12,8 +12,12 @@ import {
   Table as TableIcon,
   Edit2,
   Settings,
+  Upload,
+  Zap,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/Checkbox";
+import { ImportWizard } from "./ImportWizard";
+import { DataSeeder } from "./DataSeeder";
 
 interface DatabaseStructureProps {
   database: string;
@@ -39,6 +43,8 @@ export function DatabaseStructure({
   const { data: tables = [], isLoading } = useTables(database);
   const [filter, setFilter] = useState("");
   const [selectedTables, setSelectedTables] = useState<Set<string>>(new Set());
+  const [importTable, setImportTable] = useState<string | null>(null);
+  const [seedTable, setSeedTable] = useState<string | null>(null);
 
   const filteredTables = tables.filter((t) =>
     t.name.toLowerCase().includes(filter.toLowerCase())
@@ -184,10 +190,11 @@ export function DatabaseStructure({
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-6 gap-1 px-1 text-[var(--muted-foreground)] hover:text-[var(--primary)]"
+                      className="h-6 gap-1 px-1 text-[var(--muted-foreground)] hover:text-green-500"
+                      onClick={() => setImportTable(t.name)}
                     >
-                      <FileInput size={12} />{" "}
-                      <span className="text-xs">Insert</span>
+                      <Upload size={12} />{" "}
+                      <span className="text-xs">Import</span>
                     </Button>
                   </td>
                   <td className="p-1 w-8">
@@ -202,6 +209,17 @@ export function DatabaseStructure({
                     </Button>
                   </td>
                    <td className="p-1 w-8">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 gap-1 px-1 text-[var(--muted-foreground)] hover:text-indigo-500"
+                      onClick={() => setSeedTable(t.name)}
+                    >
+                      <Zap size={12} />{" "}
+                      <span className="text-xs">Seed</span>
+                    </Button>
+                  </td>
+                  <td className="p-1 w-8">
                     <Button
                       variant="ghost"
                       size="sm"
@@ -282,6 +300,7 @@ export function DatabaseStructure({
                   const tables = Array.from(selectedTables);
                   if (val === "drop") onBulkDrop(tables);
                   else if (val === "empty") onBulkEmpty(tables);
+                  else if (val === "import") setImportTable(tables[0]);
                   else onBulkAction(tables, val);
                   setSelectedTables(new Set());
                   e.target.value = "";
@@ -292,6 +311,7 @@ export function DatabaseStructure({
                 <option value="copy">Copy table</option>
                 <option value="show_create">Show create</option>
                 <option value="export">Export</option>
+                <option value="import">Import data</option>
                 <optgroup label="Delete data or table">
                   <option value="empty">Empty</option>
                   <option value="drop">Drop</option>
@@ -316,6 +336,22 @@ export function DatabaseStructure({
           </div>
         </div>
       </div>
+
+      {importTable && (
+        <ImportWizard 
+          database={database} 
+          table={importTable} 
+          onClose={() => setImportTable(null)} 
+        />
+      )}
+
+      {seedTable && (
+        <DataSeeder
+          database={database}
+          table={seedTable}
+          onClose={() => setSeedTable(null)}
+        />
+      )}
     </div>
   );
 }

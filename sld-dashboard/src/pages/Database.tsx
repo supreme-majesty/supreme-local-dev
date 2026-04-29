@@ -20,6 +20,7 @@ import {
   Columns,
   Search,
   Zap,
+  Eye,
   History as HistoryIcon,
   Download as DownloadIcon,
   FileDown,
@@ -28,7 +29,12 @@ import {
   Copy,
   X,
   Network,
+  Activity,
+  GitCompare,
+  Shield,
 } from "lucide-react";
+import { MigrationManager } from "@/components/database/MigrationManager";
+import { SchemaDiffTool } from "@/components/database/SchemaDiffTool";
 import { formatBytes, formatDate } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
 import { Checkbox } from "@/components/ui/Checkbox";
@@ -40,6 +46,9 @@ import {
   CardDescription,
 } from "@/components/ui/Card";
 import { Label } from "@/components/ui/Label";
+import { SchemaVisualizer } from "@/components/database/SchemaVisualizer";
+import { PerformanceDashboard } from "@/components/database/PerformanceDashboard";
+import { convertToCSV, convertToSQL } from "@/lib/utils";
 import { Input } from "@/components/ui/Input";
 import { Badge } from "@/components/ui/Badge";
 import { SQLConsole } from "@/components/database/SQLConsole";
@@ -49,6 +58,8 @@ import { DataForm } from "@/components/database/DataForm";
 import { DatabaseStructure } from "@/components/database/DatabaseStructure";
 import { AlterTableDesigner } from "@/components/database/AlterTableDesigner";
 import { TableCreator } from "@/components/database/TableCreator";
+import { SecurityDashboard } from "@/components/database/SecurityDashboard";
+import { HealthMonitor } from "@/components/database/HealthMonitor";
 import { CloneDatabaseModal } from "@/components/database/CloneDatabaseModal";
 import { CreateDatabaseModal } from "@/components/database/CreateDatabaseModal";
 import { SchemaCanvas } from "@/components/database/SchemaCanvas";
@@ -1193,7 +1204,7 @@ $mysqli->close();
                   onClick={() => setActiveTab("architect")}
                   className="gap-2 rounded-b-none border-b-2 border-transparent data-[variant=primary]:border-[var(--primary)]"
                 >
-                  <Network size={14} /> Architect
+                  <Network size={14} /> Schema Map
                 </Button>
                 <Button
                   variant={activeTab === "operations" ? "primary" : "ghost"}
@@ -1202,6 +1213,46 @@ $mysqli->close();
                   className="gap-2 rounded-b-none border-b-2 border-transparent data-[variant=primary]:border-[var(--primary)]"
                 >
                   <Settings size={14} /> Operations
+                </Button>
+                <Button
+                  variant={activeTab === "performance" ? "primary" : "ghost"}
+                  size="sm"
+                  onClick={() => setActiveTab("performance")}
+                  className="gap-2 rounded-b-none border-b-2 border-transparent data-[variant=primary]:border-[var(--primary)]"
+                >
+                  <Activity size={14} /> Performance
+                </Button>
+                <Button
+                  variant={activeTab === "health" ? "primary" : "ghost"}
+                  size="sm"
+                  onClick={() => setActiveTab("health")}
+                  className="gap-2 rounded-b-none border-b-2 border-transparent data-[variant=primary]:border-[var(--primary)]"
+                >
+                  <Activity size={14} /> Health
+                </Button>
+                <Button
+                  variant={activeTab === "security" ? "primary" : "ghost"}
+                  size="sm"
+                  onClick={() => setActiveTab("security")}
+                  className="gap-2 rounded-b-none border-b-2 border-transparent data-[variant=primary]:border-[var(--primary)]"
+                >
+                  <Shield size={14} /> Security
+                </Button>
+                <Button
+                  variant={activeTab === "migrations" ? "primary" : "ghost"}
+                  size="sm"
+                  onClick={() => setActiveTab("migrations")}
+                  className="gap-2 rounded-b-none border-b-2 border-transparent data-[variant=primary]:border-[var(--primary)]"
+                >
+                  <HistoryIcon size={14} /> Migrations
+                </Button>
+                <Button
+                  variant={activeTab === "diff" ? "primary" : "ghost"}
+                  size="sm"
+                  onClick={() => setActiveTab("diff")}
+                  className="gap-2 rounded-b-none border-b-2 border-transparent data-[variant=primary]:border-[var(--primary)]"
+                >
+                  <GitCompare size={14} /> Diff & Sync
                 </Button>
               </>
             ) : (
@@ -1479,6 +1530,55 @@ $mysqli->close();
                       {sortOrder}
                     </button>
                   )}
+                </div>
+
+                <div className="h-4 w-px bg-[var(--border)]" />
+
+                {/* Export View */}
+                <div className="flex items-center gap-2 text-sm ml-auto">
+                  <span>Export:</span>
+                  <select
+                    className="bg-[var(--background)] border border-[var(--border)] rounded px-2 py-1 text-sm"
+                    value=""
+                    onChange={(e) => {
+                      const format = e.target.value;
+                      if (!format) return;
+                      
+                      const cols = (searchResults || tableData)?.columns || [];
+                      const colNames = cols.map((c: any) => typeof c === "string" ? c : c.name);
+                      
+                      if (format === "csv") {
+                        const csv = convertToCSV(colNames, filteredRows);
+                        const blob = new Blob([csv], { type: "text/csv" });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement("a");
+                        a.href = url;
+                        a.download = `${selectedTable}_export.csv`;
+                        a.click();
+                      } else if (format === "json") {
+                        const json = JSON.stringify(filteredRows, null, 2);
+                        const blob = new Blob([json], { type: "application/json" });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement("a");
+                        a.href = url;
+                        a.download = `${selectedTable}_export.json`;
+                        a.click();
+                      } else if (format === "sql") {
+                        const sql = convertToSQL(selectedTable!, colNames, filteredRows);
+                        setResultModal({
+                          isOpen: true,
+                          title: `SQL Export: ${selectedTable}`,
+                          content: sql
+                        });
+                      }
+                      e.target.value = "";
+                    }}
+                  >
+                    <option value="">Select format</option>
+                    <option value="csv">CSV</option>
+                    <option value="json">JSON</option>
+                    <option value="sql">SQL Inserts</option>
+                  </select>
                 </div>
               </div>
 
@@ -1792,9 +1892,46 @@ $mysqli->close();
                                             <span className="text-red-400 text-[10px]">
                                               (missing)
                                             </span>
-                                          ) : (
-                                            String(val)
-                                          )}
+                                          ) : (() => {
+                                            const type = schemaCol?.type?.toLowerCase() || "";
+                                            const isBlob = type.includes("blob") || type.includes("binary") || type.includes("varbinary");
+                                            
+                                            if (isBlob && val) {
+                                              const strVal = String(val);
+                                              const isImage = strVal.startsWith("data:image/") || (strVal.length > 20 && /^[A-Za-z0-9+/=]+$/.test(strVal.substring(0, 100)));
+                                              
+                                              return (
+                                                <div className="flex items-center gap-2">
+                                                  <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-[var(--muted)] text-[10px] text-[var(--muted-foreground)] border border-[var(--border)]">
+                                                    <DatabaseIcon size={10} />
+                                                    BLOB
+                                                  </div>
+                                                  {isImage ? (
+                                                    <button 
+                                                      className="p-1 hover:bg-[var(--primary)]/10 rounded text-[var(--primary)] transition-colors"
+                                                      onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setResultModal({
+                                                          isOpen: true,
+                                                          title: `Preview: ${colName}`,
+                                                          content: strVal.startsWith("data:image/") ? strVal : `data:image/png;base64,${strVal}`
+                                                        });
+                                                      }}
+                                                      title="Preview Image"
+                                                    >
+                                                      <Eye size={14} />
+                                                    </button>
+                                                  ) : (
+                                                    <span className="text-[10px] opacity-50 truncate max-w-[100px]">
+                                                      {strVal.length} bytes
+                                                    </span>
+                                                  )}
+                                                </div>
+                                              );
+                                            }
+                                            
+                                            return String(val);
+                                          })()}
                                         </span>
                                         {/* External link icon removed, as value is now directly clickable */}
                                       </div>
@@ -2012,7 +2149,13 @@ $mysqli->close();
           {/* Context: All, Tab: SQL */}
           {activeTab === "sql" && (
             <div className="h-full flex flex-col">
-              <SQLConsole database={selectedDB || null} />
+              <SQLConsole database={selectedDB || ""} />
+            </div>
+          )}
+
+          {activeTab === "schema" && selectedDB && (
+            <div className="mt-8">
+              <SchemaVisualizer database={selectedDB} />
             </div>
           )}
 
@@ -2247,6 +2390,31 @@ $mysqli->close();
             <div className="h-full min-h-[700px]">
               <SchemaCanvas database={selectedDB} />
             </div>
+          )}
+
+          {/* Context: DB, Tab: Performance */}
+          {activeTab === "performance" && selectedDB && (
+            <PerformanceDashboard database={selectedDB} />
+          )}
+
+          {/* Context: DB, Tab: Health */}
+          {activeTab === "health" && selectedDB && (
+            <HealthMonitor database={selectedDB} />
+          )}
+
+          {/* Context: DB, Tab: Security */}
+          {activeTab === "security" && selectedDB && (
+            <SecurityDashboard database={selectedDB} />
+          )}
+
+          {/* Context: DB, Tab: Migrations */}
+          {activeTab === "migrations" && selectedDB && (
+            <MigrationManager database={selectedDB} />
+          )}
+
+          {/* Context: DB, Tab: Diff */}
+          {activeTab === "diff" && selectedDB && (
+            <SchemaDiffTool currentDatabase={selectedDB} />
           )}
 
           {/* Operations Context: Database */}
@@ -3001,45 +3169,70 @@ $mysqli->close();
         title={resultModal.title}
         footer={
           <div className="flex gap-2">
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => {
-                navigator.clipboard.writeText(resultModal.content);
-                alert("Copied to clipboard!");
-              }}
-              className="gap-1"
-            >
-              <Copy size={14} /> Copy to Clipboard
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => {
-                const element = document.createElement("a");
-                const file = new Blob([resultModal.content], {
-                  type: "text/plain",
-                });
-                element.href = URL.createObjectURL(file);
-                element.download = `${resultModal.title.replace(
-                  /\s+/g,
-                  "_",
-                )}.sql`;
-                document.body.appendChild(element);
-                element.click();
-                document.body.removeChild(element);
-              }}
-              className="gap-1"
-            >
-              <DownloadIcon size={14} /> Download as SQL
-            </Button>
+            {!resultModal.content.startsWith("data:image/") ? (
+              <>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    navigator.clipboard.writeText(resultModal.content);
+                    alert("Copied to clipboard!");
+                  }}
+                  className="gap-1"
+                >
+                  <Copy size={14} /> Copy to Clipboard
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    const element = document.createElement("a");
+                    const file = new Blob([resultModal.content], {
+                      type: "text/plain",
+                    });
+                    element.href = URL.createObjectURL(file);
+                    element.download = `${resultModal.title.replace(/\s+/g, "_")}.sql`;
+                    document.body.appendChild(element);
+                    element.click();
+                    document.body.removeChild(element);
+                  }}
+                  className="gap-1"
+                >
+                  <DownloadIcon size={14} /> Download as SQL
+                </Button>
+              </>
+            ) : (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  const link = document.createElement("a");
+                  link.href = resultModal.content;
+                  link.download = `preview_${Date.now()}.png`;
+                  link.click();
+                }}
+                className="gap-1"
+              >
+                <DownloadIcon size={14} /> Download Image
+              </Button>
+            )}
           </div>
         }
       >
-        <div className="max-h-[60vh] overflow-auto">
-          <pre className="bg-[var(--muted)]/50 p-4 rounded text-sm font-mono overflow-x-auto whitespace-pre-wrap">
-            {resultModal.content}
-          </pre>
+        <div className="max-h-[70vh] overflow-auto">
+          {resultModal.content.startsWith("data:image/") ? (
+            <div className="flex flex-col items-center p-4 bg-[var(--muted)]/20 rounded-lg">
+              <img 
+                src={resultModal.content} 
+                alt="Preview" 
+                className="max-w-full h-auto rounded shadow-lg border border-[var(--border)]" 
+              />
+            </div>
+          ) : (
+            <pre className="bg-[var(--muted)]/50 p-4 rounded text-sm font-mono overflow-x-auto whitespace-pre-wrap">
+              {resultModal.content}
+            </pre>
+          )}
         </div>
       </Modal>
       {/* Clone Database Modal */}

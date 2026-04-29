@@ -12,7 +12,7 @@ import {
   MarkerType,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { Table as TableIcon, Key, Link as LinkIcon, Database, Edit2 } from "lucide-react";
+import { Table as TableIcon, Key, Link as LinkIcon, Database, Edit2, Plus } from "lucide-react";
 import { useTables, useExecuteQueryMutation } from "@/hooks/use-database";
 import { api } from "@/api/daemon";
 import { useEffect, useState } from "react";
@@ -203,6 +203,13 @@ export function SchemaCanvas({ database }: SchemaCanvasProps) {
         <span className="text-xs font-medium">{database}</span>
         <div className="w-px h-3 bg-[var(--border)] mx-1" />
         <span className="text-[10px] text-[var(--muted-foreground)] uppercase tracking-wider">{tables.length} Tables</span>
+        <div className="w-px h-3 bg-[var(--border)] mx-1" />
+        <button 
+          onClick={() => { /* This should trigger the same logic as the main Create Table button */ }}
+          className="text-[10px] font-bold text-green-500 hover:text-green-400 flex items-center gap-1 ml-1"
+        >
+          <Plus size={10} /> NEW TABLE
+        </button>
       </div>
       
       <ReactFlow
@@ -210,6 +217,16 @@ export function SchemaCanvas({ database }: SchemaCanvasProps) {
         edges={edges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
+        onConnect={(params) => {
+          const { source, sourceHandle, target, targetHandle } = params;
+          if (source && sourceHandle && target && targetHandle) {
+             const confirmMsg = `Create Foreign Key relationship from ${source}.${sourceHandle} to ${target}.${targetHandle}?`;
+             if (window.confirm(confirmMsg)) {
+                const sql = `ALTER TABLE \`${source}\` ADD CONSTRAINT fk_${source}_${sourceHandle} FOREIGN KEY (\`${sourceHandle}\`) REFERENCES \`${target}\`(\`${targetHandle}\`)`;
+                handleSaveAlter(sql);
+             }
+          }
+        }}
         nodeTypes={nodeTypes}
         fitView
         colorMode="dark"

@@ -106,6 +106,17 @@ export interface TableData {
   query_time?: number; // Query execution time in seconds (when profiling enabled)
 }
 
+export interface ImportAnalysis {
+  columns: string[];
+  preview: Record<string, any>[];
+  format: string;
+}
+
+export interface ImportResponse {
+  analysis: ImportAnalysis;
+  temp_path: string;
+}
+
 export interface IndexInfo {
   name: string;
   columns: string[];
@@ -708,6 +719,100 @@ class DaemonApi {
     return this.request<ActionResponse>("/healer/resolve", {
       method: "POST",
       body: JSON.stringify({ id }),
+    });
+  }
+
+  // ============ Database Import ============
+  async analyzeImport(file: File, format?: string): Promise<ImportResponse> {
+    const formData = new FormData();
+    formData.append("file", file);
+    if (format) formData.append("format", format);
+
+    const res = await fetch(`${API_BASE}/db/import/analyze`, {
+      method: "POST",
+      body: formData,
+    });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  }
+
+  async executeImport(vars: {
+    database: string;
+    table: string;
+    temp_path: string;
+    format: string;
+    mapping: Record<string, string>;
+  }): Promise<ActionResponse> {
+    return this.request<ActionResponse>("/db/import/execute", {
+      method: "POST",
+      body: JSON.stringify(vars),
+    });
+  }
+
+  async seedTable(vars: {
+    database: string;
+    table: string;
+    count: number;
+    fakers: Record<string, string>;
+  }): Promise<ActionResponse> {
+    return this.request<ActionResponse>("/db/seed", {
+      method: "POST",
+      body: JSON.stringify(vars),
+    });
+  }
+
+  async getStats(database: string): Promise<any> {
+    return this.request<any>(`/db/stats?database=${database}`);
+  }
+
+  async getMigrations(database: string): Promise<{ applied: any[]; pending: any[] }> {
+    return this.request<any>(`/db/migrations?database=${database}`);
+  }
+
+  async initMigrations(database: string): Promise<ActionResponse> {
+    return this.request<ActionResponse>(`/db/migrations/init`, {
+      method: "POST",
+      body: JSON.stringify({ database }),
+    });
+  }
+
+  async createMigration(database: string, name: string): Promise<{ filename: string }> {
+    return this.request<any>(`/db/migrations/create`, {
+      method: "POST",
+      body: JSON.stringify({ database, name }),
+    });
+  }
+
+  async runMigration(database: string, filename: string): Promise<ActionResponse> {
+    return this.request<ActionResponse>(`/db/migrations/run`, {
+      method: "POST",
+      body: JSON.stringify({ database, filename }),
+    });
+  }
+
+  async compareSchemas(source: string, target: string): Promise<any> {
+    return this.request<any>(`/db/compare?source=${source}&target=${target}`);
+  }
+
+  async getOptimizationSuggestions(database: string, table: string): Promise<any[]> {
+    return this.request<any[]>(`/db/optimize?database=${database}&table=${table}`);
+  }
+
+  async scanPII(database: string, table: string): Promise<any[]> {
+    return this.request<any[]>(`/db/pii/scan?database=${database}&table=${table}`);
+  }
+
+  async maskData(config: any): Promise<void> {
+    await this.request<void>(`/db/pii/mask`, {
+      method: 'POST',
+      body: JSON.stringify(config),
+    });
+  }
+
+  async analyzeQueryPlan(database: string, query: string): Promise<any> {
+    return this.request<any>(`/db/query/analyze`, {
+      method: 'POST',
+      body: JSON.stringify({ database, query }),
     });
   }
 }

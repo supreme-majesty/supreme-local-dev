@@ -17,9 +17,16 @@ type DatabaseDriver interface {
 	GetTableData(database, table string, page, perPage int) (*TableData, error)
 	GetTableDataEx(database, table string, page, perPage int, sortCol, sortOrder string, profile bool) (*TableData, error)
 
-	ExecuteQuery(database, query string) (*QueryResult, error)
+	ExecuteQuery(database, query string, txId string) (*QueryResult, error)
+	BeginTransaction(database string) (string, error)
+	CommitTransaction(txId string) error
+	RollbackTransaction(txId string) error
+	BatchInsert(database, table string, columns []string, data [][]interface{}, txId string) error
+	GetStats(database string) (map[string]interface{}, error)
 	GetForeignValues(database, table, column string) ([]string, error)
 	GetTableRelationships(database string) ([]TableRelationship, error)
+	GetTableInfo(database, table string) (*TableInfo, error)
+	Query(database, query string, args []interface{}) ([]map[string]interface{}, error)
 
 	// Backup/Restore
 	CreateSnapshot(database, table string, filepath string) error
