@@ -516,3 +516,138 @@ func (d *MySQLDriver) GetTableIndexes(database, table string) ([]IndexInfo, erro
 	}
 	return indexes, nil
 }
+
+func (m *MySQLDriver) Maintenance(database string, tables []string, operation string) ([]MaintenanceResult, error) {
+	if !m.IsConnected() {
+		return nil, fmt.Errorf("not connected")
+	}
+
+	if len(tables) == 0 {
+		return nil, nil
+	}
+
+	validOps := map[string]bool{
+		"ANALYZE":  true,
+		"CHECK":    true,
+		"OPTIMIZE": true,
+		"REPAIR":   true,
+	}
+	op := strings.ToUpper(operation)
+	if !validOps[op] {
+		return nil, fmt.Errorf("invalid maintenance operation: %s", operation)
+	}
+
+	// Prepare table list with backticks
+	quotedTables := make([]string, len(tables))
+	for i, t := range tables {
+		quotedTables[i] = fmt.Sprintf("`%s`.`%s`", database, t)
+	}
+
+	query := fmt.Sprintf("%s TABLE %s", op, strings.Join(quotedTables, ", "))
+	rows, err := m.db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []MaintenanceResult
+	for rows.Next() {
+		var res MaintenanceResult
+		var tableRaw string
+		if err := rows.Scan(&tableRaw, &res.Operation, &res.MsgType, &res.MsgText); err != nil {
+			return nil, err
+		}
+		// Table name might be fully qualified, extract base
+		parts := strings.Split(tableRaw, ".")
+		res.Table = parts[len(parts)-1]
+		results = append(results, res)
+	}
+
+	return results, nil
+}
+
+func (m *MySQLDriver) GlobalSearch(database string, query string) ([]SearchResult, error) {
+	if !m.IsConnected() {
+		return nil, fmt.Errorf("not connected")
+	}
+
+	// 1. Get all tables and their columns that are searchable (string/text)
+	tables, err := m.ListTables(database)
+	if err != nil {
+		return nil, err
+	}
+
+	var searchResults []SearchResult
+
+	for _, table := range tables {
+		// Get columns for this table
+		cols, err := m.GetTableColumns(database, table.Name)
+		if err != nil {
+			continue
+		}
+
+		var searchableCols []string
+		for _, col := range cols {
+			typ := strings.ToLower(col.Type)
+			if strings.Contains(typ, "char") || strings.Contains(typ, "text") || strings.Contains(typ, "string") {
+				searchableCols = append(searchableCols, col.Name)
+			}
+		}
+
+		if len(searchableCols) == 0 {
+			continue
+		}
+
+		// 2. Build search query for this table
+		var conditions []string
+		for _, col := range searchableCols {
+			conditions = append(conditions, fmt.Sprintf("`%s` LIKE '%%%s%%'", col, query))
+		}
+
+		searchSQL := fmt.Sprintf("SELECT * FROM `%s`.`%s` WHERE %s LIMIT 10", database, table.Name, strings.Join(conditions, " OR "))
+		
+		rows, err := m.db.Query(searchSQL)
+		if err != nil {
+			continue
+		}
+
+		// Process results
+		colsNames, _ := rows.Columns()
+		count := 0
+		var matches []map[string]interface{}
+
+		for rows.Next() {
+			count++
+			row := make([]interface{}, len(colsNames))
+			valPtrs := make([]interface{}, len(colsNames))
+			for i := range row {
+				valPtrs[i] = &row[i]
+			}
+
+			if err := rows.Scan(valPtrs...); err == nil {
+				match := make(map[string]interface{})
+				for i, colName := range colsNames {
+					val := row[i]
+					if b, ok := val.([]byte); ok {
+						match[colName] = string(b)
+					} else {
+						match[colName] = val
+					}
+				}
+				matches = append(matches, match)
+			}
+		}
+		rows.Close()
+
+		if count > 0 {
+			searchResults = append(searchResults, SearchResult{
+				Table:       table.Name,
+				ColumnCount: len(searchableCols),
+				RowCount:    count,
+				Matches:     matches,
+			})
+		}
+	}
+
+	return searchResults, nil
+}

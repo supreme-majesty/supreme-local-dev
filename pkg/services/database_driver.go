@@ -27,6 +27,24 @@ type DatabaseDriver interface {
 
 	// Advanced Schema
 	GetTableIndexes(database, table string) ([]IndexInfo, error)
+
+	// Maintenance & Search
+	Maintenance(database string, tables []string, operation string) ([]MaintenanceResult, error)
+	GlobalSearch(database string, query string) ([]SearchResult, error)
+}
+
+type MaintenanceResult struct {
+	Table     string `json:"table"`
+	Operation string `json:"operation"`
+	MsgType   string `json:"msg_type"`
+	MsgText   string `json:"msg_text"`
+}
+
+type SearchResult struct {
+	Table       string `json:"table"`
+	ColumnCount int    `json:"column_count"`
+	RowCount    int    `json:"row_count"`
+	Matches     []map[string]interface{} `json:"matches,omitempty"`
 }
 
 type ConnectionConfig struct {

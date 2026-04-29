@@ -93,7 +93,19 @@ func (d *DatabaseService) RenameDatabase(oldName, newName string) error {
 	return d.driver.RenameDatabase(oldName, newName)
 }
 
-// ListTables returns tables with metadata
+func (d *DatabaseService) Maintenance(database string, tables []string, operation string) ([]MaintenanceResult, error) {
+	if err := d.ensureConnected(); err != nil {
+		return nil, err
+	}
+	return d.driver.Maintenance(database, tables, operation)
+}
+
+func (d *DatabaseService) GlobalSearch(database string, query string) ([]SearchResult, error) {
+	if err := d.ensureConnected(); err != nil {
+		return nil, err
+	}
+	return d.driver.GlobalSearch(database, query)
+}
 func (d *DatabaseService) ListTables(database string) ([]TableInfo, error) {
 	if err := d.ensureConnected(); err != nil {
 		return nil, err

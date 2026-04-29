@@ -355,3 +355,29 @@ export function useDatabaseSettings(dbName: string | null) {
     },
   });
 }
+
+export function useMaintenanceMutation() {
+  const queryClient = useQueryClient();
+  const addToast = useAppStore((s) => s.addToast);
+
+  return useMutation({
+    mutationFn: (vars: { database: string; tables: string[]; operation: string }) =>
+      api.maintenance(vars.database, vars.tables, vars.operation),
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({ queryKey: dbKeys.tables(vars.database) });
+      addToast({
+        type: "success",
+        title: "Maintenance complete",
+        description: `Successfully performed ${vars.operation} on ${vars.tables.length || 'all'} tables.`
+      });
+    }
+  });
+}
+
+export function useDBSearchQuery(db: string, query: string) {
+  return useQuery({
+    queryKey: ["db", "search", db, query],
+    enabled: !!db && query.length >= 2,
+    queryFn: () => api.search(db, query),
+  });
+}

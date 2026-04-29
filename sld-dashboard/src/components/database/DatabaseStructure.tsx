@@ -11,6 +11,7 @@ import {
   Minimize2,
   Table as TableIcon,
   Edit2,
+  Settings,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/Checkbox";
 
@@ -198,6 +199,28 @@ export function DatabaseStructure({
                     >
                       <Minimize2 size={12} />{" "}
                       <span className="text-xs">Empty</span>
+                    </Button>
+                  </td>
+                   <td className="p-1 w-8">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 gap-1 px-1 text-[var(--muted-foreground)] hover:text-orange-500"
+                      onClick={() => onBulkAction([t.name], "move")}
+                    >
+                      <FileInput size={12} className="rotate-90" />{" "}
+                      <span className="text-xs">Move</span>
+                    </Button>
+                  </td>
+                  <td className="p-1 w-8">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 gap-1 px-1 text-[var(--muted-foreground)] hover:text-indigo-500"
+                      onClick={() => onBulkAction([t.name], "engine")}
+                    >
+                      <Settings size={12} />{" "}
+                      <span className="text-xs">Engine</span>
                     </Button>
                   </td>
                   <td className="p-1 w-8">

@@ -649,6 +649,17 @@ class DaemonApi {
     });
   }
 
+  async maintenance(database: string, tables: string[], operation: string): Promise<any> {
+    return this.request("/db/maintenance", {
+      method: "POST",
+      body: JSON.stringify({ database, tables, operation }),
+    });
+  }
+
+  async search(database: string, query: string): Promise<any> {
+    return this.request(`/db/search?db=${database}&q=${query}`);
+  }
+
   // Database Relationships
   async getDbRelationships(database: string): Promise<
     {

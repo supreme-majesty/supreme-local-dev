@@ -406,6 +406,38 @@ export default function Database() {
         }
         return;
       }
+      case "move": {
+        const targetDB = prompt("Enter target database name to move table(s) to:");
+        if (!targetDB) return;
+        for (const t of tables) {
+          try {
+            await executeQueryMutation.mutateAsync({
+              database: selectedDB,
+              query: `RENAME TABLE \`${selectedDB}\`.\`${t}\` TO \`${targetDB}\`.\`${t}\``,
+            });
+          } catch (e) {
+            console.error(`Failed to move ${t}`, e);
+            alert(`Failed to move ${t}: ${e instanceof Error ? e.message : String(e)}`);
+          }
+        }
+        return;
+      }
+      case "engine": {
+        const engine = prompt("Enter new storage engine (e.g., InnoDB, MyISAM, Memory):", "InnoDB");
+        if (!engine) return;
+        for (const t of tables) {
+          try {
+            await executeQueryMutation.mutateAsync({
+              database: selectedDB,
+              query: `ALTER TABLE \`${t}\` ENGINE = ${engine}`,
+            });
+          } catch (e) {
+            console.error(`Failed to change engine for ${t}`, e);
+            alert(`Failed to change engine for ${t}: ${e instanceof Error ? e.message : String(e)}`);
+          }
+        }
+        return;
+      }
       case "copy": {
         // Copy table structure only
         for (const t of tables) {
@@ -2205,6 +2237,7 @@ $mysqli->close();
             <DatabaseOperations
               database={selectedDB}
               onSelectDb={handleSelectDb}
+              onSelectTable={setSelectedTable}
               onCreateTable={() => setActiveTab("create-table")}
             />
           )}

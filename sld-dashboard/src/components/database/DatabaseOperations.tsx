@@ -5,9 +5,10 @@ import {
   Copy, 
   Trash2, 
   Table, 
-  AlertTriangle,
   Globe,
-  ShieldCheck
+  Search,
+  Wrench,
+  BarChart2,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -19,27 +20,35 @@ import {
   useExecuteQueryMutation,
   useCollations,
   useDatabaseSettings,
-  useTables
+  useTables,
+  useDBSearchQuery,
+  useMaintenanceMutation
 } from "@/hooks/use-database";
 import { useAppStore } from "@/stores/useAppStore";
 
 interface DatabaseOperationsProps {
   database: string;
   onSelectDb: (db: string) => void;
+  onSelectTable: (table: string) => void;
   onCreateTable: () => void;
 }
 
-export function DatabaseOperations({ database, onSelectDb, onCreateTable }: DatabaseOperationsProps) {
+export function DatabaseOperations({ 
+  database, 
+  onSelectDb, 
+  onSelectTable,
+  onCreateTable 
+}: DatabaseOperationsProps) {
   const [newName, setNewName] = useState(database);
   const [copyName, setCopyName] = useState(`${database}_copy`);
   const [copyOption, setCopyOption] = useState<"structure" | "both" | "data">("both");
   const [createDb, setCreateDb] = useState(true);
   const [addDrop, setAddDrop] = useState(false);
-  const [addAutoInc, setAddAutoInc] = useState(true);
   const [addConstraints, setAddConstraints] = useState(true);
   const [switchDb, setSwitchDb] = useState(true);
   const [selectedCollation, setSelectedCollation] = useState("");
   const [changeAllTables, setChangeAllTables] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const addToast = useAppStore((s: any) => s.addToast);
 
@@ -47,10 +56,12 @@ export function DatabaseOperations({ database, onSelectDb, onCreateTable }: Data
   const cloneMutation = useCloneDatabaseMutation();
   const deleteMutation = useDeleteDatabaseMutation();
   const executeMutation = useExecuteQueryMutation();
+  const maintenanceMutation = useMaintenanceMutation();
   
   const { data: collations, isLoading: loadingCollations } = useCollations();
   const { data: currentSettings } = useDatabaseSettings(database);
   const { data: tables } = useTables(database);
+  const { data: searchResults, isLoading: isSearching } = useDBSearchQuery(database, searchQuery);
 
   useEffect(() => {
     if (currentSettings?.collation) {
@@ -73,7 +84,7 @@ export function DatabaseOperations({ database, onSelectDb, onCreateTable }: Data
       mode: copyOption,
       create_db: createDb,
       add_drop: addDrop,
-      add_auto_inc: addAutoInc,
+      add_auto_inc: true,
       add_constraints: addConstraints
     }, {
       onSuccess: () => {
@@ -83,6 +94,27 @@ export function DatabaseOperations({ database, onSelectDb, onCreateTable }: Data
       }
     });
   };
+
+  const handleMaintenance = (op: string) => {
+    maintenanceMutation.mutate({ database, tables: [], operation: op });
+  };
+
+  const formatSize = (bytes: number) => {
+    if (bytes === 0) return "0 B";
+    const k = 1024;
+    const sizes = ["B", "KB", "MB", "GB", "TB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+  };
+
+  // Calculate storage insights
+  const tableStorage = tables?.map(t => ({
+    name: t.name,
+    size: t.size,
+    rowCount: t.row_count
+  })).sort((a, b) => b.size - a.size).slice(0, 5) || [];
+
+  const totalSize = tables?.reduce((acc, t) => acc + t.size, 0) || 0;
 
   const handleSetCollation = async () => {
     if (!selectedCollation) return;
@@ -128,248 +160,332 @@ export function DatabaseOperations({ database, onSelectDb, onCreateTable }: Data
   };
 
   return (
-    <div className="space-y-6 pb-12 mt-4 px-6">
-      {/* Create New Table Quick Access */}
-      <Card className="border-emerald-500/20 bg-emerald-500/5">
+    <div className="space-y-6 pb-12 mt-4 px-6 max-w-full overflow-x-hidden">
+      {/* Global Database Search */}
+      <Card className="border-blue-500/20 bg-blue-500/5 overflow-visible">
         <CardHeader className="pb-3">
-          <CardTitle className="text-base flex items-center gap-2 text-emerald-600">
-            <Plus size={18} /> Create new table
+          <CardTitle className="text-base flex items-center gap-2 text-blue-600">
+            <Search size={18} /> Global Database Search
           </CardTitle>
-          <CardDescription>Quickly add a new table to <strong>{database}</strong></CardDescription>
-        </CardHeader>
-        <CardContent className="flex gap-4">
-          <Button onClick={onCreateTable} className="bg-emerald-600 hover:bg-emerald-700">
-            <Table size={16} className="mr-2" /> Start Table Designer
-          </Button>
-        </CardContent>
-      </Card>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Rename Database */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base flex items-center gap-2">
-              <RefreshCw size={18} className="text-blue-500" /> Rename database to
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <Input 
-              value={newName} 
-              onChange={(e) => setNewName(e.target.value)} 
-              placeholder="New database name..."
-            />
-            <div className="flex items-center gap-2 text-xs text-[var(--muted-foreground)]">
-              <ShieldCheck size={14} className="text-emerald-500" />
-              <span>Adjusts privileges automatically</span>
-            </div>
-            <Button 
-              onClick={handleRename} 
-              disabled={renameMutation.isPending || !newName || newName === database}
-              className="w-full"
-            >
-              {renameMutation.isPending ? "Renaming..." : "Go"}
-            </Button>
-          </CardContent>
-        </Card>
-
-        {/* Copy Database */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base flex items-center gap-2">
-              <Copy size={18} className="text-purple-500" /> Copy database to
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <Input 
-              value={copyName} 
-              onChange={(e) => setCopyName(e.target.value)} 
-              placeholder="Copy to..."
-            />
-            
-            <div className="space-y-2">
-              <label className="flex items-center gap-2 text-sm cursor-pointer group">
-                <input 
-                  type="radio" 
-                  name="copy_opt" 
-                  checked={copyOption === "both"} 
-                  onChange={() => setCopyOption("both")}
-                  className="accent-[var(--primary)]"
-                />
-                <span className="group-hover:text-[var(--primary)]">Structure and data</span>
-              </label>
-              <label className="flex items-center gap-2 text-sm cursor-pointer group">
-                <input 
-                  type="radio" 
-                  name="copy_opt" 
-                  checked={copyOption === "structure"} 
-                  onChange={() => setCopyOption("structure")}
-                  className="accent-[var(--primary)]"
-                />
-                <span className="group-hover:text-[var(--primary)]">Structure only</span>
-              </label>
-              <label className="flex items-center gap-2 text-sm cursor-pointer group">
-                <input 
-                  type="radio" 
-                  name="copy_opt" 
-                  checked={copyOption === "data"} 
-                  onChange={() => setCopyOption("data")}
-                  className="accent-[var(--primary)]"
-                />
-                <span className="group-hover:text-[var(--primary)]">Data only</span>
-              </label>
-            </div>
-
-            <div className="space-y-2 pt-4 border-t border-[var(--border)]">
-              <label className="flex items-center gap-2 text-sm cursor-pointer hover:text-[var(--primary)] transition-colors">
-                <input 
-                  type="checkbox" 
-                  checked={createDb} 
-                  onChange={(e) => setCreateDb(e.target.checked)}
-                  className="accent-[var(--primary)]"
-                />
-                <span>CREATE DATABASE before copying</span>
-              </label>
-              <label className="flex items-center gap-2 text-sm cursor-pointer hover:text-[var(--primary)] transition-colors">
-                <input 
-                  type="checkbox" 
-                  checked={addDrop} 
-                  onChange={(e) => setAddDrop(e.target.checked)}
-                  className="accent-[var(--primary)]"
-                />
-                <span>Add DROP TABLE / DROP VIEW</span>
-              </label>
-              <label className="flex items-center gap-2 text-sm cursor-pointer hover:text-[var(--primary)] transition-colors">
-                <input 
-                  type="checkbox" 
-                  checked={addAutoInc} 
-                  onChange={(e) => setAddAutoInc(e.target.checked)}
-                  className="accent-[var(--primary)]"
-                />
-                <span>Add AUTO_INCREMENT value</span>
-              </label>
-              <label className="flex items-center gap-2 text-sm cursor-pointer hover:text-[var(--primary)] transition-colors">
-                <input 
-                  type="checkbox" 
-                  checked={addConstraints} 
-                  onChange={(e) => setAddConstraints(e.target.checked)}
-                  className="accent-[var(--primary)]"
-                />
-                <span>Add constraints</span>
-              </label>
-              <label className="flex items-center gap-2 text-sm cursor-pointer hover:text-[var(--primary)] transition-colors opacity-50">
-                <input type="checkbox" disabled className="accent-[var(--primary)]" />
-                <span>Adjust privileges</span>
-              </label>
-              <label className="flex items-center gap-2 text-sm cursor-pointer hover:text-[var(--primary)] transition-colors">
-                <input 
-                  type="checkbox" 
-                  checked={switchDb} 
-                  onChange={(e) => setSwitchDb(e.target.checked)}
-                  className="accent-[var(--primary)]"
-                />
-                <span>Switch to copied database</span>
-              </label>
-            </div>
-
-            <Button 
-              onClick={handleCopy} 
-              disabled={cloneMutation.isPending || !copyName}
-              variant="secondary"
-              className="w-full"
-            >
-              {cloneMutation.isPending ? "Copying..." : "Go"}
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Collation */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base flex items-center gap-2">
-            <Globe size={18} className="text-orange-500" /> Collation
-          </CardTitle>
-          <CardDescription>
-            Change the default character set and collation for <strong>{database}</strong>.
-          </CardDescription>
+          <CardDescription>Search for data across all tables and columns in <strong>{database}</strong></CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex flex-col md:flex-row items-end gap-4">
-            <div className="flex-1 w-full space-y-2">
-              <label className="text-xs font-medium text-[var(--muted-foreground)]">Select Collation</label>
-              <div className="relative">
-                <select 
-                  value={selectedCollation} 
-                  onChange={(e) => setSelectedCollation(e.target.value)}
-                  className="w-full bg-[var(--background)] border border-[var(--border)] rounded-md h-10 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/50 appearance-none"
-                  disabled={loadingCollations}
-                >
-                  <option value="">{loadingCollations ? "Loading collations..." : "Select a collation..."}</option>
-                  {collations?.map(c => (
-                    <option key={c.name} value={c.name}>{c.name} ({c.charset})</option>
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <Input 
+                value={searchQuery} 
+                onChange={(e) => setSearchQuery(e.target.value)} 
+                placeholder="Type to search (min 2 chars)..."
+                className="pl-10"
+              />
+              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]" />
+            </div>
+            <Button variant="outline" onClick={() => setSearchQuery("")}>Clear</Button>
+          </div>
+
+          {searchQuery.length >= 2 && (
+            <div className="bg-[var(--background)] border border-[var(--border)] rounded-lg overflow-hidden animate-in fade-in slide-in-from-top-2">
+              {isSearching ? (
+                <div className="p-8 text-center text-sm text-[var(--muted-foreground)]">
+                  <RefreshCw size={24} className="animate-spin mx-auto mb-2 opacity-50" />
+                  Scanning all tables...
+                </div>
+              ) : searchResults?.results?.length > 0 ? (
+                <div className="max-h-[400px] overflow-y-auto">
+                  {searchResults.results.map((res: any, i: number) => (
+                    <div key={i} className="p-4 border-b border-[var(--border)] last:border-0 hover:bg-[var(--muted)]/20 transition-colors">
+                      <div className="flex items-center justify-between mb-2">
+                        <button 
+                          onClick={() => onSelectTable(res.table)}
+                          className="font-bold text-sm text-blue-600 flex items-center gap-2 hover:underline cursor-pointer"
+                        >
+                          <Table size={14} /> {res.table}
+                        </button>
+                        <span className="text-xs bg-blue-500/10 text-blue-600 px-2 py-0.5 rounded-full">
+                          {res.row_count} matches in {res.column_count} searchable columns
+                        </span>
+                      </div>
+                      <div className="space-y-1">
+                        {res.matches?.slice(0, 3).map((match: any, j: number) => (
+                          <div key={j} className="text-xs font-mono bg-[var(--muted)]/50 p-2 rounded truncate whitespace-nowrap overflow-hidden text-ellipsis">
+                            {JSON.stringify(match)}
+                          </div>
+                        ))}
+                        {res.row_count > 3 && (
+                          <div className="text-[10px] text-center text-[var(--muted-foreground)] pt-1 italic">
+                            + {res.row_count - 3} more matches...
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   ))}
-                </select>
-                <div className="absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none text-[var(--muted-foreground)]">
-                  <RefreshCw size={14} className={loadingCollations ? "animate-spin" : ""} />
+                </div>
+              ) : (
+                <div className="p-8 text-center text-sm text-[var(--muted-foreground)]">
+                  No matches found for "{searchQuery}"
+                </div>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Left Column: Management */}
+        <div className="space-y-6 lg:col-span-1">
+          {/* Create New Table */}
+          <Card className="border-emerald-500/20 bg-emerald-500/5">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center gap-2 text-emerald-600">
+                <Plus size={18} /> New Table
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Button onClick={onCreateTable} className="w-full bg-emerald-600 hover:bg-emerald-700">
+                <Table size={16} className="mr-2" /> Start Table Designer
+              </Button>
+            </CardContent>
+          </Card>
+
+          {/* Rename Database */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-bold flex items-center gap-2">
+                <RefreshCw size={16} className="text-blue-500" /> Rename Database
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Input 
+                value={newName} 
+                onChange={(e) => setNewName(e.target.value)} 
+                placeholder="New database name..."
+                className="h-9 text-sm"
+              />
+              <Button 
+                onClick={handleRename} 
+                disabled={renameMutation.isPending || !newName || newName === database}
+                className="w-full h-9"
+              >
+                {renameMutation.isPending ? "Renaming..." : "Apply Rename"}
+              </Button>
+            </CardContent>
+          </Card>
+
+          {/* Danger Zone */}
+          <Card className="border-red-500/20 bg-red-500/5">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-bold flex items-center gap-2 text-red-600">
+                <Trash2 size={16} /> Danger Zone
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="text-xs text-[var(--muted-foreground)] leading-relaxed">
+                Dropping <strong>{database}</strong> will permanently delete all its tables and data.
+              </div>
+              <Button 
+                variant="danger" 
+                onClick={() => {
+                  if (confirm(`Are you absolutely sure you want to DROP the entire database "${database}"? This cannot be undone.`)) {
+                    deleteMutation.mutate(database);
+                  }
+                }}
+                disabled={deleteMutation.isPending}
+                className="w-full h-9 bg-red-600 hover:bg-red-700"
+              >
+                {deleteMutation.isPending ? "Dropping..." : "Drop Database"}
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Center Column: Operations */}
+        <div className="space-y-6 lg:col-span-1">
+          {/* Copy Database */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-bold flex items-center gap-2">
+                <Copy size={16} className="text-purple-500" /> Copy Database to
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Input 
+                value={copyName} 
+                onChange={(e) => setCopyName(e.target.value)} 
+                placeholder="Copy to..."
+                className="h-9 text-sm"
+              />
+              
+              <div className="grid grid-cols-1 gap-2 p-2 bg-[var(--muted)]/30 rounded-lg">
+                <label className="flex items-center gap-2 text-xs cursor-pointer group">
+                  <input type="radio" checked={copyOption === "both"} onChange={() => setCopyOption("both")} className="accent-[var(--primary)]" />
+                  <span>Structure and data</span>
+                </label>
+                <label className="flex items-center gap-2 text-xs cursor-pointer group">
+                  <input type="radio" checked={copyOption === "structure"} onChange={() => setCopyOption("structure")} className="accent-[var(--primary)]" />
+                  <span>Structure only</span>
+                </label>
+                <label className="flex items-center gap-2 text-xs cursor-pointer group">
+                  <input type="radio" checked={copyOption === "data"} onChange={() => setCopyOption("data")} className="accent-[var(--primary)]" />
+                  <span>Data only</span>
+                </label>
+              </div>
+
+              <div className="space-y-1 pt-2">
+                {[
+                  { label: "Create database", state: createDb, setter: setCreateDb },
+                  { label: "Add DROP TABLE", state: addDrop, setter: setAddDrop },
+                  { label: "Add constraints", state: addConstraints, setter: setAddConstraints },
+                  { label: "Switch to copy", state: switchDb, setter: setSwitchDb },
+                ].map(opt => (
+                  <label key={opt.label} className="flex items-center gap-2 text-[10px] uppercase font-bold tracking-wider text-[var(--muted-foreground)] cursor-pointer hover:text-[var(--primary)] transition-colors">
+                    <input type="checkbox" checked={opt.state} onChange={(e) => opt.setter(e.target.checked)} className="accent-[var(--primary)]" />
+                    {opt.label}
+                  </label>
+                ))}
+              </div>
+
+              <Button onClick={handleCopy} disabled={cloneMutation.isPending || !copyName} variant="secondary" className="w-full h-9">
+                {cloneMutation.isPending ? "Copying..." : "Run Copy"}
+              </Button>
+            </CardContent>
+          </Card>
+
+          {/* Collation */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-bold flex items-center gap-2">
+                <Globe size={16} className="text-orange-500" /> Global Collation
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <select 
+                value={selectedCollation} 
+                onChange={(e) => setSelectedCollation(e.target.value)}
+                className="w-full bg-[var(--background)] border border-[var(--border)] rounded-md h-9 px-3 text-xs focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/50 appearance-none"
+                disabled={loadingCollations}
+              >
+                <option value="">{loadingCollations ? "Loading..." : "Select collation..."}</option>
+                {collations?.map(c => (
+                  <option key={c.name} value={c.name}>{c.name}</option>
+                ))}
+              </select>
+              <label className="flex items-center gap-2 text-[10px] uppercase font-bold tracking-wider text-[var(--muted-foreground)] cursor-pointer">
+                <input type="checkbox" checked={changeAllTables} onChange={(e) => setChangeAllTables(e.target.checked)} className="accent-[var(--primary)]" />
+                Change all tables
+              </label>
+              <Button 
+                onClick={handleSetCollation} 
+                disabled={executeMutation.isPending || !selectedCollation}
+                variant="outline"
+                className="w-full h-9"
+              >
+                {executeMutation.isPending ? "Applying..." : "Update Collation"}
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Right Column: Maintenance & Insights */}
+        <div className="space-y-6 lg:col-span-1">
+          {/* Storage Insights */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-bold flex items-center gap-2">
+                <BarChart2 size={16} className="text-indigo-500" /> Storage Insights
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center justify-between text-xs mb-1">
+                <span className="text-[var(--muted-foreground)]">Total Schema Size</span>
+                <span className="font-bold">{formatSize(totalSize)}</span>
+              </div>
+              <div className="space-y-3">
+                {tableStorage.map((t, i) => (
+                  <div key={i} className="space-y-1">
+                    <div className="flex justify-between text-[10px]">
+                      <span className="truncate max-w-[150px] font-medium">{t.name}</span>
+                      <span className="text-[var(--muted-foreground)]">{formatSize(t.size)}</span>
+                    </div>
+                    <div className="h-1.5 w-full bg-[var(--muted)]/30 rounded-full overflow-hidden">
+                      <div 
+                        className="h-full bg-indigo-500 rounded-full" 
+                        style={{ width: `${Math.max(5, (t.size / (totalSize || 1)) * 100)}%` }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="pt-2 text-center">
+                <div className="text-[10px] text-[var(--muted-foreground)] mb-2 uppercase font-bold">Quick Overview</div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="p-2 bg-[var(--muted)]/30 rounded-lg">
+                    <div className="text-xs font-bold">{tables?.length || 0}</div>
+                    <div className="text-[10px] text-[var(--muted-foreground)]">Tables</div>
+                  </div>
+                  <div className="p-2 bg-[var(--muted)]/30 rounded-lg">
+                    <div className="text-xs font-bold">{tables?.reduce((a, b) => a + b.row_count, 0).toLocaleString()}</div>
+                    <div className="text-[10px] text-[var(--muted-foreground)]">Total Rows</div>
+                  </div>
                 </div>
               </div>
-            </div>
-            <Button 
-              onClick={handleSetCollation} 
-              disabled={executeMutation.isPending || !selectedCollation}
-              className="w-full md:w-auto"
-            >
-              {executeMutation.isPending ? "Applying..." : "Apply Collation"}
-            </Button>
-          </div>
+            </CardContent>
+          </Card>
 
-          <div className="pt-2">
-            <label className="flex items-center gap-3 p-3 border border-[var(--border)] rounded-lg hover:bg-[var(--muted)]/20 cursor-pointer transition-colors group">
-              <input 
-                type="checkbox" 
-                checked={changeAllTables} 
-                onChange={(e) => setChangeAllTables(e.target.checked)}
-                className="w-4 h-4 accent-[var(--primary)]"
-              />
-              <div className="flex-1">
-                <div className="text-sm font-medium group-hover:text-[var(--primary)] transition-colors">Change all tables collations</div>
-                <div className="text-xs text-[var(--muted-foreground)]">This will recursively update every table in this database to the new collation.</div>
+          {/* Maintenance */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-bold flex items-center gap-2">
+                <Wrench size={16} className="text-emerald-500" /> Maintenance
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="grid grid-cols-2 gap-2">
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={() => handleMaintenance("CHECK")}
+                disabled={maintenanceMutation.isPending}
+                className="text-[10px] h-8"
+              >
+                Check All
+              </Button>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={() => handleMaintenance("ANALYZE")}
+                disabled={maintenanceMutation.isPending}
+                className="text-[10px] h-8"
+              >
+                Analyze All
+              </Button>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={() => handleMaintenance("OPTIMIZE")}
+                disabled={maintenanceMutation.isPending}
+                className="text-[10px] h-8"
+              >
+                Optimize All
+              </Button>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={() => handleMaintenance("REPAIR")}
+                disabled={maintenanceMutation.isPending}
+                className="text-[10px] h-8"
+              >
+                Repair All
+              </Button>
+            </CardContent>
+            {maintenanceMutation.isPending && (
+              <div className="px-6 pb-4">
+                <div className="h-1 w-full bg-[var(--muted)]/30 overflow-hidden rounded-full">
+                  <div className="h-full bg-emerald-500 animate-pulse" style={{width: '100%'}} />
+                </div>
               </div>
-            </label>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Danger Zone */}
-      <Card className="border-red-500/20 bg-red-500/5">
-        <CardHeader>
-          <CardTitle className="text-base flex items-center gap-2 text-red-600">
-            <AlertTriangle size={18} /> Danger Zone
-          </CardTitle>
-          <CardDescription>Actions here cannot be undone. Be careful.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="flex items-center justify-between p-4 border border-red-500/20 rounded-lg bg-white/50">
-            <div>
-              <h4 className="text-sm font-semibold text-red-700">Drop the database</h4>
-              <p className="text-xs text-red-600/70">Permanently delete the database and all its tables.</p>
-            </div>
-            <Button 
-              variant="danger" 
-              onClick={() => {
-                if(confirm(`Are you sure you want to PERMANENTLY DROP database "${database}"?`)) {
-                  deleteMutation.mutate(database, {
-                    onSuccess: () => onSelectDb("")
-                  });
-                }
-              }}
-              disabled={deleteMutation.isPending}
-            >
-              <Trash2 size={14} className="mr-2" /> Drop Database
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+            )}
+          </Card>
+        </div>
+      </div>
     </div>
   );
-}
+};

@@ -537,3 +537,14 @@ func (d *PostgresDriver) GetTableIndexes(database, table string) ([]IndexInfo, e
 	}
 	return indexes, nil
 }
+
+func (d *PostgresDriver) Maintenance(database string, tables []string, operation string) ([]MaintenanceResult, error) {
+	// Maintenance operations in Postgres are different (VACUUM, ANALYZE, REINDEX)
+	// For now, return empty result to satisfy interface
+	return []MaintenanceResult{}, nil
+}
+
+func (d *PostgresDriver) GlobalSearch(database string, query string) ([]SearchResult, error) {
+	// Not implemented for Postgres yet
+	return []SearchResult{}, nil
+}

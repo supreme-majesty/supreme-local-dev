@@ -71,6 +71,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/db/query", s.handleDBQuery)
 	mux.HandleFunc("/api/db/clone", s.handleDBClone)
 	mux.HandleFunc("/api/db/rewind", s.handleDBRewind)
+	mux.HandleFunc("/api/db/maintenance", s.handleDBMaintenance)
+	mux.HandleFunc("/api/db/search", s.handleDBSearch)
 	mux.HandleFunc("/api/db/foreign-values", s.handleDBForeignValues)
 
 	// Service Status & Health
@@ -1328,6 +1330,54 @@ func (s *Server) handleDBRewind(w http.ResponseWriter, r *http.Request) {
 		"message": fmt.Sprintf("Rewound to %s. Safety backup: %s", req.Filename, backup.Filename),
 		"backup":  backup,
 	}, 200)
+}
+
+func (s *Server) handleDBMaintenance(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		return
+	}
+
+	var req struct {
+		Database  string   `json:"database"`
+		Tables    []string `json:"tables"`
+		Operation string   `json:"operation"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
+		return
+	}
+
+	if req.Database == "" || req.Operation == "" {
+		jsonResponse(w, ErrorResponse{Error: "database and operation are required"}, 400)
+		return
+	}
+
+	d, _ := daemon.GetClient()
+	results, err := d.DatabaseService.Maintenance(req.Database, req.Tables, req.Operation)
+	if err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+
+	jsonResponse(w, map[string]interface{}{"success": true, "results": results}, 200)
+}
+
+func (s *Server) handleDBSearch(w http.ResponseWriter, r *http.Request) {
+	db := r.URL.Query().Get("db")
+	q := r.URL.Query().Get("q")
+	if db == "" || q == "" {
+		jsonResponse(w, ErrorResponse{Error: "db and q parameters are required"}, 400)
+		return
+	}
+
+	d, _ := daemon.GetClient()
+	results, err := d.DatabaseService.GlobalSearch(db, q)
+	if err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+
+	jsonResponse(w, map[string]interface{}{"success": true, "results": results}, 200)
 }
 
 func (s *Server) handleDBDownload(w http.ResponseWriter, r *http.Request) {
