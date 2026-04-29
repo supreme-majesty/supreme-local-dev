@@ -324,37 +324,6 @@ export function useCloneDatabaseMutation() {
   });
 }
 
-export function useCollations() {
-  return useQuery({
-    queryKey: ["db", "collations"],
-    queryFn: async () => {
-      const result = await api.executeQuery("information_schema", "SHOW COLLATION");
-      return (result.rows || []).map((row: any) => ({
-        name: row.Collation || row.collation,
-        charset: row.Charset || row.charset,
-      }));
-    },
-  });
-}
-
-export function useDatabaseSettings(dbName: string | null) {
-  return useQuery({
-    queryKey: ["db", "settings", dbName],
-    enabled: !!dbName,
-    queryFn: async () => {
-      if (!dbName) return null;
-      const result = await api.executeQuery(
-        "information_schema", 
-        `SELECT DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '${dbName}'`
-      );
-      const row = result.rows?.[0];
-      return row ? {
-        charset: row.DEFAULT_CHARACTER_SET_NAME,
-        collation: row.DEFAULT_COLLATION_NAME,
-      } : null;
-    },
-  });
-}
 
 export function useMaintenanceMutation() {
   const queryClient = useQueryClient();
@@ -379,5 +348,20 @@ export function useDBSearchQuery(db: string, query: string) {
     queryKey: ["db", "search", db, query],
     enabled: !!db && query.length >= 2,
     queryFn: () => api.search(db, query),
+  });
+}
+
+export function useCollations() {
+  return useQuery({
+    queryKey: [...dbKeys.all, "collations"],
+    queryFn: () => api.getCollations(),
+  });
+}
+
+export function useDatabaseSettings(db: string) {
+  return useQuery({
+    queryKey: [...dbKeys.all, "settings", db],
+    queryFn: () => api.getDatabaseSettings(db),
+    enabled: !!db,
   });
 }

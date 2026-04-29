@@ -660,6 +660,14 @@ class DaemonApi {
     return this.request(`/db/search?db=${database}&q=${query}`);
   }
 
+  async getCollations(): Promise<{ name: string; charset: string }[]> {
+    return this.request<{ name: string; charset: string }[]>("/db/collations");
+  }
+
+  async getDatabaseSettings(database: string): Promise<{ collation: string; charset: string }> {
+    return this.request<{ collation: string; charset: string }>(`/db/settings?db=${encodeURIComponent(database)}`);
+  }
+
   // Database Relationships
   async getDbRelationships(database: string): Promise<
     {

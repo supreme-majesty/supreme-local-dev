@@ -31,6 +31,8 @@ type DatabaseDriver interface {
 	// Maintenance & Search
 	Maintenance(database string, tables []string, operation string) ([]MaintenanceResult, error)
 	GlobalSearch(database string, query string) ([]SearchResult, error)
+	GetCollations() ([]CollationInfo, error)
+	GetDatabaseSettings(database string) (*DatabaseSettings, error)
 }
 
 type MaintenanceResult struct {
@@ -45,6 +47,16 @@ type SearchResult struct {
 	ColumnCount int    `json:"column_count"`
 	RowCount    int    `json:"row_count"`
 	Matches     []map[string]interface{} `json:"matches,omitempty"`
+}
+
+type CollationInfo struct {
+	Name    string `json:"name"`
+	Charset string `json:"charset"`
+}
+
+type DatabaseSettings struct {
+	Collation string `json:"collation"`
+	Charset   string `json:"charset"`
 }
 
 type ConnectionConfig struct {

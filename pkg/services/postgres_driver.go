@@ -675,3 +675,31 @@ func (d *PostgresDriver) GlobalSearch(database string, query string) ([]SearchRe
 
 	return results, nil
 }
+
+func (d *PostgresDriver) GetCollations() ([]CollationInfo, error) {
+	// Postgres collations are a bit complex, but we can list them from pg_collation
+	rows, err := d.db.Query("SELECT collname FROM pg_collation WHERE collnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'pg_catalog')")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var collations []CollationInfo
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err == nil {
+			collations = append(collations, CollationInfo{Name: name, Charset: "UTF8"})
+		}
+	}
+	return collations, nil
+}
+
+func (d *PostgresDriver) GetDatabaseSettings(database string) (*DatabaseSettings, error) {
+	// In PG, collation is set at DB creation (datcollate, datctype)
+	var coll, ctype string
+	err := d.db.QueryRow("SELECT datcollate, datctype FROM pg_database WHERE datname = $1", database).Scan(&coll, &ctype)
+	if err != nil {
+		return nil, err
+	}
+	return &DatabaseSettings{Collation: coll, Charset: "UTF8"}, nil
+}

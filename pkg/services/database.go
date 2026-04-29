@@ -16,7 +16,7 @@ import (
 // DatabaseService manages database connections via drivers
 type DatabaseService struct {
 	db      *sql.DB // Legacy, to be replaced by driver
-	driver  DatabaseDriver
+	Driver  DatabaseDriver
 	dsn     string
 	SnapDir string
 }
@@ -25,7 +25,7 @@ type DatabaseService struct {
 func NewDatabaseService() *DatabaseService {
 	// Default to MySQL for now
 	return &DatabaseService{
-		driver:  NewMySQLDriver(),
+		Driver:  NewMySQLDriver(),
 		SnapDir: "/var/lib/sld/snapshots",
 	}
 }
@@ -33,32 +33,32 @@ func NewDatabaseService() *DatabaseService {
 // SetDriver switches the database driver (mysql or postgres)
 func (d *DatabaseService) SetDriver(driverName string) {
 	// Close existing
-	if d.driver != nil {
-		d.driver.Close()
+	if d.Driver != nil {
+		d.Driver.Close()
 	}
 
 	switch driverName {
 	case "postgres":
-		d.driver = NewPostgresDriver()
+		d.Driver = NewPostgresDriver()
 	default:
-		d.driver = NewMySQLDriver()
+		d.Driver = NewMySQLDriver()
 	}
 }
 
 // Connect establishes a connection
 func (d *DatabaseService) Connect() error {
 	// Pass empty config to trigger auto-discovery in driver
-	return d.driver.Connect(ConnectionConfig{})
+	return d.Driver.Connect(ConnectionConfig{})
 }
 
 // Close closes the database connection
 func (d *DatabaseService) Close() {
-	d.driver.Close()
+	d.Driver.Close()
 }
 
 // ensureConnected reconnects if needed
 func (d *DatabaseService) ensureConnected() error {
-	if !d.driver.IsConnected() {
+	if !d.Driver.IsConnected() {
 		return d.Connect()
 	}
 	return nil
@@ -69,48 +69,48 @@ func (d *DatabaseService) ListDatabases() ([]string, error) {
 	if err := d.ensureConnected(); err != nil {
 		return nil, err
 	}
-	return d.driver.ListDatabases()
+	return d.Driver.ListDatabases()
 }
 
 func (d *DatabaseService) CreateDatabase(name string) error {
 	if err := d.ensureConnected(); err != nil {
 		return err
 	}
-	return d.driver.CreateDatabase(name)
+	return d.Driver.CreateDatabase(name)
 }
 
 func (d *DatabaseService) DeleteDatabase(name string) error {
 	if err := d.ensureConnected(); err != nil {
 		return err
 	}
-	return d.driver.DeleteDatabase(name)
+	return d.Driver.DeleteDatabase(name)
 }
 
 func (d *DatabaseService) RenameDatabase(oldName, newName string) error {
 	if err := d.ensureConnected(); err != nil {
 		return err
 	}
-	return d.driver.RenameDatabase(oldName, newName)
+	return d.Driver.RenameDatabase(oldName, newName)
 }
 
 func (d *DatabaseService) Maintenance(database string, tables []string, operation string) ([]MaintenanceResult, error) {
 	if err := d.ensureConnected(); err != nil {
 		return nil, err
 	}
-	return d.driver.Maintenance(database, tables, operation)
+	return d.Driver.Maintenance(database, tables, operation)
 }
 
 func (d *DatabaseService) GlobalSearch(database string, query string) ([]SearchResult, error) {
 	if err := d.ensureConnected(); err != nil {
 		return nil, err
 	}
-	return d.driver.GlobalSearch(database, query)
+	return d.Driver.GlobalSearch(database, query)
 }
 func (d *DatabaseService) ListTables(database string) ([]TableInfo, error) {
 	if err := d.ensureConnected(); err != nil {
 		return nil, err
 	}
-	return d.driver.ListTables(database)
+	return d.Driver.ListTables(database)
 }
 
 // GetTableColumns returns column info for a table
@@ -118,7 +118,7 @@ func (d *DatabaseService) GetTableColumns(database, table string) ([]ColumnInfo,
 	if err := d.ensureConnected(); err != nil {
 		return nil, err
 	}
-	return d.driver.GetTableColumns(database, table)
+	return d.Driver.GetTableColumns(database, table)
 }
 
 // GetTableData returns paginated data from a table
@@ -126,7 +126,7 @@ func (d *DatabaseService) GetTableData(database, table string, page, perPage int
 	if err := d.ensureConnected(); err != nil {
 		return nil, err
 	}
-	return d.driver.GetTableData(database, table, page, perPage)
+	return d.Driver.GetTableData(database, table, page, perPage)
 }
 
 // GetTableDataEx returns paginated data with sorting and profiling
@@ -134,7 +134,7 @@ func (d *DatabaseService) GetTableDataEx(database, table string, page, perPage i
 	if err := d.ensureConnected(); err != nil {
 		return nil, err
 	}
-	return d.driver.GetTableDataEx(database, table, page, perPage, sortCol, sortOrder, profile)
+	return d.Driver.GetTableDataEx(database, table, page, perPage, sortCol, sortOrder, profile)
 }
 
 // ExecuteQuery executes a SQL query
@@ -142,7 +142,7 @@ func (d *DatabaseService) ExecuteQuery(database, query string) (*QueryResult, er
 	if err := d.ensureConnected(); err != nil {
 		return nil, err
 	}
-	return d.driver.ExecuteQuery(database, query)
+	return d.Driver.ExecuteQuery(database, query)
 }
 
 // CreateSnapshot creates a database snapshot using mysqldump
@@ -261,7 +261,7 @@ func (d *DatabaseService) RestoreSnapshot(filename string) error {
 	}
 	dbName := strings.Join(parts[:len(parts)-2], "_")
 
-	return d.driver.RestoreSnapshot(dbName, filepath)
+	return d.Driver.RestoreSnapshot(dbName, filepath)
 }
 
 // DeleteSnapshot deletes a snapshot file
@@ -531,12 +531,12 @@ func (d *DatabaseService) GetTableRelationships(database string) ([]TableRelatio
 	if err := d.ensureConnected(); err != nil {
 		return nil, err
 	}
-	return d.driver.GetTableRelationships(database)
+	return d.Driver.GetTableRelationships(database)
 }
 
 func (d *DatabaseService) GetTableIndexes(database, table string) ([]IndexInfo, error) {
 	if err := d.ensureConnected(); err != nil {
 		return nil, err
 	}
-	return d.driver.GetTableIndexes(database, table)
+	return d.Driver.GetTableIndexes(database, table)
 }

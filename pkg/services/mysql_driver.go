@@ -651,3 +651,43 @@ func (m *MySQLDriver) GlobalSearch(database string, query string) ([]SearchResul
 
 	return searchResults, nil
 }
+
+func (m *MySQLDriver) GetCollations() ([]CollationInfo, error) {
+	if !m.IsConnected() {
+		return nil, fmt.Errorf("not connected")
+	}
+
+	rows, err := m.db.Query("SHOW COLLATION")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var collations []CollationInfo
+	for rows.Next() {
+		var c CollationInfo
+		var charset, id, isDefault, compiled, sortlen string
+		if err := rows.Scan(&c.Name, &charset, &id, &isDefault, &compiled, &sortlen); err != nil {
+			return nil, err
+		}
+		c.Charset = charset
+		collations = append(collations, c)
+	}
+
+	return collations, nil
+}
+
+func (m *MySQLDriver) GetDatabaseSettings(database string) (*DatabaseSettings, error) {
+	if !m.IsConnected() {
+		return nil, fmt.Errorf("not connected")
+	}
+
+	query := fmt.Sprintf("SELECT DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '%s'", database)
+	var settings DatabaseSettings
+	err := m.db.QueryRow(query).Scan(&settings.Charset, &settings.Collation)
+	if err != nil {
+		return nil, err
+	}
+
+	return &settings, nil
+}

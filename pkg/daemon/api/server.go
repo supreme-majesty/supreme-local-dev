@@ -74,6 +74,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/db/maintenance", s.handleDBMaintenance)
 	mux.HandleFunc("/api/db/search", s.handleDBSearch)
 	mux.HandleFunc("/api/db/foreign-values", s.handleDBForeignValues)
+	mux.HandleFunc("/api/db/collations", s.handleDBCollations)
+	mux.HandleFunc("/api/db/settings", s.handleDBSettings)
 
 	// Service Status & Health
 	mux.HandleFunc("/api/services", s.handleServices)
@@ -1428,6 +1430,32 @@ func (s *Server) handleDBDownload(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, cleanName))
 	http.ServeFile(w, r, path)
+}
+
+func (s *Server) handleDBCollations(w http.ResponseWriter, r *http.Request) {
+	d, _ := daemon.GetClient()
+	collations, err := d.DatabaseService.Driver.GetCollations()
+	if err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+	jsonResponse(w, collations, 200)
+}
+
+func (s *Server) handleDBSettings(w http.ResponseWriter, r *http.Request) {
+	db := r.URL.Query().Get("db")
+	if db == "" {
+		jsonResponse(w, ErrorResponse{Error: "Missing database name"}, 400)
+		return
+	}
+
+	d, _ := daemon.GetClient()
+	settings, err := d.DatabaseService.Driver.GetDatabaseSettings(db)
+	if err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+	jsonResponse(w, settings, 200)
 }
 
 func (s *Server) handleDBImport(w http.ResponseWriter, r *http.Request) {
