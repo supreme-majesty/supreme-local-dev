@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import type { ColumnInfo } from "@/api/daemon";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -6,8 +6,8 @@ import { Checkbox } from "@/components/ui/Checkbox";
 
 interface DataFormProps {
   columns: ColumnInfo[];
-  initialData?: Record<string, any>;
-  onSubmit: (data: Record<string, any>, mode: "save" | "save_and_add") => void;
+  initialData?: Record<string, unknown>;
+  onSubmit: (data: Record<string, unknown>, mode: "save" | "save_and_add") => void;
   isLoading?: boolean;
 }
 
@@ -17,30 +17,18 @@ export function DataForm({
   onSubmit,
   isLoading,
 }: DataFormProps) {
-  const [formData, setFormData] = useState<Record<string, any>>({});
-  const [nulls, setNulls] = useState<Record<string, boolean>>({});
-
-  useEffect(() => {
+  const [formData, setFormData] = useState<Record<string, unknown>>(initialData || {});
+  const [nulls, setNulls] = useState<Record<string, boolean>>(() => {
+    const n: Record<string, boolean> = {};
     if (initialData) {
-      setFormData(initialData);
-      const newNulls: Record<string, boolean> = {};
       columns.forEach((col) => {
         if (initialData[col.name] === null) {
-          newNulls[col.name] = true;
+          n[col.name] = true;
         }
       });
-      setNulls(newNulls);
-    } else {
-      // Initialize defaults
-      const defaults: Record<string, any> = {};
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      columns.forEach((_col) => {
-        // If auto_increment, stick to empty?
-        // Ideally we don't send anything for auto_increment on insert
-      });
-      setFormData(defaults);
     }
-  }, [initialData, columns]);
+    return n;
+  });
 
   const handleChange = (colName: string, value: string) => {
     setFormData((prev) => ({ ...prev, [colName]: value }));
@@ -61,7 +49,7 @@ export function DataForm({
     mode: "save" | "save_and_add" = "save"
   ) => {
     e.preventDefault();
-    const finalData: Record<string, any> = {};
+    const finalData: Record<string, unknown> = {};
     columns.forEach((col) => {
       if (nulls[col.name]) {
         finalData[col.name] = null;
@@ -123,11 +111,7 @@ export function DataForm({
                     return (
                       <Input
                         type={inputType}
-                        value={
-                          formData[col.name] === null
-                            ? ""
-                            : formData[col.name] || ""
-                        }
+                        value={String(formData[col.name] ?? "")}
                         onChange={(e) => handleChange(col.name, e.target.value)}
                         disabled={nulls[col.name]}
                         className="h-8 font-mono text-sm w-full"
@@ -150,7 +134,7 @@ export function DataForm({
                     <div className="flex justify-center">
                       <Checkbox
                         checked={!!nulls[col.name]}
-                        onChange={(e) =>
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
                           handleNullToggle(col.name, e.target.checked)
                         }
                       />

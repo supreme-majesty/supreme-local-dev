@@ -70,7 +70,7 @@ export function formatDate(dateStr: string): string {
       hour: "numeric",
       minute: "numeric",
     });
-  } catch (e) {
+  } catch {
     return dateStr;
   }
 }
@@ -78,7 +78,7 @@ export function formatDate(dateStr: string): string {
 /**
  * Convert rows to CSV string
  */
-export function convertToCSV(columns: string[], rows: any[]): string {
+export function convertToCSV(columns: string[], rows: Record<string, unknown>[]): string {
   const header = columns.join(",");
   const body = rows
     .map((row) =>
@@ -98,10 +98,10 @@ export function convertToCSV(columns: string[], rows: any[]): string {
 /**
  * Convert rows to SQL INSERT statements
  */
-export function convertToSQL(tableName: string, columns: string[], rows: any[]): string {
+export function convertToSQL(tableName: string, columns: string[], rows: Record<string, unknown>[]): string {
   if (rows.length === 0) return "";
   
-  const escape = (val: any) => {
+  const escape = (val: unknown) => {
     if (val === null || val === undefined) return "NULL";
     if (typeof val === "number") return val;
     return `'${String(val).replace(/'/g, "''")}'`;

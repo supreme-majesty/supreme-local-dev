@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { useState, useEffect, useCallback } from "react";
 import {
   Network,
   Table,
@@ -28,7 +29,7 @@ export function RelationshipExplorer({
   const [error, setError] = useState<string | null>(null);
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
 
-  const fetchRelationships = async () => {
+  const fetchRelationships = useCallback(async () => {
     if (!selectedDb) return;
     setLoading(true);
     setError(null);
@@ -41,13 +42,13 @@ export function RelationshipExplorer({
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedDb]);
 
   useEffect(() => {
     if (selectedDb) {
       fetchRelationships();
     }
-  }, [selectedDb]);
+  }, [selectedDb, fetchRelationships]);
 
   // Get unique tables involved in relationships
   const tables = [

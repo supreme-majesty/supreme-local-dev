@@ -421,7 +421,7 @@ export function useRealtimeUpdates() {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const host = window.location.host;
     const url = `${protocol}//${host}/api/ws`;
-    let isMounted = true;
+    const isMounted = true;
 
     const connect = () => {
       if (!isMounted) return;
@@ -450,7 +450,7 @@ export function useRealtimeUpdates() {
         }
       };
 
-      ws.current.onerror = (_err) => {
+      ws.current.onerror = () => {
         // console.error("SLD: WS error", err);
         ws.current?.close();
       };
@@ -492,7 +492,7 @@ export function useArtisanSocket(
           } else if (msg.type === "artisan:done") {
             onDone(msg.success);
           }
-        } catch (e) {
+        } catch {
           // ignore
         }
       };

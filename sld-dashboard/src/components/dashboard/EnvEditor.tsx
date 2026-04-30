@@ -51,6 +51,7 @@ export function EnvEditor({
     if (envFiles.length > 0 && !selectedFile) {
       // Prefer .env over others
       const mainEnv = envFiles.find((f) => f.name === ".env");
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSelectedFile(mainEnv ? mainEnv.path : envFiles[0].path);
     }
   }, [envFiles, selectedFile]);
@@ -149,6 +150,7 @@ function FileEditor({
       }));
       // Sort by key
       vars.sort((a, b) => a.key.localeCompare(b.key));
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setVariables(vars);
 
       // Also reconstruct raw content (approximate)

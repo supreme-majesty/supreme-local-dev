@@ -60,8 +60,8 @@ export function ImportWizard({ database, table, onClose }: ImportWizardProps) {
       setMapping(initialMapping);
       
       setStep('mapping');
-    } catch (err) {
-      console.error("Analysis failed", err);
+    } catch {
+      console.error("Analysis failed");
     }
   };
 
@@ -78,7 +78,7 @@ export function ImportWizard({ database, table, onClose }: ImportWizardProps) {
         mapping
       });
       setStep('complete');
-    } catch (err) {
+    } catch {
       setStep('mapping');
     }
   };
@@ -179,7 +179,7 @@ export function ImportWizard({ database, table, onClose }: ImportWizardProps) {
           <tbody>
             {analysis?.preview.map((row, i) => (
               <tr key={i} className="border-b border-[var(--border)] last:border-0 hover:bg-[var(--muted)]/30">
-                {Object.entries(mapping).filter(([_, v]) => v !== '').map(([src, _]) => (
+                {Object.entries(mapping).filter(([, v]) => v !== '').map(([src]) => (
                   <td key={src} className="px-4 py-2 whitespace-nowrap">{String(row[src] || '')}</td>
                 ))}
               </tr>

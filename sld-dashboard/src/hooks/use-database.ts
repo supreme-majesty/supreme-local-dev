@@ -509,7 +509,7 @@ export function usePIIScan(database: string, table: string) {
 export function useMaskDataMutation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (config: any) => api.maskData(config),
+    mutationFn: (config: unknown) => api.maskData(config),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['db-data'] });
     },
@@ -541,7 +541,7 @@ export function useSnippets() {
 export function useSaveSnippetMutation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (snippet: any) => api.saveSnippet(snippet),
+    mutationFn: (snippet: unknown) => api.saveSnippet(snippet),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['db-snippets'] });
     },
@@ -558,7 +558,7 @@ export function useAuditLog() {
 
 export function useImportDataMutation() {
   return useMutation({
-    mutationFn: (config: any) => api.importData(config),
+    mutationFn: (config: unknown) => api.importData(config),
   });
 }
 
@@ -572,7 +572,7 @@ export function useProfiles() {
 export function useSaveProfileMutation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (profile: any) => api.saveProfile(profile),
+    mutationFn: (profile: unknown) => api.saveProfile(profile),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['db-profiles'] }),
   });
 }

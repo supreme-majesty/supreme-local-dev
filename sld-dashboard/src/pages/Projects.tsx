@@ -58,7 +58,7 @@ export default function Projects() {
 
   // Determine default editor (e.g. VS Code if available)
   const defaultEditor =
-    editors.find((e: any) => e.id === "vscode") || editors[0];
+    editors.find((e: { id: string }) => e.id === "vscode") || editors[0];
 
   const handleOpenInEditor = (path: string, editorId?: string) => {
     const id = editorId || defaultEditor?.id;
@@ -446,7 +446,7 @@ export default function Projects() {
             Select an editor to open the project with:
           </p>
           <div className="grid grid-cols-1 gap-2">
-            {editors.map((editor: any) => (
+            {editors.map((editor: { id: string; name: string }) => (
               <button
                 key={editor.id}
                 onClick={() => {

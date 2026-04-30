@@ -12,7 +12,7 @@ export function HealerNotification() {
       try {
         const data = await api.getHealerIssues();
         setIssues(data);
-      } catch (err) {
+      } catch {
         // Silently ignore - healer might not be active
       }
     };

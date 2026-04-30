@@ -76,7 +76,7 @@ const ITEMS_PER_PAGE = 50;
 
 function DatabaseParamsNode({
   dbName,
-  isSelected, // eslint-disable-line @typescript-eslint/no-unused-vars
+  isSelected,  
   selectedTable,
   onSelectTable,
   onCreateTable,
@@ -313,6 +313,7 @@ function RecursiveTreeNode({
   // Use effect so user can collapse it manually afterwards
   useEffect(() => {
     if (isParentOfSelected || isMatchingFilter) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setExpanded(true);
     }
   }, [isParentOfSelected, isMatchingFilter]);

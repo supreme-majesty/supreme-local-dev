@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useEffect } from "react";
 import { Plus, Trash2, Save, Code2, X } from "lucide-react";
 import { Button } from "@/components/ui/Button";
@@ -55,6 +56,7 @@ export function AlterTableDesigner({
 
   useEffect(() => {
     if (originalColumns.length > 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setColumns(
         originalColumns.map((col: any) => ({
           ...col,

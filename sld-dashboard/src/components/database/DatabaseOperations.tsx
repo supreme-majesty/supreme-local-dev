@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useEffect } from "react";
 import {
   Plus,
@@ -38,7 +39,7 @@ interface DatabaseOperationsProps {
   database: string;
   onSelectDb: (db: string) => void;
   onSelectTable: (table: string) => void;
-  onNavigateToRecord: (table: string, match: any) => void;
+  onNavigateToRecord: (table: string, match: Record<string, unknown>) => void;
   onCreateTable: () => void;
 }
 
@@ -62,7 +63,7 @@ export function DatabaseOperations({
   const [changeAllTables, setChangeAllTables] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
-  const addToast = useAppStore((s: any) => s.addToast);
+  const addToast = (useAppStore as any)((s: any) => s.addToast);
 
   const renameMutation = useRenameDatabaseMutation();
   const cloneMutation = useCloneDatabaseMutation();
@@ -183,11 +184,12 @@ export function DatabaseOperations({
         title: "Collation updated",
         description: `Database ${database} ${targetAll ? "and all tables " : ""}updated to ${targetCollation}`,
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const error = err as Error;
       addToast({
         type: "error",
         title: "Failed to update collation",
-        description: err.message,
+        description: error.message,
       });
     }
   };
@@ -226,19 +228,19 @@ export function DatabaseOperations({
 
           {searchQuery.length >= 2 &&
             !isSearching &&
-            searchResults?.results?.length > 0 && (
+            (searchResults as any)?.results?.length > 0 && (
               <div className="mb-4 flex items-center gap-2 text-xs text-[var(--muted-foreground)] animate-in fade-in zoom-in duration-300">
                 <span className="flex items-center gap-1 bg-emerald-500/10 text-emerald-600 px-2 py-0.5 rounded-full font-bold">
                   <ShieldCheck size={12} />
                   Found{" "}
-                  {searchResults.results.reduce(
-                    (acc: number, r: any) => acc + r.row_count,
+                  {((searchResults as any).results as any[]).reduce(
+                    (acc: number, r: { row_count: number }) => acc + r.row_count,
                     0,
                   )}{" "}
                   matches
                 </span>
                 <span>
-                  across {searchResults.results.length} tables in {database}
+                  across {(searchResults as any).results.length} tables in {database}
                 </span>
               </div>
             )}
@@ -253,9 +255,9 @@ export function DatabaseOperations({
                   />
                   Scanning all tables...
                 </div>
-              ) : searchResults?.results?.length > 0 ? (
+              ) : (searchResults as any)?.results?.length > 0 ? (
                 <div className="max-h-[400px] overflow-y-auto">
-                  {searchResults.results.map((res: any, i: number) => (
+                  {(searchResults as any).results.map((res: { table: string; row_count: number; matches: Record<string, unknown>[] }, i: number) => (
                     <div
                       key={i}
                       className="p-4 border-b border-[var(--border)] last:border-0 hover:bg-[var(--muted)]/20 transition-colors"
@@ -278,10 +280,10 @@ export function DatabaseOperations({
                       <div className="space-y-2">
                         {res.matches
                           ?.slice(0, 3)
-                          .map((match: any, j: number) => {
+                          .map((match: Record<string, unknown>, j: number) => {
                             // Find columns that match the search query
                             const matchingCols = Object.entries(match).filter(
-                              ([_, val]) =>
+                              ([, val]) =>
                                 String(val)
                                   .toLowerCase()
                                   .includes(searchQuery.toLowerCase()),

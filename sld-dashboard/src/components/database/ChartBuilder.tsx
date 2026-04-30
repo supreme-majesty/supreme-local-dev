@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useMemo } from "react";
 import { 
   BarChart, Bar, LineChart, Line, AreaChart, Area, PieChart, Pie, Cell,

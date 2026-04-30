@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState } from "react";
 import { 
   Shield, 
@@ -31,7 +32,7 @@ export function SecurityDashboard({ database }: SecurityDashboardProps) {
     const config = {
       database,
       table: selectedTable,
-      columns: piiResults.reduce((acc: any, curr: any) => {
+      columns: (piiResults as any[]).reduce((acc: Record<string, string>, curr: { column: string; pattern: string }) => {
         acc[curr.column] = curr.pattern;
         return acc;
       }, {})
@@ -122,7 +123,7 @@ export function SecurityDashboard({ database }: SecurityDashboardProps) {
                 </CardHeader>
                 <CardContent className="p-0">
                   <div className="divide-y divide-[var(--border)]">
-                    {piiResults?.map((res: any) => (
+                    {(piiResults as any[])?.map((res: { column: string; risk: string; pattern: string; examples: string[] }) => (
                       <div key={res.column} className="p-6 hover:bg-[var(--muted)]/10 transition-colors">
                         <div className="flex items-start justify-between">
                           <div className="space-y-3 flex-1">

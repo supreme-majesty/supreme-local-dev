@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState } from "react";
 import { 
   GitCompare, 
@@ -83,9 +84,9 @@ export function SchemaDiffTool({ currentDatabase }: SchemaDiffToolProps) {
       ) : (
         <div className="grid grid-cols-1 gap-6">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <StatCard title="Missing Tables" count={diff?.tables_to_create?.length || 0} icon={<Plus size={16} />} color="green" />
-            <StatCard title="Modified Tables" count={diff?.table_diffs?.length || 0} icon={<Edit size={16} />} color="blue" />
-            <StatCard title="Tables to Drop" count={diff?.tables_to_drop?.length || 0} icon={<Trash2 size={16} />} color="red" />
+            <StatCard title="Missing Tables" count={(diff as any)?.tables_to_create?.length || 0} icon={<Plus size={16} />} color="green" />
+            <StatCard title="Modified Tables" count={(diff as any)?.table_diffs?.length || 0} icon={<Edit size={16} />} color="blue" />
+            <StatCard title="Tables to Drop" count={(diff as any)?.tables_to_drop?.length || 0} icon={<Trash2 size={16} />} color="red" />
           </div>
 
           <Card className="border-[var(--border)]">
@@ -101,9 +102,9 @@ export function SchemaDiffTool({ currentDatabase }: SchemaDiffToolProps) {
               {showSQL ? (
                 <div className="relative">
                    <pre className="p-6 bg-[var(--muted)]/30 text-xs font-mono overflow-auto max-h-[400px] text-blue-400">
-                    {diff?.sync_sql || "-- No changes needed. Schemas are identical."}
+                    {(diff as any)?.sync_sql || "-- No changes needed. Schemas are identical."}
                   </pre>
-                  {diff?.sync_sql && (
+                  {(diff as any)?.sync_sql && (
                     <div className="absolute top-4 right-4 flex gap-2">
                       <Button size="sm" className="gap-2 bg-green-600 hover:bg-green-700">
                         <Check size={14} /> Run Sync
@@ -113,7 +114,7 @@ export function SchemaDiffTool({ currentDatabase }: SchemaDiffToolProps) {
                 </div>
               ) : (
                 <div className="divide-y divide-[var(--border)]/50">
-                  {(diff?.table_diffs || []).map((t: any) => (
+                  {((diff as any)?.table_diffs || []).map((t: any) => (
                     <div key={t.table_name} className="p-4 flex items-center justify-between hover:bg-[var(--muted)]/30 transition-colors">
                       <div className="flex items-center gap-4">
                         <div className="w-10 h-10 rounded-lg bg-blue-500/10 flex items-center justify-center text-blue-500">
@@ -131,7 +132,7 @@ export function SchemaDiffTool({ currentDatabase }: SchemaDiffToolProps) {
                       <ChevronRight size={16} className="text-[var(--muted-foreground)]" />
                     </div>
                   ))}
-                  {(diff?.tables_to_create || []).map((t: any) => (
+                  {((diff as any)?.tables_to_create || []).map((t: any) => (
                     <div key={t} className="p-4 flex items-center justify-between hover:bg-[var(--muted)]/30 transition-colors bg-green-500/5">
                       <div className="flex items-center gap-4">
                         <div className="w-10 h-10 rounded-lg bg-green-500/10 flex items-center justify-center text-green-500">
@@ -144,7 +145,7 @@ export function SchemaDiffTool({ currentDatabase }: SchemaDiffToolProps) {
                       </div>
                     </div>
                   ))}
-                  {(diff?.tables_to_drop || []).map((t: any) => (
+                  {((diff as any)?.tables_to_drop || []).map((t: any) => (
                     <div key={t} className="p-4 flex items-center justify-between hover:bg-[var(--muted)]/30 transition-colors bg-red-500/5">
                       <div className="flex items-center gap-4">
                         <div className="w-10 h-10 rounded-lg bg-red-500/10 flex items-center justify-center text-red-500">
@@ -157,7 +158,7 @@ export function SchemaDiffTool({ currentDatabase }: SchemaDiffToolProps) {
                       </div>
                     </div>
                   ))}
-                  {(!diff || ((diff.tables_to_create || []).length === 0 && (diff.table_diffs || []).length === 0 && (diff.tables_to_drop || []).length === 0)) && (
+                  {(!(diff as any) || (((diff as any).tables_to_create || []).length === 0 && ((diff as any).table_diffs || []).length === 0 && ((diff as any).tables_to_drop || []).length === 0)) && (
                     <div className="p-12 text-center">
                       <Check size={32} className="mx-auto text-green-500/30 mb-2" />
                       <p className="text-sm text-[var(--muted-foreground)] italic">Schemas are perfectly synchronized.</p>

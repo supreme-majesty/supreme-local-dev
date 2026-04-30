@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { 
   Folder, 
   File, 
@@ -32,6 +32,17 @@ export function FileManager({ projectPath }: FileManagerProps) {
   const { data: fileContent, isLoading: isLoadingContent } = useProjectFileContent(selectedFile?.path || null);
   const saveMutation = useSaveProjectFileMutation();
 
+  const handleSave = useCallback(() => {
+    if (selectedFile) {
+      saveMutation.mutate({
+        path: selectedFile.path,
+        content: editorContent,
+      }, {
+        onSuccess: () => setIsDirty(false)
+      });
+    }
+  }, [selectedFile, saveMutation, editorContent]);
+
   // Auto-save logic
   useEffect(() => {
     if (!autoSave || !isDirty || !selectedFile) return;
@@ -41,10 +52,11 @@ export function FileManager({ projectPath }: FileManagerProps) {
     }, 2000); // Save after 2 seconds of inactivity
 
     return () => clearTimeout(timer);
-  }, [editorContent, autoSave, isDirty, selectedFile]);
+  }, [editorContent, autoSave, isDirty, selectedFile, handleSave]);
 
   useEffect(() => {
     if (fileContent) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setEditorContent(fileContent.content);
       setIsDirty(false);
     }
@@ -55,17 +67,6 @@ export function FileManager({ projectPath }: FileManagerProps) {
       setCurrentPath(file.path);
     } else {
       setSelectedFile(file);
-    }
-  };
-
-  const handleSave = () => {
-    if (selectedFile) {
-      saveMutation.mutate({
-        path: selectedFile.path,
-        content: editorContent,
-      }, {
-        onSuccess: () => setIsDirty(false)
-      });
     }
   };
 

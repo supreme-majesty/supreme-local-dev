@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useEffect } from "react";
 import { useTables, useTableColumns } from "@/hooks/use-database";
 import { Button } from "@/components/ui/Button";

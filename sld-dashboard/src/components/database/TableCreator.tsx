@@ -90,7 +90,7 @@ export function TableCreator({
     }
   };
 
-  const updateColumn = (id: string, field: keyof ColumnDef, value: any) => {
+  const updateColumn = (id: string, field: keyof ColumnDef, value: string | boolean) => {
     setColumns(
       columns.map((c) => {
         if (c.id !== id) return c;

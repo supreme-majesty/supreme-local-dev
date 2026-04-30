@@ -60,7 +60,9 @@ export function CreateProjectModal({
         setLocationMode("custom");
       }
     }
-  }, [isOpen, parkedPaths, locationMode, targetDir]);
+    // Only re-run when modal opens or parked paths change to initialize state
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, parkedPaths]);
 
   // Directory navigation (custom mode)
   // Fetch directories only if browser is open and in custom mode

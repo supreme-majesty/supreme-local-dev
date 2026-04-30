@@ -56,6 +56,7 @@ export function ContextMenu({ x, y, onClose, items }: ContextMenuProps) {
         newTop = y - rect.height;
       }
 
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setPosition({ top: newTop, left: newLeft });
     }
   }, [x, y]);

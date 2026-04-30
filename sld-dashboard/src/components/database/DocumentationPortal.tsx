@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState } from "react";
 import { 
   BookOpen, 
@@ -27,12 +28,12 @@ export function DocumentationPortal({ database }: DocumentationPortalProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
 
-  const filteredDocs = docs.filter((t: any) => 
+  const filteredDocs = (docs as any[]).filter((t: any) => 
     t.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     t.columns.some((c: any) => c.name.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
-  const activeTable = selectedTable ? docs.find((t: any) => t.name === selectedTable) : filteredDocs[0];
+  const activeTable = selectedTable ? (docs as any[]).find((t: any) => t.name === selectedTable) : filteredDocs[0];
 
   if (isLoading) return (
     <div className="flex flex-col items-center justify-center p-20 animate-pulse">

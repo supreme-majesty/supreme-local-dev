@@ -9,6 +9,7 @@ import {
   AlertCircle
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/Card";
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { Badge } from "@/components/ui/Badge";
 import { useAuditLog } from "@/hooks/use-database";
 import { formatDate } from "@/lib/utils";

@@ -23,7 +23,7 @@ export function SmartImporter({ database }: SmartImporterProps) {
   const { data: columns = [] } = useTableColumns(database, selectedTable);
   const importMutation = useImportDataMutation();
   
-  const [fileData, setFileData] = useState<any[]>([]);
+  const [fileData, setFileData] = useState<Record<string, unknown>[]>([]);
   const [fileHeaders, setFileHeaders] = useState<string[]>([]);
   const [mapping, setMapping] = useState<Record<string, string>>({});
   const [step, setStep] = useState<1 | 2 | 3>(1);
@@ -49,7 +49,7 @@ export function SmartImporter({ database }: SmartImporterProps) {
           return headers.reduce((obj, header, index) => {
             obj[header] = values[index]?.trim();
             return obj;
-          }, {} as any);
+          }, {} as Record<string, unknown>);
         });
         setFileData(data);
         setFileHeaders(headers);

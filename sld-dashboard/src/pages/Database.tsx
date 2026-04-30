@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo } from "react";
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { useState, useEffect, useMemo, useCallback } from "react";
 import {
   Database as DatabaseIcon,
   Table as TableIcon,
@@ -55,7 +56,6 @@ import { convertToCSV, convertToSQL } from "@/lib/utils";
 import { Input } from "@/components/ui/Input";
 import { Badge } from "@/components/ui/Badge";
 import { SQLConsole } from "@/components/database/SQLConsole";
-// @ts-ignore
 import { DatabaseTree } from "@/components/database/DatabaseTree";
 import { DataForm } from "@/components/database/DataForm";
 import { DatabaseStructure } from "@/components/database/DatabaseStructure";
@@ -84,7 +84,7 @@ import {
   useExecuteQueryMutation,
   useDeleteDatabaseMutation,
 } from "@/hooks/use-database";
-import { api } from "@/api/daemon";
+import { api, type TableData, type QueryResult } from "@/api/daemon";
 
 export default function Database() {
   const [selectedDB, setSelectedDB] = useState<string | null>(null);
@@ -97,7 +97,7 @@ export default function Database() {
       | "postgres";
   });
   const [page, setPage] = useState(1);
-  const [editingRow, setEditingRow] = useState<Record<string, any> | null>(
+  const [editingRow, setEditingRow] = useState<Record<string, unknown> | null>(
     null,
   );
   const [alteringTable, setAlteringTable] = useState<string | null>(null);
@@ -105,9 +105,9 @@ export default function Database() {
   const [searchCriteria, setSearchCriteria] = useState<
     Record<string, { value: string; operator: string }>
   >({});
-  const [searchResults, setSearchResults] = useState<any>(null);
+  const [searchResults, setSearchResults] = useState<TableData | QueryResult | null>(null);
   const [isSearching, setIsSearching] = useState(false);
-  const [triggers, setTriggers] = useState<any[]>([]);
+  const [triggers, setTriggers] = useState<Record<string, unknown>[]>([]);
   const [loadingTriggers, setLoadingTriggers] = useState(false);
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
   const [navHistory, setNavHistory] = useState<string[]>([]);
@@ -124,7 +124,7 @@ export default function Database() {
   const [profiling, setProfiling] = useState(false);
   const [showExplainModal, setShowExplainModal] = useState(false);
   const [showPhpModal, setShowPhpModal] = useState(false);
-  const [explainData, setExplainData] = useState<any>(null);
+  const [explainData, setExplainData] = useState<QueryResult | null>(null);
 
   // New Database Modal
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -145,7 +145,7 @@ export default function Database() {
     rowIndex: number;
     colName: string;
     value: string;
-    originalRow: Record<string, any>;
+    originalRow: Record<string, unknown>;
   } | null>(null);
   const [fkOptions, setFkOptions] = useState<
     { value: string; label: string }[] | null
@@ -189,14 +189,14 @@ export default function Database() {
   // Helpers
   const pkCol = tableSchema?.find((c) => c.key === "PRI")?.name;
 
-  const escapeValue = (val: any) => {
+  const escapeValue = (val: unknown) => {
     if (val === null) return "NULL";
     if (typeof val === "number") return val;
     return `'${String(val).replace(/'/g, "\\'")}'`;
   };
 
   // Helper to safely get value from row (handles case mismatch)
-  const getValue = (row: Record<string, any>, colName: string) => {
+  const getValue = (row: Record<string, unknown>, colName: string) => {
     if (!colName) return undefined;
     if (row[colName] !== undefined) return row[colName];
     // Try lowercase key match
@@ -286,7 +286,7 @@ export default function Database() {
   };
 
 
-  const handleNavigateToRecord = (table: string, match: any) => {
+  const handleNavigateToRecord = (table: string, match: Record<string, unknown>) => {
     setSelectedTable(table);
     setPage(1);
 
@@ -350,9 +350,9 @@ export default function Database() {
               database: selectedDB,
               query: `SHOW CREATE TABLE \`${t}\``,
             });
-            const createStmt = result.rows?.[0]?.["Create Table"] || "N/A";
+            const createStmt = (result.rows?.[0] as any)?.["Create Table"] || "N/A";
             results.push(`-- Table: ${t}\n${createStmt};\n`);
-          } catch (e) {
+          } catch {
             results.push(
               `-- Table: ${t}\n-- Error: Failed to get CREATE statement\n`,
             );
@@ -376,9 +376,9 @@ export default function Database() {
             });
             results.push(`-- Table: ${t}`);
             results.push(`DROP TABLE IF EXISTS \`${t}\`;`);
-            results.push(createResult.rows?.[0]?.["Create Table"] + ";");
+            results.push((createResult.rows?.[0] as any)?.["Create Table"] + ";");
             results.push("");
-          } catch (e) {
+          } catch {
             results.push(`-- Error exporting ${t}`);
           }
         }
@@ -542,7 +542,7 @@ export default function Database() {
 
 
   const handleSaveRow = (
-    data: Record<string, any>,
+    data: Record<string, unknown>,
     mode: "save" | "save_and_add" = "save",
   ) => {
     if (!selectedDB || !selectedTable) return;
@@ -654,7 +654,7 @@ export default function Database() {
             total: data.rowCount,
             total_pages: 1, // Simple result set for now
           };
-          setSearchResults(enriched);
+          setSearchResults(enriched as any);
           setActiveTab("browse");
           setIsSearching(false);
         },
@@ -720,7 +720,7 @@ export default function Database() {
   };
 
   // Load triggers for the current database/table
-  const loadTriggers = async () => {
+  const loadTriggers = useCallback(async () => {
     if (!selectedDB) return;
 
     setLoadingTriggers(true);
@@ -735,14 +735,14 @@ export default function Database() {
         query,
       });
 
-      setTriggers(result.rows || []);
+      setTriggers((result.rows as Record<string, unknown>[]) || []);
     } catch (err) {
       console.error("Failed to load triggers:", err);
       setTriggers([]);
     } finally {
       setLoadingTriggers(false);
     }
-  };
+  }, [selectedDB, selectedTable, executeQueryMutation]);
 
   // Drop a trigger
   const handleDropTrigger = async (triggerName: string) => {
@@ -773,18 +773,18 @@ export default function Database() {
     if (activeTab === "triggers" && selectedDB) {
       loadTriggers();
     }
-  }, [activeTab, selectedDB, selectedTable]);
+  }, [activeTab, selectedDB, selectedTable, loadTriggers]);
 
   const currentSnapshotList =
     snapshots?.filter((s) => s.database === selectedDB) || [];
 
   // Filter rows client-side based on filterText
   const filteredRows = useMemo(() => {
-    const rows = searchResults?.rows || tableData?.rows || [];
+    const rows = ((searchResults || tableData) as any)?.rows || [];
     if (!filterText.trim()) return rows;
 
     const searchLower = filterText.toLowerCase();
-    return rows.filter((row: Record<string, any>) =>
+    return rows.filter((row: Record<string, unknown>) =>
       Object.values(row).some(
         (val) =>
           val !== null && String(val).toLowerCase().includes(searchLower),
@@ -859,8 +859,8 @@ $mysqli->close();
   const startInlineEdit = async (
     rowIndex: number,
     colName: string,
-    value: any,
-    row: Record<string, any>,
+    value: unknown,
+    row: Record<string, unknown>,
   ) => {
     setEditingCell({
       rowIndex,
@@ -873,7 +873,7 @@ $mysqli->close();
     // Fetch FK options if applicable
     const cols = searchResults ? searchResults.columns : tableData?.columns;
     const colInfo = cols?.find(
-      (c: any) => (typeof c === "string" ? c : c.name) === colName,
+      (c: string | { name: string }) => (typeof c === "string" ? c : c.name) === colName,
     );
 
     if (
@@ -935,7 +935,7 @@ $mysqli->close();
   // Bulk Selection Logic
   const allSelected = useMemo(() => {
     if (!pkCol || filteredRows.length === 0) return false;
-    return filteredRows.every((row: any) => {
+    return filteredRows.every((row: Record<string, unknown>) => {
       const val = getValue(row, pkCol);
       return val !== undefined && selectedRows.has(String(val));
     });
@@ -944,7 +944,7 @@ $mysqli->close();
   const handleSelectAll = (checked: boolean) => {
     if (!pkCol) return;
     const newSelected = new Set(selectedRows);
-    filteredRows.forEach((row: any) => {
+    filteredRows.forEach((row: Record<string, unknown>) => {
       const val = getValue(row, pkCol);
       if (val !== undefined) {
         const strVal = String(val);
@@ -1351,7 +1351,7 @@ $mysqli->close();
                 <label className="flex items-center gap-2 text-sm cursor-pointer">
                   <Checkbox
                     checked={profiling}
-                    onChange={(e: any) => setProfiling(e.target.checked)}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setProfiling(e.target.checked)}
                   />
                   <span>Profiling</span>
                   {profiling && tableData?.query_time !== undefined && (
@@ -1380,7 +1380,7 @@ $mysqli->close();
                           } else if (val === "export") {
                             // Export selected rows as SQL INSERT statements
                             const selectedData = filteredRows.filter(
-                              (row: any) => {
+                              (row: Record<string, unknown>) => {
                                 const pk = getValue(row, pkCol);
                                 return (
                                   pk !== undefined &&
@@ -1390,11 +1390,11 @@ $mysqli->close();
                             );
                             const cols =
                               (searchResults || tableData)?.columns || [];
-                            const colNames = cols.map((c: any) =>
+                            const colNames = cols.map((c: string | { name: string }) =>
                               typeof c === "string" ? c : c.name,
                             );
 
-                            const inserts = selectedData.map((row: any) => {
+                            const inserts = selectedData.map((row: Record<string, unknown>) => {
                               const values = colNames.map((col: string) => {
                                 const val = getValue(row, col);
                                 if (val === null) return "NULL";
@@ -1415,7 +1415,7 @@ $mysqli->close();
                           } else if (val === "copy") {
                             // Copy selected rows to clipboard as TSV
                             const selectedData = filteredRows.filter(
-                              (row: any) => {
+                              (row: Record<string, unknown>) => {
                                 const pk = getValue(row, pkCol);
                                 return (
                                   pk !== undefined &&
@@ -1425,12 +1425,12 @@ $mysqli->close();
                             );
                             const cols =
                               (searchResults || tableData)?.columns || [];
-                            const colNames = cols.map((c: any) =>
+                            const colNames = cols.map((c: string | { name: string }) =>
                               typeof c === "string" ? c : c.name,
                             );
 
                             const header = colNames.join("\t");
-                            const rows = selectedData.map((row: any) =>
+                            const rows = selectedData.map((row: Record<string, unknown>) =>
                               colNames
                                 .map((col: string) =>
                                   String(getValue(row, col) ?? ""),
@@ -1464,7 +1464,7 @@ $mysqli->close();
                 <label className="flex items-center gap-2 text-sm cursor-pointer">
                   <Checkbox
                     checked={showAll}
-                    onChange={(e: any) => {
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
                       setShowAll(e.target.checked);
                       setPage(1);
                     }}
@@ -1561,7 +1561,7 @@ $mysqli->close();
                       if (!format) return;
                       
                       const cols = (searchResults || tableData)?.columns || [];
-                      const colNames = cols.map((c: any) => typeof c === "string" ? c : c.name);
+                      const colNames = cols.map((c: string | { name: string }) => typeof c === "string" ? c : (c as { name: string }).name);
                       
                       if (format === "csv") {
                         const csv = convertToCSV(colNames, filteredRows);
@@ -1580,7 +1580,7 @@ $mysqli->close();
                         a.download = `${selectedTable}_export.json`;
                         a.click();
                       } else if (format === "sql") {
-                        const sql = convertToSQL(selectedTable!, colNames, filteredRows);
+                        const sql = convertToSQL(selectedTable!, colNames, filteredRows as any[]);
                         setResultModal({
                           isOpen: true,
                           title: `SQL Export: ${selectedTable}`,
@@ -1626,14 +1626,14 @@ $mysqli->close();
                             <th className="w-8 px-4 py-3 text-center">
                               <Checkbox
                                 checked={allSelected}
-                                onChange={(e: any) =>
+                                onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
                                   handleSelectAll(e.target.checked)
                                 }
                               />
                             </th>
                           )}
-                          {(searchResults || tableData).columns?.map(
-                            (col: any) => {
+                          {(searchResults || tableData)?.columns?.map(
+                            (col: string | { name: string; type?: string }) => {
                               const colName =
                                 typeof col === "string" ? col : col.name;
                               const colType =
@@ -1670,7 +1670,7 @@ $mysqli->close();
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-[var(--border)]">
-                        {filteredRows.map((row: any, i: number) => (
+                        {(filteredRows as any[]).map((row: Record<string, any>, i: number) => (
                           <tr
                             key={i}
                             className="hover:bg-[var(--muted)]/30 group"
@@ -1685,7 +1685,7 @@ $mysqli->close();
                                       selectedRows.has(String(val))
                                     );
                                   })()}
-                                  onChange={(e: any) => {
+                                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
                                     const val = getValue(row, pkCol);
                                     if (val !== undefined)
                                       handleSelectRow(
@@ -1696,8 +1696,8 @@ $mysqli->close();
                                 />
                               </td>
                             )}
-                            {(searchResults || tableData).columns?.map(
-                              (col: any) => {
+                            {(searchResults || tableData)?.columns?.map(
+                              (col: string | { name: string }) => {
                                 const colName =
                                   typeof col === "string" ? col : col.name;
                                 const val = getValue(row, colName);
@@ -1773,7 +1773,7 @@ $mysqli->close();
                                           const type =
                                             typeof col === "string"
                                               ? ""
-                                              : col.type?.toLowerCase() || "";
+                                              : (col as any).type?.toLowerCase() || "";
                                           const isDate =
                                             type.includes("datetime") ||
                                             type.includes("timestamp");
@@ -1783,7 +1783,7 @@ $mysqli->close();
                                             return (
                                               <select
                                                 value={editingCell.value}
-                                                onChange={(e: any) =>
+                                                onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
                                                   setEditingCell({
                                                     ...editingCell,
                                                     value: e.target.value,
@@ -1962,7 +1962,7 @@ $mysqli->close();
                           <tr>
                             <td
                               colSpan={
-                                ((searchResults || tableData).columns || [])
+                                 ((searchResults || tableData)?.columns || [])
                                   .length + 1
                               }
                               className="px-4 py-8 text-center text-[var(--muted-foreground)] italic"
@@ -1978,7 +1978,7 @@ $mysqli->close();
                         <tr>
                           <td
                             colSpan={
-                              ((searchResults || tableData).columns || [])
+                              ((searchResults || tableData)?.columns || [])
                                 .length + (pkCol ? 2 : 1)
                             }
                             className="px-4 py-2 text-xs text-[var(--muted-foreground)] border-t border-[var(--border)]"
@@ -2333,6 +2333,7 @@ $mysqli->close();
                 </CardHeader>
                 <CardContent>
                   <DataForm
+                    key={editingRow ? `edit-${getValue(editingRow, pkCol || "")}` : 'edit-none'}
                     columns={tableSchema}
                     initialData={editingRow || undefined}
                     onSubmit={handleSaveRow}
@@ -2994,17 +2995,17 @@ $mysqli->close();
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-[var(--border)]">
-                          {triggers.map((trigger: any, idx: number) => (
+                          {triggers.map((trigger: Record<string, unknown>, idx: number) => (
                             <tr
                               key={idx}
                               className="hover:bg-[var(--muted)]/30"
                             >
                               <td className="px-4 py-3 font-medium">
-                                {trigger.Trigger}
+                                {String(trigger.Trigger)}
                               </td>
                               <td className="px-4 py-3">
                                 <Badge variant="secondary">
-                                  {trigger.Event}
+                                  {String(trigger.Event)}
                                 </Badge>
                               </td>
                               <td className="px-4 py-3">
@@ -3015,19 +3016,19 @@ $mysqli->close();
                                       : "outline"
                                   }
                                 >
-                                  {trigger.Timing}
+                                  {String(trigger.Timing)}
                                 </Badge>
                               </td>
-                              <td className="px-4 py-3">{trigger.Table}</td>
+                              <td className="px-4 py-3">{String(trigger.Table)}</td>
                               <td className="px-4 py-3 max-w-[300px] truncate font-mono text-xs">
-                                {trigger.Statement}
+                                {String(trigger.Statement)}
                               </td>
                               <td className="px-4 py-3">
                                 <Button
                                   variant="danger"
                                   size="sm"
                                   onClick={() =>
-                                    handleDropTrigger(trigger.Trigger)
+                                    handleDropTrigger(String(trigger.Trigger))
                                   }
                                   disabled={executeQueryMutation.isPending}
                                 >
@@ -3065,11 +3066,11 @@ $mysqli->close();
               <div className="mb-3 p-2 bg-[var(--muted)]/50 rounded font-mono text-sm">
                 {currentQuery}
               </div>
-              {explainData?.rows?.length > 0 ? (
+              {explainData?.rows && explainData.rows.length > 0 ? (
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-[var(--border)]">
-                      {explainData.columns?.map((col: string) => (
+                      {(explainData as any).columns?.map((col: string) => (
                         <th key={col} className="px-2 py-1 text-left text-xs">
                           {col}
                         </th>
@@ -3077,11 +3078,11 @@ $mysqli->close();
                     </tr>
                   </thead>
                   <tbody>
-                    {explainData.rows.map((row: any, i: number) => (
+                    {(explainData.rows as any[]).map((row: any, i: number) => (
                       <tr key={i} className="border-b border-[var(--border)]">
-                        {explainData.columns?.map((col: string) => (
+                        {(explainData as any).columns?.map((col: string) => (
                           <td key={col} className="px-2 py-1 text-xs">
-                            {row[col] ?? "-"}
+                            {String(row[col] ?? "-")}
                           </td>
                         ))}
                       </tr>

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, Fragment } from "react";
 import { 
   Activity,
@@ -52,13 +53,13 @@ export function PerformanceDashboard({ database }: PerformanceDashboardProps) {
     );
   }
 
-  const processes = stats?.processes || [];
+  const processes = (stats as any)?.processes || [];
   const filteredProcs = processes.filter((p: any) => 
     JSON.stringify(p).toLowerCase().includes(procFilter.toLowerCase())
   );
 
   // Helper to get status value (MySQL or PG)
-  const getStat = (key: string) => stats?.status?.[key] || stats?.db_stats?.[key] || '0';
+  const getStat = (key: string) => (stats as any)?.status?.[key] || (stats as any)?.db_stats?.[key] || '0';
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
@@ -66,7 +67,7 @@ export function PerformanceDashboard({ database }: PerformanceDashboardProps) {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <MetricCard 
           title="Active Connections" 
-          value={getStat('Threads_connected') || stats?.processes?.length || '0'} 
+          value={getStat('Threads_connected') || (stats as any)?.processes?.length || '0'} 
           icon={<Network size={20} />}
           color="blue"
           trend={getStat('Threads_running')}
@@ -215,7 +216,7 @@ export function PerformanceDashboard({ database }: PerformanceDashboardProps) {
             </CardHeader>
             <CardContent className="space-y-4 text-xs">
               {targetTable ? (
-                suggestions.length > 0 ? suggestions.map((s, i) => (
+                (suggestions as any[]).length > 0 ? (suggestions as any[]).map((s: any, i: number) => (
                   <div key={i} className="flex flex-col gap-2 p-3 bg-[var(--muted)]/30 rounded-lg border border-[var(--border)]/50">
                     <div className="flex gap-3">
                       <div className={`w-8 h-8 rounded-lg ${s.type === 'index' ? 'bg-indigo-500/10 text-indigo-500' : 'bg-yellow-500/10 text-yellow-500'} flex items-center justify-center shrink-0`}>

@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from "react";
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useTables, useSnippets, useSaveSnippetMutation } from "@/hooks/use-database";
 import Editor from "@monaco-editor/react";
@@ -109,8 +110,8 @@ async function explainQuery(
   let complexity = "Simple";
 
   if (plan.rows && plan.rows.length > 0) {
-    plan.rows.forEach((row: any) => {
-      estimatedRows += parseInt(row.rows || 0);
+    (plan.rows as any[]).forEach((row: any) => {
+      estimatedRows += parseInt(row.rows || "0");
       
       const type = row.type || "";
       const extra = row.Extra || "";
@@ -183,7 +184,7 @@ function formatTime(ms: number): string {
   return `${(ms / 1000).toFixed(2)}s`;
 }
 
-function convertToCSV(columns: string[], rows: Record<string, any>[]): string {
+function convertToCSV(columns: string[], rows: any[]): string {
   const escape = (val: string | number | boolean | null | undefined) => {
     if (val === null || val === undefined) return "";
     const str = String(val);
@@ -354,15 +355,15 @@ export function SQLConsole({ database }: SQLConsoleProps) {
       }
     }
   });
-  const handleRun = () => {
+  const handleRun = useCallback(() => {
     if (activeTab.query.trim() && database) {
       runQuery({ database, query: activeTab.query, txId: activeTab.txId, tabId: activeTab.id });
     }
-  };
+  }, [activeTab.query, activeTab.txId, activeTab.id, database, runQuery]);
 
   useEffect(() => {
     handleRunRef.current = handleRun;
-  }, [activeTab.query, database, activeTab.txId]);
+  }, [handleRun]);
 
   const handleBeginTx = async () => {
     if (!database) return;
@@ -395,9 +396,10 @@ export function SQLConsole({ database }: SQLConsoleProps) {
       } else if (data.error && data.error.includes("not found")) {
         updateActiveTab({ txId: undefined });
       }
-    } catch (e: any) {
-      console.error("Failed to commit transaction", e);
-      if (e?.message?.includes("not found")) {
+    } catch (e: unknown) {
+      const error = e as Error;
+      console.error("Failed to commit transaction", error);
+      if (error?.message?.includes("not found")) {
         updateActiveTab({ txId: undefined });
       }
     }
@@ -417,20 +419,21 @@ export function SQLConsole({ database }: SQLConsoleProps) {
       } else if (data.error && data.error.includes("not found")) {
         updateActiveTab({ txId: undefined });
       }
-    } catch (e: any) {
-      console.error("Failed to rollback transaction", e);
-      if (e?.message?.includes("not found")) {
+    } catch (e: unknown) {
+      const error = e as Error;
+      console.error("Failed to rollback transaction", error);
+      if (error?.message?.includes("not found")) {
         updateActiveTab({ txId: undefined });
       }
     }
   };
 
-  const handleEditorMount = (editor: any, monaco: any) => {
+  const handleEditorMount = (editor: { addCommand: (key: number, cb: () => void) => void }, monaco: { languages: { registerCompletionItemProvider: (lang: string, provider: unknown) => void; CompletionItemKind: Record<string, number> }; KeyMod: { CtrlCmd: number }; KeyCode: { Enter: number } }) => {
     // Register SQL keywords autocomplete
     // Register SQL keywords and schema autocomplete
     monaco.languages.registerCompletionItemProvider("sql", {
-      provideCompletionItems: (model: any, position: any) => {
-        const suggestions: any[] = [];
+      provideCompletionItems: (model: { getWordUntilPosition: (pos: { lineNumber: number; column: number }) => { startColumn: number } }, position: { lineNumber: number; column: number }) => {
+        const suggestions: { label: string; kind: number; insertText: string; range: { startLineNumber: number; endLineNumber: number; startColumn: number; endColumn: number }; detail?: string }[] = [];
         
         // Keywords
         const keywords = [
@@ -616,7 +619,7 @@ export function SQLConsole({ database }: SQLConsoleProps) {
                   Your snippet library is empty
                 </div>
               ) : (
-                snippets.map((s: any) => (
+                (snippets as any[]).map((s: { id: string; label: string; sql: string }) => (
                   <button
                     key={s.id}
                     onClick={() => updateActiveTab({ query: s.sql })}

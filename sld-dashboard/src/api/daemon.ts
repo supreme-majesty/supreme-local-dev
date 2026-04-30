@@ -98,7 +98,7 @@ export interface ColumnInfo {
 
 export interface TableData {
   columns: ColumnInfo[];
-  rows: Record<string, any>[];
+  rows: Record<string, unknown>[];
   total: number;
   page: number;
   per_page: number;
@@ -108,7 +108,7 @@ export interface TableData {
 
 export interface ImportAnalysis {
   columns: string[];
-  preview: Record<string, any>[];
+  preview: Record<string, unknown>[];
   format: string;
 }
 
@@ -136,7 +136,7 @@ export interface Snapshot {
 
 export interface QueryResult {
   columns: string[] | null;
-  rows: any[] | null;
+  rows: unknown[] | null;
   rowCount: number;
   message?: string;
   error?: string;
@@ -660,14 +660,14 @@ class DaemonApi {
     });
   }
 
-  async maintenance(database: string, tables: string[], operation: string): Promise<any> {
+  async maintenance(database: string, tables: string[], operation: string): Promise<ActionResponse> {
     return this.request("/db/maintenance", {
       method: "POST",
       body: JSON.stringify({ database, tables, operation }),
     });
   }
 
-  async search(database: string, query: string): Promise<any> {
+  async search(database: string, query: string): Promise<unknown> {
     return this.request(`/db/search?db=${database}&q=${query}`);
   }
 
@@ -761,12 +761,12 @@ class DaemonApi {
     });
   }
 
-  async getStats(database: string): Promise<any> {
-    return this.request<any>(`/db/stats?database=${database}`);
+  async getStats(database: string): Promise<unknown> {
+    return this.request<unknown>(`/db/stats?database=${database}`);
   }
 
-  async getMigrations(database: string): Promise<{ applied: any[]; pending: any[] }> {
-    return this.request<any>(`/db/migrations?database=${database}`);
+  async getMigrations(database: string): Promise<{ applied: unknown[]; pending: unknown[] }> {
+    return this.request<{ applied: unknown[]; pending: unknown[] }>(`/db/migrations?database=${database}`);
   }
 
   async initMigrations(database: string): Promise<ActionResponse> {
@@ -777,7 +777,7 @@ class DaemonApi {
   }
 
   async createMigration(database: string, name: string): Promise<{ filename: string }> {
-    return this.request<any>(`/db/migrations/create`, {
+    return this.request<{ filename: string }>(`/db/migrations/create`, {
       method: "POST",
       body: JSON.stringify({ database, name }),
     });
@@ -790,63 +790,63 @@ class DaemonApi {
     });
   }
 
-  async compareSchemas(source: string, target: string): Promise<any> {
-    return this.request<any>(`/db/compare?source=${source}&target=${target}`);
+  async compareSchemas(source: string, target: string): Promise<unknown> {
+    return this.request<unknown>(`/db/compare?source=${source}&target=${target}`);
   }
 
-  async getOptimizationSuggestions(database: string, table: string): Promise<any[]> {
-    return this.request<any[]>(`/db/optimize?database=${database}&table=${table}`);
+  async getOptimizationSuggestions(database: string, table: string): Promise<unknown[]> {
+    return this.request<unknown[]>(`/db/optimize?database=${database}&table=${table}`);
   }
 
-  async scanPII(database: string, table: string): Promise<any[]> {
-    return this.request<any[]>(`/db/pii/scan?database=${database}&table=${table}`);
+  async scanPII(database: string, table: string): Promise<unknown[]> {
+    return this.request<unknown[]>(`/db/pii/scan?database=${database}&table=${table}`);
   }
 
-  async maskData(config: any): Promise<void> {
+  async maskData(config: unknown): Promise<void> {
     await this.request<void>(`/db/pii/mask`, {
       method: 'POST',
       body: JSON.stringify(config),
     });
   }
 
-  async analyzeQueryPlan(database: string, query: string): Promise<any> {
-    return this.request<any>(`/db/query/analyze`, {
+  async analyzeQueryPlan(database: string, query: string): Promise<unknown> {
+    return this.request<unknown>(`/db/query/analyze`, {
       method: 'POST',
       body: JSON.stringify({ database, query }),
     });
   }
 
-  async generateDocs(database: string): Promise<any[]> {
-    return this.request<any[]>(`/db/docs?database=${database}`);
+  async generateDocs(database: string): Promise<unknown[]> {
+    return this.request<unknown[]>(`/db/docs?database=${database}`);
   }
 
-  async getSnippets(): Promise<any[]> {
-    return this.request<any[]>(`/db/snippets`);
+  async getSnippets(): Promise<unknown[]> {
+    return this.request<unknown[]>(`/db/snippets`);
   }
 
-  async saveSnippet(snippet: any): Promise<void> {
+  async saveSnippet(snippet: unknown): Promise<void> {
     await this.request<void>(`/db/snippets`, {
       method: 'POST',
       body: JSON.stringify(snippet),
     });
   }
 
-  async getAuditLog(): Promise<any[]> {
-    return this.request<any[]>(`/db/audit`);
+  async getAuditLog(): Promise<unknown[]> {
+    return this.request<unknown[]>(`/db/audit`);
   }
 
-  async importData(config: any): Promise<void> {
+  async importData(config: unknown): Promise<void> {
     await this.request<void>(`/db/import/smart`, {
       method: 'POST',
       body: JSON.stringify(config),
     });
   }
 
-  async getProfiles(): Promise<any[]> {
-    return this.request<any[]>(`/db/profiles`);
+  async getProfiles(): Promise<unknown[]> {
+    return this.request<unknown[]>(`/db/profiles`);
   }
 
-  async saveProfile(profile: any): Promise<void> {
+  async saveProfile(profile: unknown): Promise<void> {
     await this.request<void>(`/db/profiles`, {
       method: 'POST',
       body: JSON.stringify(profile),

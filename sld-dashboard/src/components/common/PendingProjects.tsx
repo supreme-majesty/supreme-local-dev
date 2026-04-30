@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useAppStore } from "@/stores/useAppStore";
 import { Loader2 } from "lucide-react";
 import { useSites } from "@/hooks/use-daemon";

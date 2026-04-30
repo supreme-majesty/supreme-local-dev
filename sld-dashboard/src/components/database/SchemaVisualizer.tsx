@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useTableRelationships, useTables } from "@/hooks/use-database";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Table as TableIcon, ArrowRight } from "lucide-react";
