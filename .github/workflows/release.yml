@@ -234,13 +234,13 @@ jobs:
           echo "Syncing version to $VERSION_CLEAN"
           
           # Update package.json version
-          sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION_CLEAN\"/" sld-dashboard/package.json
+          node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('package.json')); p.version='$VERSION_CLEAN'; fs.writeFileSync('package.json', JSON.stringify(p, null, 2))"
           
           # Update tauri.conf.json version
-          sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION_CLEAN\"/" sld-dashboard/src-tauri/tauri.conf.json
+          node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json')); p.version='$VERSION_CLEAN'; fs.writeFileSync('src-tauri/tauri.conf.json', JSON.stringify(p, null, 2))"
           
           # Update Cargo.toml version
-          sed -i "s/^version = \".*\"/version = \"$VERSION_CLEAN\"/" sld-dashboard/src-tauri/Cargo.toml
+          node -e "const fs=require('fs'); const c=fs.readFileSync('src-tauri/Cargo.toml', 'utf8'); fs.writeFileSync('src-tauri/Cargo.toml', c.replace(/^version = \".*\"/m, 'version = \"$VERSION_CLEAN\"'))"
 
       - name: Install Rust (Stable)
         uses: dtolnay/rust-toolchain@stable
