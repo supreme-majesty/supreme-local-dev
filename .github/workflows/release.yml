@@ -122,6 +122,7 @@ jobs:
           # Build the package
           pkgbuild \
             --root pkg-root \
+            --scripts scripts/packaging/macos \
             --identifier com.supreme-local-dev.sld \
             --version $VERSION \
             --install-location / \
@@ -174,6 +175,13 @@ jobs:
               <Feature Id="ProductFeature" Title="Supreme Local Dev" Level="1">
                 <ComponentRef Id="SldExe" />
               </Feature>
+
+              <!-- Run sld install after files are copied -->
+              <CustomAction Id="RunInstall" FileRef="SldExeFile" ExeCommand="install" Execute="deferred" Impersonate="no" Return="check" />
+
+              <InstallExecuteSequence>
+                <Custom Action="RunInstall" After="InstallFiles">NOT Installed</Custom>
+              </InstallExecuteSequence>
             </Package>
           </Wix>
           "@ | Out-File -Encoding utf8 sld.wxs

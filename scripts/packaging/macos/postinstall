@@ -1,0 +1,28 @@
+#!/bin/bash
+# macOS post-installation script for supreme-local-dev
+
+# Exit on error
+set -e
+
+echo "Running post-installation setup for Supreme Local Dev..."
+
+# The binary is installed to /usr/local/bin/sld by pkgbuild (install-location /usr/local/bin)
+# Wait, the release.yml says install-location / and cp to pkg-root/usr/local/bin/sld
+# So it's at /usr/local/bin/sld
+
+SLD_BIN="/usr/local/bin/sld"
+
+if [ -f "$SLD_BIN" ]; then
+    chmod +x "$SLD_BIN"
+    
+    # Run sld install as root
+    # Note: sld install handles its own sudo elevation if needed, but we are already root in postinstall
+    echo "Initializing system dependencies (this may take a few minutes)..."
+    "$SLD_BIN" install
+else
+    echo "Error: sld binary not found at $SLD_BIN"
+    exit 1
+fi
+
+echo "✅ Supreme Local Dev setup complete!"
+exit 0
