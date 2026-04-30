@@ -13,6 +13,38 @@ jobs:
     uses: ./.github/workflows/ci.yml
     secrets: inherit
 
+  sync-version:
+    name: Sync Repository Version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update Files
+        run: |
+          VERSION=${{ github.ref_name }}
+          VERSION_CLEAN=${VERSION#v}
+          echo "Updating source files to $VERSION_CLEAN"
+          
+          # Update sld-dashboard/package.json
+          node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('sld-dashboard/package.json')); p.version='$VERSION_CLEAN'; fs.writeFileSync('sld-dashboard/package.json', JSON.stringify(p, null, 2) + '\n')"
+          
+          # Update sld-dashboard/src-tauri/tauri.conf.json
+          node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('sld-dashboard/src-tauri/tauri.conf.json')); p.version='$VERSION_CLEAN'; fs.writeFileSync('sld-dashboard/src-tauri/tauri.conf.json', JSON.stringify(p, null, 2) + '\n')"
+          
+          # Update sld-dashboard/src-tauri/Cargo.toml
+          node -e "const fs=require('fs'); const c=fs.readFileSync('sld-dashboard/src-tauri/Cargo.toml', 'utf8'); fs.writeFileSync('sld-dashboard/src-tauri/Cargo.toml', c.replace(/^version = \".*\"/m, 'version = \"$VERSION_CLEAN\"'))"
+
+      - name: Commit and Push
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -m "chore: bump version to ${{ github.ref_name }} [skip ci]" || exit 0
+          git push origin main
+
   build-daemon:
     name: Build Daemon (${{ matrix.os }})
     needs: validate

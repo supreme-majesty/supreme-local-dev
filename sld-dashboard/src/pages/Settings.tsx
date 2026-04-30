@@ -295,7 +295,7 @@ export default function Settings() {
             Supreme Local Dev
           </h3>
           <p className="text-[var(--muted-foreground)] text-sm">
-            Version 1.0.0
+            Version {__APP_VERSION__}
           </p>
           <p className="text-[var(--muted-foreground)] text-xs mt-2">
             High-performance local development environment
