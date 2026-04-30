@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "sld-dashboard",
-  "version": "2.1.5",
+  "version": "2.1.8",
   "identifier": "com.supreme-local-dev.app",
   "build": {
     "frontendDist": "../dist",
