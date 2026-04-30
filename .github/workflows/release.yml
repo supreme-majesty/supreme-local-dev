@@ -16,6 +16,8 @@ jobs:
   sync-version:
     name: Sync Repository Version
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -318,6 +320,8 @@ jobs:
         build-tauri,
       ]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
