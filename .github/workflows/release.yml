@@ -183,6 +183,8 @@ jobs:
 
           # Build MSI
           wix build sld.wxs -o supreme-local-dev_${version}_amd64.msi
+        env:
+          WIX_ACCEPT_OSMF_EULA: 1
 
       - name: Upload MSI
         uses: actions/upload-artifact@v4
