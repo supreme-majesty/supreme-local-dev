@@ -238,6 +238,9 @@ jobs:
           
           # Update tauri.conf.json version
           sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION_CLEAN\"/" sld-dashboard/src-tauri/tauri.conf.json
+          
+          # Update Cargo.toml version
+          sed -i "s/^version = \".*\"/version = \"$VERSION_CLEAN\"/" sld-dashboard/src-tauri/Cargo.toml
 
       - name: Install Rust (Stable)
         uses: dtolnay/rust-toolchain@stable
