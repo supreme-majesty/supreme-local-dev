@@ -572,7 +572,11 @@ func (d *DatabaseService) CompareSchemas(sourceDB, targetDB string) (*SchemaDiff
 		return nil, err
 	}
 
-	diff := &SchemaDiff{}
+	diff := &SchemaDiff{
+		TablesToCreate: []string{},
+		TablesToDrop:   []string{},
+		TableDiffs:     []TableDiff{},
+	}
 	var syncSQL strings.Builder
 
 	sourceTables, _ := d.Driver.ListTables(sourceDB)
@@ -632,7 +636,14 @@ func (d *DatabaseService) CompareSchemas(sourceDB, targetDB string) (*SchemaDiff
 }
 
 func (d *DatabaseService) compareTableStructure(sourceDB, targetDB, table string) (TableDiff, error) {
-	diff := TableDiff{TableName: table}
+	diff := TableDiff{
+		TableName:      table,
+		ColumnsToAdd:   []string{},
+		ColumnsToDrop:  []string{},
+		ColumnsToAlter: []string{},
+		IndexesToAdd:   []string{},
+		IndexesToDrop:  []string{},
+	}
 	
 	sourceCols, _ := d.GetTableColumns(sourceDB, table)
 	targetCols, _ := d.GetTableColumns(targetDB, table)

@@ -34,8 +34,9 @@ import {
   Shield,
   BookOpen,
   Globe,
+  Sparkles,
 } from "lucide-react";
-import { MigrationManager } from "@/components/database/MigrationManager";
+
 import { SchemaDiffTool } from "@/components/database/SchemaDiffTool";
 import { formatBytes, formatDate } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
@@ -66,6 +67,7 @@ import { DocumentationPortal } from "@/components/database/DocumentationPortal";
 import { AuditTimeline } from "@/components/database/AuditTimeline";
 import { SmartImporter } from "@/components/database/SmartImporter";
 import { EnvironmentManager } from "@/components/database/EnvironmentManager";
+import { AIAssistant } from "@/components/database/AIAssistant";
 import { CloneDatabaseModal } from "@/components/database/CloneDatabaseModal";
 import { CreateDatabaseModal } from "@/components/database/CreateDatabaseModal";
 import { SchemaCanvas } from "@/components/database/SchemaCanvas";
@@ -1227,14 +1229,7 @@ $mysqli->close();
                 >
                   <Shield size={14} /> Security
                 </Button>
-                <Button
-                  variant={activeTab === "migrations" ? "primary" : "ghost"}
-                  size="sm"
-                  onClick={() => setActiveTab("migrations")}
-                  className="gap-2 rounded-b-none border-b-2 border-transparent data-[variant=primary]:border-[var(--primary)]"
-                >
-                  <HistoryIcon size={14} /> Migrations
-                </Button>
+
                 <Button
                   variant={activeTab === "diff" ? "primary" : "ghost"}
                   size="sm"
@@ -1258,6 +1253,14 @@ $mysqli->close();
                   className="gap-2 rounded-b-none border-b-2 border-transparent data-[variant=primary]:border-[var(--primary)]"
                 >
                   <HistoryIcon size={14} /> Audit
+                </Button>
+                <Button
+                  variant={activeTab === "ai" ? "primary" : "ghost"}
+                  size="sm"
+                  onClick={() => setActiveTab("ai")}
+                  className="gap-2 rounded-b-none border-b-2 border-transparent data-[variant=primary]:border-[var(--primary)]"
+                >
+                  <Sparkles size={14} className="text-blue-500" /> Ask AI
                 </Button>
               </>
             ) : (
@@ -2172,6 +2175,12 @@ $mysqli->close();
             </div>
           )}
 
+          {activeTab === "ai" && selectedDB && (
+            <div className="flex-1 overflow-hidden p-6">
+              <AIAssistant database={selectedDB} />
+            </div>
+          )}
+
           {activeTab === "schema" && selectedDB && (
             <div className="mt-8">
               <SchemaVisualizer database={selectedDB} />
@@ -2361,10 +2370,7 @@ $mysqli->close();
             <SecurityDashboard database={selectedDB} />
           )}
 
-          {/* Context: DB, Tab: Migrations */}
-          {activeTab === "migrations" && selectedDB && (
-            <MigrationManager database={selectedDB} />
-          )}
+
 
           {/* Context: DB, Tab: Diff */}
           {activeTab === "diff" && selectedDB && (

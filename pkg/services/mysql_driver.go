@@ -437,7 +437,7 @@ func (d *MySQLDriver) ExecuteQuery(database, query string, txId string) (*QueryR
 	defer rows.Close()
 
 	cols, _ := rows.Columns()
-	var data []map[string]interface{}
+	data := make([]map[string]interface{}, 0)
 	// Scan logic...
 	// For brevity, similar strictly to GetTableData scan
 	for rows.Next() {

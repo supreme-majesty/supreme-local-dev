@@ -10,7 +10,8 @@ import {
   Terminal,
   Search,
   ShieldCheck,
-  AlertTriangle
+  AlertTriangle,
+  Sparkles
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { useDatabaseStats, useTables, useOptimizationSuggestions, useExecuteQueryMutation } from "@/hooks/use-database";
@@ -156,9 +157,14 @@ export function PerformanceDashboard({ database }: PerformanceDashboardProps) {
                                   <span>Full SQL Query</span>
                                   <span className="flex items-center gap-1"><Clock size={10} /> Running for {p.Time || 0}s</span>
                                 </div>
-                                <pre className="text-xs whitespace-pre-wrap break-all font-mono text-blue-400">
+                                <pre className="text-xs whitespace-pre-wrap break-all font-mono text-blue-400 bg-black/20 p-2 rounded">
                                   {query}
                                 </pre>
+                                <div className="flex justify-end pt-2">
+                                  <Button size="sm" variant="secondary" className="h-7 text-[10px] gap-1 bg-indigo-500/20 text-indigo-500 hover:bg-indigo-500/30">
+                                    <Sparkles size={12} /> AI Analyze Query
+                                  </Button>
+                                </div>
                               </div>
                             </td>
                           </tr>
@@ -193,9 +199,11 @@ export function PerformanceDashboard({ database }: PerformanceDashboardProps) {
             </CardContent>
           </Card>
 
-          <Card className="border-[var(--border)]">
-            <CardHeader className="py-4 flex flex-row items-center justify-between">
-              <CardTitle className="text-sm font-bold">Index Tuner</CardTitle>
+          <Card className="border-[var(--border)] border-indigo-500/20 shadow-lg shadow-indigo-500/5">
+            <CardHeader className="py-4 flex flex-row items-center justify-between bg-indigo-500/5 border-b border-[var(--border)]">
+              <CardTitle className="text-sm font-bold flex items-center gap-2">
+                <Sparkles size={16} className="text-indigo-500" /> AI Auto-Tuner
+              </CardTitle>
               <select 
                 className="text-[10px] bg-[var(--background)] border border-[var(--border)] rounded px-2 py-1 outline-none"
                 value={targetTable}

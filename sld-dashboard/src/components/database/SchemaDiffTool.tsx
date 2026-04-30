@@ -113,7 +113,7 @@ export function SchemaDiffTool({ currentDatabase }: SchemaDiffToolProps) {
                 </div>
               ) : (
                 <div className="divide-y divide-[var(--border)]/50">
-                  {diff?.table_diffs.map((t: any) => (
+                  {(diff?.table_diffs || []).map((t: any) => (
                     <div key={t.table_name} className="p-4 flex items-center justify-between hover:bg-[var(--muted)]/30 transition-colors">
                       <div className="flex items-center gap-4">
                         <div className="w-10 h-10 rounded-lg bg-blue-500/10 flex items-center justify-center text-blue-500">
@@ -122,16 +122,16 @@ export function SchemaDiffTool({ currentDatabase }: SchemaDiffToolProps) {
                         <div>
                           <div className="font-bold text-sm">{t.table_name}</div>
                           <div className="flex gap-2 mt-1">
-                            {t.columns_to_add.length > 0 && <span className="text-[9px] bg-green-500/10 text-green-500 px-1.5 py-0.5 rounded font-bold">+{t.columns_to_add.length} COLS</span>}
-                            {t.columns_to_alter.length > 0 && <span className="text-[9px] bg-blue-500/10 text-blue-500 px-1.5 py-0.5 rounded font-bold">{t.columns_to_alter.length} CHANGES</span>}
-                            {t.columns_to_drop.length > 0 && <span className="text-[9px] bg-red-500/10 text-red-500 px-1.5 py-0.5 rounded font-bold">-{t.columns_to_drop.length} COLS</span>}
+                            {(t.columns_to_add || []).length > 0 && <span className="text-[9px] bg-green-500/10 text-green-500 px-1.5 py-0.5 rounded font-bold">+{(t.columns_to_add || []).length} COLS</span>}
+                            {(t.columns_to_alter || []).length > 0 && <span className="text-[9px] bg-blue-500/10 text-blue-500 px-1.5 py-0.5 rounded font-bold">{(t.columns_to_alter || []).length} CHANGES</span>}
+                            {(t.columns_to_drop || []).length > 0 && <span className="text-[9px] bg-red-500/10 text-red-500 px-1.5 py-0.5 rounded font-bold">-{(t.columns_to_drop || []).length} COLS</span>}
                           </div>
                         </div>
                       </div>
                       <ChevronRight size={16} className="text-[var(--muted-foreground)]" />
                     </div>
                   ))}
-                  {diff?.tables_to_create.map((t: any) => (
+                  {(diff?.tables_to_create || []).map((t: any) => (
                     <div key={t} className="p-4 flex items-center justify-between hover:bg-[var(--muted)]/30 transition-colors bg-green-500/5">
                       <div className="flex items-center gap-4">
                         <div className="w-10 h-10 rounded-lg bg-green-500/10 flex items-center justify-center text-green-500">
@@ -144,7 +144,7 @@ export function SchemaDiffTool({ currentDatabase }: SchemaDiffToolProps) {
                       </div>
                     </div>
                   ))}
-                  {diff?.tables_to_drop.map((t: any) => (
+                  {(diff?.tables_to_drop || []).map((t: any) => (
                     <div key={t} className="p-4 flex items-center justify-between hover:bg-[var(--muted)]/30 transition-colors bg-red-500/5">
                       <div className="flex items-center gap-4">
                         <div className="w-10 h-10 rounded-lg bg-red-500/10 flex items-center justify-center text-red-500">
@@ -157,7 +157,7 @@ export function SchemaDiffTool({ currentDatabase }: SchemaDiffToolProps) {
                       </div>
                     </div>
                   ))}
-                  {(!diff || (diff.tables_to_create.length === 0 && diff.table_diffs.length === 0 && diff.tables_to_drop.length === 0)) && (
+                  {(!diff || ((diff.tables_to_create || []).length === 0 && (diff.table_diffs || []).length === 0 && (diff.tables_to_drop || []).length === 0)) && (
                     <div className="p-12 text-center">
                       <Check size={32} className="mx-auto text-green-500/30 mb-2" />
                       <p className="text-sm text-[var(--muted-foreground)] italic">Schemas are perfectly synchronized.</p>

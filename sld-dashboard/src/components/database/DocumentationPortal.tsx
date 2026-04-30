@@ -9,7 +9,8 @@ import {
   Info,
   ExternalLink,
   ChevronRight,
-  Printer
+  Printer,
+  Sparkles
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -50,6 +51,9 @@ export function DocumentationPortal({ database }: DocumentationPortalProps) {
           <p className="text-[var(--muted-foreground)]">Automatically generated data dictionary for <span className="font-mono text-[var(--foreground)]">{database}</span></p>
         </div>
         <div className="flex gap-2">
+          <Button variant="secondary" size="sm" className="gap-2 bg-indigo-500/10 text-indigo-500 hover:bg-indigo-500/20 border border-indigo-500/20">
+            <Sparkles size={14} /> AI Auto-Document
+          </Button>
           <Button variant="secondary" size="sm" className="gap-2" onClick={() => window.print()}>
             <Printer size={14} /> Print PDF
           </Button>

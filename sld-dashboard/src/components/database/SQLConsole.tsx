@@ -18,11 +18,13 @@ import {
   Plus,
   X,
   BookOpen,
+  BarChart3,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
 import { QueryBuilder } from "./QueryBuilder";
+import { ChartBuilder } from "./ChartBuilder";
 
 interface SQLConsoleProps {
   database: string | null;
@@ -213,6 +215,10 @@ export function SQLConsole({ database }: SQLConsoleProps) {
     ];
   });
   const [activeTabId, setActiveTabId] = useState<string>("1");
+  const activeTabIdRef = useRef(activeTabId);
+  useEffect(() => {
+    activeTabIdRef.current = activeTabId;
+  }, [activeTabId]);
 
   const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
 
@@ -241,6 +247,7 @@ export function SQLConsole({ database }: SQLConsoleProps) {
   const saveSnippetMutation = useSaveSnippetMutation();
   const [isSavingSnippet, setIsSavingSnippet] = useState(false);
   const [snippetLabel, setSnippetLabel] = useState("");
+  const [viewMode, setViewMode] = useState<'table' | 'chart'>('table');
 
   // Save tabs on change
   useEffect(() => {
@@ -279,9 +286,13 @@ export function SQLConsole({ database }: SQLConsoleProps) {
   };
 
   const updateActiveTab = (updates: Partial<QueryTab>) => {
-    setTabs(
-      tabs.map((t) => (t.id === activeTabId ? { ...t, ...updates } : t))
+    setTabs((prev) =>
+      prev.map((t) => (t.id === activeTabIdRef.current ? { ...t, ...updates } : t))
     );
+  };
+
+  const updateTab = (id: string, updates: Partial<QueryTab>) => {
+    setTabs((prev) => prev.map((t) => (t.id === id ? { ...t, ...updates } : t)));
   };
 
   // Close dropdowns when clicking outside
@@ -316,11 +327,12 @@ export function SQLConsole({ database }: SQLConsoleProps) {
   });
 
   const { mutate: runQuery, isPending, error: queryError, reset: resetQuery } = useMutation({
-    mutationFn: (vars: { database: string; query: string; txId?: string }) => {
-      return executeQuery(vars.database, vars.query, vars.txId);
+    mutationFn: async (vars: { database: string; query: string; txId?: string; tabId: string }) => {
+      const data = await executeQuery(vars.database, vars.query, vars.txId);
+      return { data, tabId: vars.tabId };
     },
-    onSuccess: (data) => {
-      updateActiveTab({ result: data, error: null });
+    onSuccess: ({ data, tabId }) => {
+      updateTab(tabId, { result: data, error: null });
       // Add to history
       if (activeTab.query.trim() && database) {
         const entry: HistoryEntry = {
@@ -336,10 +348,15 @@ export function SQLConsole({ database }: SQLConsoleProps) {
         saveHistory(newHistory);
       }
     },
+    onError: (err, vars) => {
+      if (err instanceof Error && err.message.includes("not found or expired")) {
+        updateTab(vars.tabId, { txId: undefined });
+      }
+    }
   });
   const handleRun = () => {
     if (activeTab.query.trim() && database) {
-      runQuery({ database, query: activeTab.query, txId: activeTab.txId });
+      runQuery({ database, query: activeTab.query, txId: activeTab.txId, tabId: activeTab.id });
     }
   };
 
@@ -375,9 +392,14 @@ export function SQLConsole({ database }: SQLConsoleProps) {
       const data = await res.json();
       if (data.success) {
         updateActiveTab({ txId: undefined });
+      } else if (data.error && data.error.includes("not found")) {
+        updateActiveTab({ txId: undefined });
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error("Failed to commit transaction", e);
+      if (e?.message?.includes("not found")) {
+        updateActiveTab({ txId: undefined });
+      }
     }
   };
 
@@ -392,9 +414,14 @@ export function SQLConsole({ database }: SQLConsoleProps) {
       const data = await res.json();
       if (data.success) {
         updateActiveTab({ txId: undefined });
+      } else if (data.error && data.error.includes("not found")) {
+        updateActiveTab({ txId: undefined });
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error("Failed to rollback transaction", e);
+      if (e?.message?.includes("not found")) {
+        updateActiveTab({ txId: undefined });
+      }
     }
   };
 
@@ -977,6 +1004,25 @@ export function SQLConsole({ database }: SQLConsoleProps) {
                 {currentResult.rows.length > 0 && (
                   <div className="flex gap-2">
                     <Button
+                      variant={viewMode === 'table' ? 'secondary' : 'ghost'}
+                      size="sm"
+                      onClick={() => setViewMode('table')}
+                      className="h-6 px-2 text-xs gap-1"
+                    >
+                      <Database size={12} />
+                      Table
+                    </Button>
+                    <Button
+                      variant={viewMode === 'chart' ? 'secondary' : 'ghost'}
+                      size="sm"
+                      onClick={() => setViewMode('chart')}
+                      className="h-6 px-2 text-xs gap-1"
+                    >
+                      <BarChart3 size={12} />
+                      Chart
+                    </Button>
+                    <div className="w-px h-4 bg-[var(--border)] mx-1 self-center" />
+                    <Button
                       variant="ghost"
                       size="sm"
                       onClick={handleCopyCSV}
@@ -1006,12 +1052,16 @@ export function SQLConsole({ database }: SQLConsoleProps) {
                 )}
               </div>
 
-              {/* Results Table */}
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm font-mono whitespace-nowrap">
+              {viewMode === 'chart' ? (
+                <div className="p-4 border-t border-[var(--border)] min-h-[400px]">
+                  <ChartBuilder data={currentResult.rows} columns={currentResult.columns} />
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm font-mono whitespace-nowrap">
                   <thead className="bg-[var(--muted)]/50 sticky top-0">
                     <tr>
-                      {currentResult.columns.map((col) => (
+                      {(currentResult.columns || []).map((col) => (
                         <th
                           key={col}
                           className="px-4 py-2 text-left font-medium border-b border-[var(--border)] text-[var(--muted-foreground)]"
@@ -1022,12 +1072,12 @@ export function SQLConsole({ database }: SQLConsoleProps) {
                     </tr>
                   </thead>
                   <tbody>
-                    {currentResult.rows.map((row, i) => (
+                    {(currentResult.rows || []).map((row, i) => (
                       <tr
                         key={i}
                         className="hover:bg-[var(--card-hover)] border-b border-[var(--border)] last:border-0"
                       >
-                        {currentResult.columns.map((col, j) => (
+                        {(currentResult.columns || []).map((col, j) => (
                           <td
                             key={j}
                             className="px-4 py-1.5 border-r border-[var(--border)] last:border-0 text-[var(--foreground)] cursor-pointer group hover:bg-[var(--primary)]/10"
@@ -1072,6 +1122,7 @@ export function SQLConsole({ database }: SQLConsoleProps) {
                   </tbody>
                 </table>
               </div>
+              )}
             </div>
           );
         })() : (
