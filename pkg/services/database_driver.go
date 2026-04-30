@@ -51,9 +51,9 @@ type MaintenanceResult struct {
 }
 
 type SearchResult struct {
-	Table       string `json:"table"`
-	ColumnCount int    `json:"column_count"`
-	RowCount    int    `json:"row_count"`
+	Table       string                   `json:"table"`
+	ColumnCount int                      `json:"column_count"`
+	RowCount    int                      `json:"row_count"`
 	Matches     []map[string]interface{} `json:"matches,omitempty"`
 }
 

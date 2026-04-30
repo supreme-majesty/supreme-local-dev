@@ -1362,7 +1362,7 @@ func (s *Server) handleDBImportAnalyze(w http.ResponseWriter, r *http.Request) {
 
 	d, _ := daemon.GetClient()
 	tempPath := filepath.Join(os.TempDir(), "sld_import_"+handler.Filename)
-	
+
 	dst, err := os.Create(tempPath)
 	if err != nil {
 		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
@@ -1407,7 +1407,7 @@ func (s *Server) handleDBImportExecute(w http.ResponseWriter, r *http.Request) {
 
 	d, _ := daemon.GetClient()
 	err := d.DatabaseService.ExecuteImport(req.Database, req.Table, req.TempPath, req.Format, req.Mapping)
-	
+
 	// Clean up temp file
 	os.Remove(req.TempPath)
 
@@ -1498,7 +1498,7 @@ func (s *Server) handleDBExplain(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDBFullSchema(w http.ResponseWriter, r *http.Request) {
 	d, _ := daemon.GetClient()
-	
+
 	databases, err := d.DatabaseService.ListDatabases()
 	if err != nil {
 		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
@@ -2118,10 +2118,10 @@ func (s *Server) handleServiceControl(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDBMigrations(w http.ResponseWriter, r *http.Request) {
 	database := r.URL.Query().Get("database")
 	d, _ := daemon.GetClient()
-	
+
 	applied, _ := d.DatabaseService.GetAppliedMigrations(database)
 	pending, _ := d.DatabaseService.GetPendingMigrations(database)
-	
+
 	jsonResponse(w, map[string]interface{}{
 		"applied": applied,
 		"pending": pending,
@@ -2129,7 +2129,9 @@ func (s *Server) handleDBMigrations(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDBMigrationsInit(w http.ResponseWriter, r *http.Request) {
-	var req struct { Database string `json:"database"` }
+	var req struct {
+		Database string `json:"database"`
+	}
 	json.NewDecoder(r.Body).Decode(&req)
 	d, _ := daemon.GetClient()
 	if err := d.DatabaseService.InitializeMigrations(req.Database); err != nil {
@@ -2172,7 +2174,7 @@ func (s *Server) handleDBCompare(w http.ResponseWriter, r *http.Request) {
 	source := r.URL.Query().Get("source")
 	target := r.URL.Query().Get("target")
 	d, _ := daemon.GetClient()
-	
+
 	diff, err := d.DatabaseService.CompareSchemas(source, target)
 	if err != nil {
 		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
@@ -2185,7 +2187,7 @@ func (s *Server) handleDBOptimize(w http.ResponseWriter, r *http.Request) {
 	database := r.URL.Query().Get("database")
 	table := r.URL.Query().Get("table")
 	d, _ := daemon.GetClient()
-	
+
 	suggestions, err := d.DatabaseService.GetOptimizationSuggestions(database, table)
 	if err != nil {
 		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
@@ -2198,7 +2200,7 @@ func (s *Server) handleDBPIIScan(w http.ResponseWriter, r *http.Request) {
 	database := r.URL.Query().Get("database")
 	table := r.URL.Query().Get("table")
 	d, _ := daemon.GetClient()
-	
+
 	results, err := d.DatabaseService.ScanPII(database, table)
 	if err != nil {
 		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
@@ -2265,7 +2267,7 @@ func (s *Server) handleDBSnippets(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, map[string]string{"status": "success"}, 200)
 		return
 	}
-	
+
 	snippets, err := d.DatabaseService.GetSnippets()
 	if err != nil {
 		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
@@ -2333,7 +2335,9 @@ func (s *Server) handleDBMaintenanceSchedule(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) handleDBSwitch(w http.ResponseWriter, r *http.Request) {
-	var req struct { ID string `json:"id"` }
+	var req struct {
+		ID string `json:"id"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
 		return

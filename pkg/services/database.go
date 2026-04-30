@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/go-sql-driver/mysql"
 	"github.com/brianvoe/gofakeit/v6"
+	_ "github.com/go-sql-driver/mysql"
 )
 
 type ConnectionProfile struct {
@@ -30,19 +30,19 @@ type ConnectionProfile struct {
 }
 
 type WebhookConfig struct {
-	URL      string `json:"url"`
-	Type     string `json:"type"`    // SLACK, DISCORD, GENERIC
-	Enabled  bool   `json:"enabled"`
-	Events   []string `json:"events"` // AUDIT, HEALTH, PERFORMANCE
+	URL     string   `json:"url"`
+	Type    string   `json:"type"` // SLACK, DISCORD, GENERIC
+	Enabled bool     `json:"enabled"`
+	Events  []string `json:"events"` // AUDIT, HEALTH, PERFORMANCE
 }
 
 type MaintenanceTask struct {
-	ID        string    `json:"id"`
-	Database  string    `json:"database"`
-	Type      string    `json:"type"` // BACKUP, OPTIMIZE, PII_SCAN
-	Schedule  string    `json:"schedule"` // CRON string
-	LastRun   time.Time `json:"last_run"`
-	Enabled   bool      `json:"enabled"`
+	ID       string    `json:"id"`
+	Database string    `json:"database"`
+	Type     string    `json:"type"`     // BACKUP, OPTIMIZE, PII_SCAN
+	Schedule string    `json:"schedule"` // CRON string
+	LastRun  time.Time `json:"last_run"`
+	Enabled  bool      `json:"enabled"`
 }
 
 type PIIResult struct {
@@ -59,18 +59,18 @@ type MaskingConfig struct {
 }
 
 type TableDoc struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
+	Name        string      `json:"name"`
+	Description string      `json:"description"`
 	Columns     []ColumnDoc `json:"columns"`
-	RowCount    int64 `json:"row_count"`
-	Size        string `json:"size"`
+	RowCount    int64       `json:"row_count"`
+	Size        string      `json:"size"`
 }
 
 type ColumnDoc struct {
 	Name        string `json:"name"`
 	Type        string `json:"type"`
 	Description string `json:"description"`
-	IsNullable  bool `json:"is_nullable"`
+	IsNullable  bool   `json:"is_nullable"`
 	Default     string `json:"default"`
 	Key         string `json:"key"`
 }
@@ -102,10 +102,10 @@ type Migration struct {
 }
 
 type SchemaDiff struct {
-	TablesToCreate []string `json:"tables_to_create"`
-	TablesToDrop   []string `json:"tables_to_drop"`
+	TablesToCreate []string    `json:"tables_to_create"`
+	TablesToDrop   []string    `json:"tables_to_drop"`
 	TableDiffs     []TableDiff `json:"table_diffs"`
-	SyncSQL        string `json:"sync_sql"`
+	SyncSQL        string      `json:"sync_sql"`
 }
 
 type TableDiff struct {
@@ -220,14 +220,16 @@ func (d *DatabaseService) ListTables(database string) ([]TableInfo, error) {
 func (d *DatabaseService) LogAudit(entry SchemaAuditEntry) error {
 	logPath := filepath.Join(".sld", "schema_audit.json")
 	var logs []SchemaAuditEntry
-	
+
 	if data, err := os.ReadFile(logPath); err == nil {
 		json.Unmarshal(data, &logs)
 	}
-	
+
 	logs = append([]SchemaAuditEntry{entry}, logs...)
-	if len(logs) > 100 { logs = logs[:100] }
-	
+	if len(logs) > 100 {
+		logs = logs[:100]
+	}
+
 	data, _ := json.MarshalIndent(logs, "", "  ")
 	os.MkdirAll(".sld", 0755)
 	return os.WriteFile(logPath, data, 0644)
@@ -237,7 +239,9 @@ func (d *DatabaseService) GetAuditLog() ([]SchemaAuditEntry, error) {
 	logPath := filepath.Join(".sld", "schema_audit.json")
 	var logs []SchemaAuditEntry
 	data, err := os.ReadFile(logPath)
-	if err != nil { return []SchemaAuditEntry{}, nil }
+	if err != nil {
+		return []SchemaAuditEntry{}, nil
+	}
 	json.Unmarshal(data, &logs)
 	return logs, nil
 }
@@ -245,11 +249,11 @@ func (d *DatabaseService) GetAuditLog() ([]SchemaAuditEntry, error) {
 func (d *DatabaseService) SaveSnippet(snippet QuerySnippet) error {
 	path := filepath.Join(".sld", "query_library.json")
 	var snippets []QuerySnippet
-	
+
 	if data, err := os.ReadFile(path); err == nil {
 		json.Unmarshal(data, &snippets)
 	}
-	
+
 	snippets = append(snippets, snippet)
 	data, _ := json.MarshalIndent(snippets, "", "  ")
 	os.MkdirAll(".sld", 0755)
@@ -260,7 +264,9 @@ func (d *DatabaseService) GetSnippets() ([]QuerySnippet, error) {
 	path := filepath.Join(".sld", "query_library.json")
 	var snippets []QuerySnippet
 	data, err := os.ReadFile(path)
-	if err != nil { return []QuerySnippet{}, nil }
+	if err != nil {
+		return []QuerySnippet{}, nil
+	}
 	json.Unmarshal(data, &snippets)
 	return snippets, nil
 }
@@ -274,11 +280,15 @@ func (d *DatabaseService) GetTableColumns(database, table string) ([]ColumnInfo,
 }
 
 func (d *DatabaseService) ImportData(database, table string, mapping map[string]string, data []map[string]interface{}) error {
-	if err := d.ensureConnected(); err != nil { return err }
-	
+	if err := d.ensureConnected(); err != nil {
+		return err
+	}
+
 	// Create a transaction
 	txId, err := d.BeginTransaction(database)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	defer d.RollbackTransaction(txId)
 
 	for _, row := range data {
@@ -292,14 +302,16 @@ func (d *DatabaseService) ImportData(database, table string, mapping map[string]
 			placeholders = append(placeholders, "?")
 		}
 
-		query := fmt.Sprintf("INSERT INTO `%s` (%s) VALUES (%s)", 
-			table, 
-			strings.Join(cols, ", "), 
+		query := fmt.Sprintf("INSERT INTO `%s` (%s) VALUES (%s)",
+			table,
+			strings.Join(cols, ", "),
 			strings.Join(placeholders, ", "),
 		)
-		
+
 		_, err := d.ExecuteQuery(database, query, txId)
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
 	}
 
 	return d.CommitTransaction(txId)
@@ -366,7 +378,9 @@ func (d *DatabaseService) GetTables(database string) ([]TableInfo, error) {
 
 func (d *DatabaseService) GenerateDocumentation(database string) ([]TableDoc, error) {
 	tables, err := d.GetTables(database)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 
 	var docs []TableDoc
 	for _, t := range tables {
@@ -376,20 +390,20 @@ func (d *DatabaseService) GenerateDocumentation(database string) ([]TableDoc, er
 		var colDocs []ColumnDoc
 		for _, c := range cols {
 			colDocs = append(colDocs, ColumnDoc{
-				Name: c.Name,
-				Type: c.Type,
-				IsNullable: c.Nullable,
-				Default: c.Default,
+				Name:        c.Name,
+				Type:        c.Type,
+				IsNullable:  c.Nullable,
+				Default:     c.Default,
 				Description: fmt.Sprintf("Storage for %s information.", c.Name),
 			})
 		}
 
 		docs = append(docs, TableDoc{
-			Name: t.Name,
+			Name:        t.Name,
 			Description: fmt.Sprintf("Data entity for %s records.", t.Name),
-			Columns: colDocs,
-			RowCount: info.RowCount,
-			Size: fmt.Sprintf("%d bytes", info.Size),
+			Columns:     colDocs,
+			RowCount:    info.RowCount,
+			Size:        fmt.Sprintf("%d bytes", info.Size),
 		})
 	}
 	return docs, nil
@@ -431,7 +445,7 @@ func (d *DatabaseService) InitializeMigrations(database string) error {
 	`
 	// Adjust for Postgres if needed, but for now we'll stick to MySQL compatible or use Driver specific logic
 	// In a real multi-db app, we'd put this in the driver.
-	
+
 	_, err := d.Query(database, query, nil)
 	return err
 }
@@ -467,12 +481,12 @@ func (d *DatabaseService) GetPendingMigrations(database string) ([]Migration, er
 	if err != nil {
 		return nil, err
 	}
-	
+
 	appliedMap := make(map[string]bool)
 	for _, m := range applied {
 		appliedMap[m.Version] = true
 	}
-	
+
 	dir := filepath.Join("migrations", database)
 	files, err := os.ReadDir(dir)
 	if err != nil {
@@ -481,13 +495,13 @@ func (d *DatabaseService) GetPendingMigrations(database string) ([]Migration, er
 		}
 		return nil, err
 	}
-	
+
 	var pending []Migration
 	for _, f := range files {
 		if f.IsDir() || !strings.HasSuffix(f.Name(), ".sql") {
 			continue
 		}
-		
+
 		version := strings.Split(f.Name(), "_")[0]
 		if !appliedMap[version] {
 			name := strings.TrimSuffix(strings.TrimPrefix(f.Name(), version+"_"), ".sql")
@@ -498,52 +512,52 @@ func (d *DatabaseService) GetPendingMigrations(database string) ([]Migration, er
 			})
 		}
 	}
-	
+
 	return pending, nil
 }
 
 func (d *DatabaseService) CreateMigration(database, name string) (string, error) {
 	version := time.Now().Format("20060102150405")
 	filename := fmt.Sprintf("%s_%s.sql", version, name)
-	
+
 	// Create migrations dir if not exists
 	dir := filepath.Join("migrations", database)
 	os.MkdirAll(dir, 0755)
-	
+
 	path := filepath.Join(dir, filename)
 	content := "-- UP\n\n\n-- DOWN\n\n"
-	
+
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		return "", err
 	}
-	
+
 	return filename, nil
 }
 
 func (d *DatabaseService) RunMigration(database, filename string) error {
 	dir := filepath.Join("migrations", database)
 	path := filepath.Join(dir, filename)
-	
+
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
-	
+
 	// Parse UP section
 	parts := strings.Split(string(content), "-- DOWN")
 	upSection := parts[0]
 	upSection = strings.TrimPrefix(upSection, "-- UP")
-	
+
 	// Split version from filename
 	version := strings.Split(filename, "_")[0]
 	name := strings.TrimSuffix(strings.TrimPrefix(filename, version+"_"), ".sql")
-	
+
 	// Run in transaction
 	txId, err := d.BeginTransaction(database)
 	if err != nil {
 		return err
 	}
-	
+
 	// Split queries by semicolon and execute
 	queries := strings.Split(upSection, ";")
 	for _, q := range queries {
@@ -556,14 +570,14 @@ func (d *DatabaseService) RunMigration(database, filename string) error {
 			return err
 		}
 	}
-	
+
 	// Record migration
 	recordQuery := fmt.Sprintf("INSERT INTO _sld_migrations (version, name) VALUES ('%s', '%s')", version, name)
 	if _, err := d.ExecuteQuery(database, recordQuery, txId); err != nil {
 		d.RollbackTransaction(txId)
 		return err
 	}
-	
+
 	return d.CommitTransaction(txId)
 }
 
@@ -616,7 +630,7 @@ func (d *DatabaseService) CompareSchemas(sourceDB, targetDB string) (*SchemaDiff
 			tableDiff, err := d.compareTableStructure(sourceDB, targetDB, t.Name)
 			if err == nil && (len(tableDiff.ColumnsToAdd) > 0 || len(tableDiff.ColumnsToDrop) > 0 || len(tableDiff.ColumnsToAlter) > 0) {
 				diff.TableDiffs = append(diff.TableDiffs, tableDiff)
-				
+
 				// Generate ALTER SQL
 				for _, col := range tableDiff.ColumnsToAdd {
 					syncSQL.WriteString(fmt.Sprintf("ALTER TABLE `%s` ADD %s;\n", t.Name, col))
@@ -644,54 +658,67 @@ func (d *DatabaseService) compareTableStructure(sourceDB, targetDB, table string
 		IndexesToAdd:   []string{},
 		IndexesToDrop:  []string{},
 	}
-	
+
 	sourceCols, _ := d.GetTableColumns(sourceDB, table)
 	targetCols, _ := d.GetTableColumns(targetDB, table)
-	
+
 	sourceColMap := make(map[string]ColumnInfo)
 	for _, c := range sourceCols {
 		sourceColMap[c.Name] = c
 	}
-	
+
 	targetColMap := make(map[string]ColumnInfo)
 	for _, c := range targetCols {
 		targetColMap[c.Name] = c
 	}
-	
+
 	// Columns to add
 	for _, tc := range targetCols {
 		if _, exists := sourceColMap[tc.Name]; !exists {
 			colDef := fmt.Sprintf("`%s` %s", tc.Name, tc.Type)
-			if !tc.Nullable { colDef += " NOT NULL" }
-			if tc.Default != "" { colDef += " DEFAULT " + tc.Default }
+			if !tc.Nullable {
+				colDef += " NOT NULL"
+			}
+			if tc.Default != "" {
+				colDef += " DEFAULT " + tc.Default
+			}
 			diff.ColumnsToAdd = append(diff.ColumnsToAdd, colDef)
 		} else {
 			// Compare definition
 			sc := sourceColMap[tc.Name]
 			if sc.Type != tc.Type || sc.Nullable != tc.Nullable {
 				colDef := fmt.Sprintf("`%s` %s", tc.Name, tc.Type)
-				if !tc.Nullable { colDef += " NOT NULL" }
-				if tc.Default != "" { colDef += " DEFAULT " + tc.Default }
+				if !tc.Nullable {
+					colDef += " NOT NULL"
+				}
+				if tc.Default != "" {
+					colDef += " DEFAULT " + tc.Default
+				}
 				diff.ColumnsToAlter = append(diff.ColumnsToAlter, colDef)
 			}
 		}
 	}
-	
+
 	// Columns to drop
 	for _, sc := range sourceCols {
 		if _, exists := targetColMap[sc.Name]; !exists {
 			diff.ColumnsToDrop = append(diff.ColumnsToDrop, sc.Name)
 		}
 	}
-	
+
 	return diff, nil
 }
 
 func (d *DatabaseService) ScanPII(database, table string) ([]PIIResult, error) {
 	cols, err := d.GetTableColumns(database, table)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 
-	patterns := map[string]struct{regex *regexp.Regexp; risk string}{
+	patterns := map[string]struct {
+		regex *regexp.Regexp
+		risk  string
+	}{
 		"EMAIL": {regexp.MustCompile(`(?i)[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}`), "HIGH"},
 		"PHONE": {regexp.MustCompile(`(?i)\+?[\d\s\-()]{7,}`), "MEDIUM"},
 		"CC":    {regexp.MustCompile(`\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}`), "HIGH"},
@@ -703,7 +730,9 @@ func (d *DatabaseService) ScanPII(database, table string) ([]PIIResult, error) {
 		// Fetch sample data
 		query := fmt.Sprintf("SELECT `%s` FROM `%s` WHERE `%s` IS NOT NULL LIMIT 50", col.Name, table, col.Name)
 		rows, err := d.Query(database, query, nil)
-		if err != nil { continue }
+		if err != nil {
+			continue
+		}
 
 		for name, p := range patterns {
 			matchCount := 0
@@ -712,15 +741,17 @@ func (d *DatabaseService) ScanPII(database, table string) ([]PIIResult, error) {
 				val := fmt.Sprintf("%v", row[col.Name])
 				if p.regex.MatchString(val) {
 					matchCount++
-					if len(examples) < 3 { examples = append(examples, val) }
+					if len(examples) < 3 {
+						examples = append(examples, val)
+					}
 				}
 			}
 
 			if matchCount > 5 { // Threshold for detection
 				results = append(results, PIIResult{
-					Column: col.Name,
-					Pattern: name,
-					Risk: p.risk,
+					Column:   col.Name,
+					Pattern:  name,
+					Risk:     p.risk,
 					Examples: examples,
 				})
 				break
@@ -734,30 +765,41 @@ func (d *DatabaseService) AnonymizeTable(config MaskingConfig) error {
 	// For each row in the table, update the values with fakes
 	// In a real app, we'd use a more efficient batch update
 	rows, err := d.Query(config.Database, "SELECT * FROM `"+config.Table+"`", nil)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 
 	txId, err := d.BeginTransaction(config.Database)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 
 	for _, row := range rows {
 		pkCol := "" // Simple assumption for now: first column is ID
 		// Find PK...
-		for k := range row { pkCol = k; break }
-		
+		for k := range row {
+			pkCol = k
+			break
+		}
+
 		var updates []string
 		var args []interface{}
 		for col, maskType := range config.Columns {
 			var fakeVal interface{}
 			switch maskType {
-			case "EMAIL": fakeVal = gofakeit.Email()
-			case "PHONE": fakeVal = gofakeit.Phone()
-			case "NAME":  fakeVal = gofakeit.Name()
-			default:      fakeVal = gofakeit.Word()
+			case "EMAIL":
+				fakeVal = gofakeit.Email()
+			case "PHONE":
+				fakeVal = gofakeit.Phone()
+			case "NAME":
+				fakeVal = gofakeit.Name()
+			default:
+				fakeVal = gofakeit.Word()
 			}
 			updates = append(updates, fmt.Sprintf("`%s` = ?", col))
 			args = append(args, fakeVal)
 		}
-		
+
 		if len(updates) > 0 {
 			sql := fmt.Sprintf("UPDATE `%s` SET %s WHERE `%s` = ?", config.Table, strings.Join(updates, ", "), pkCol)
 			args = append(args, row[pkCol])
@@ -781,10 +823,10 @@ func (d *DatabaseService) GetOptimizationSuggestions(database, table string) ([]
 	}
 
 	var suggestions []map[string]string
-	
+
 	cols, _ := d.GetTableColumns(database, table)
 	indexes, _ := d.GetTableIndexes(database, table)
-	
+
 	// 1. Check for Foreign Keys without Indexes
 	for _, col := range cols {
 		if col.ForeignKey != nil {
@@ -796,28 +838,30 @@ func (d *DatabaseService) GetOptimizationSuggestions(database, table string) ([]
 						break
 					}
 				}
-				if hasIndex { break }
+				if hasIndex {
+					break
+				}
 			}
-			
+
 			if !hasIndex {
 				suggestions = append(suggestions, map[string]string{
-					"type": "index",
-					"title": "Missing Index on Foreign Key",
+					"type":        "index",
+					"title":       "Missing Index on Foreign Key",
 					"description": fmt.Sprintf("The column `%s` is a foreign key but lacks an index. This can severely degrade JOIN performance.", col.Name),
-					"sql": fmt.Sprintf("CREATE INDEX idx_%s_%s ON `%s`(`%s`);", table, col.Name, table, col.Name),
+					"sql":         fmt.Sprintf("CREATE INDEX idx_%s_%s ON `%s`(`%s`);", table, col.Name, table, col.Name),
 				})
 			}
 		}
 	}
-	
+
 	// 2. Check for Table Overhead (MySQL only mostly)
 	info, _ := d.GetTableInfo(database, table)
 	if info != nil && info.Overhead > 1024*1024*10 { // > 10MB overhead
 		suggestions = append(suggestions, map[string]string{
-			"type": "maintenance",
-			"title": "High Fragmentation",
+			"type":        "maintenance",
+			"title":       "High Fragmentation",
 			"description": fmt.Sprintf("Table `%s` has %d bytes of overhead. Running OPTIMIZE will reclaim space and improve performance.", table, info.Overhead),
-			"sql": fmt.Sprintf("OPTIMIZE TABLE `%s`;", table),
+			"sql":         fmt.Sprintf("OPTIMIZE TABLE `%s`;", table),
 		})
 	}
 
@@ -1219,6 +1263,7 @@ func (d *DatabaseService) GetTableRelationships(database string) ([]TableRelatio
 	}
 	return d.Driver.GetTableRelationships(database)
 }
+
 // ImportAnalysis represents the result of analyzing an import file
 type ImportAnalysis struct {
 	Columns []string                 `json:"columns"`
@@ -1494,15 +1539,19 @@ func (d *DatabaseService) SaveProfile(profile ConnectionProfile) error {
 
 func (d *DatabaseService) ListProfiles() ([]ConnectionProfile, error) {
 	data, err := os.ReadFile(filepath.Join(".sld", "connections.json"))
-	if err != nil { return []ConnectionProfile{}, nil }
+	if err != nil {
+		return []ConnectionProfile{}, nil
+	}
 	var profiles []ConnectionProfile
 	json.Unmarshal(data, &profiles)
 	return profiles, nil
 }
 
 func (d *DatabaseService) SendWebhook(config WebhookConfig, title, message string) error {
-	if !config.Enabled { return nil }
-	
+	if !config.Enabled {
+		return nil
+	}
+
 	payload := map[string]interface{}{
 		"text": fmt.Sprintf("*%s*\n%s", title, message),
 	}
@@ -1527,7 +1576,9 @@ func (d *DatabaseService) ExecuteMaintenance(task MaintenanceTask) error {
 	case "OPTIMIZE":
 		tables, _ := d.ListTables(task.Database)
 		tableNames := []string{}
-		for _, t := range tables { tableNames = append(tableNames, t.Name) }
+		for _, t := range tables {
+			tableNames = append(tableNames, t.Name)
+		}
 		_, err := d.Maintenance(task.Database, tableNames, "OPTIMIZE")
 		return err
 	}

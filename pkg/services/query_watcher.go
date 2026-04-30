@@ -12,13 +12,13 @@ import (
 )
 
 type QueryLog struct {
-	ID        string    `json:"id"`
-	EventTime string    `json:"event_time"`
-	UserHost  string    `json:"user_host"`
-	ThreadID  int64     `json:"thread_id"`
-	ServerID  int64     `json:"server_id"`
-	Command   string    `json:"command"`
-	Argument  string    `json:"argument"`
+	ID        string `json:"id"`
+	EventTime string `json:"event_time"`
+	UserHost  string `json:"user_host"`
+	ThreadID  int64  `json:"thread_id"`
+	ServerID  int64  `json:"server_id"`
+	Command   string `json:"command"`
+	Argument  string `json:"argument"`
 }
 
 type QueryWatcher struct {
@@ -82,7 +82,7 @@ func (w *QueryWatcher) Stop() {
 	}
 	w.running = false
 	close(w.stopCh)
-	
+
 	// Turn off general log to save resources
 	w.db.Exec("SET GLOBAL general_log = 'OFF';")
 }
@@ -102,7 +102,7 @@ func (w *QueryWatcher) poll() {
 }
 
 func (w *QueryWatcher) fetchQueries() {
-	// general_log table schema: 
+	// general_log table schema:
 	// event_time, user_host, thread_id, server_id, command_type, argument
 	query := `
 		SELECT event_time, user_host, thread_id, server_id, command_type, CONVERT(argument USING utf8) 
@@ -130,14 +130,14 @@ func (w *QueryWatcher) fetchQueries() {
 		q.EventTime = eventTime.Format(time.RFC3339)
 		q.Argument = string(arg)
 		q.ID = fmt.Sprintf("query-%d-%d", q.ThreadID, eventTime.UnixNano())
-		
+
 		// Filter out noisy queries
 		lowerArg := strings.ToLower(q.Argument)
-		if strings.Contains(lowerArg, "select * from mysql.general_log") || 
-		   strings.Contains(lowerArg, "set global") ||
-		   strings.Contains(lowerArg, "show ") ||
-		   q.Argument == "SELECT NOW()" ||
-		   q.Argument == "COMMIT" {
+		if strings.Contains(lowerArg, "select * from mysql.general_log") ||
+			strings.Contains(lowerArg, "set global") ||
+			strings.Contains(lowerArg, "show ") ||
+			q.Argument == "SELECT NOW()" ||
+			q.Argument == "COMMIT" {
 			continue
 		}
 

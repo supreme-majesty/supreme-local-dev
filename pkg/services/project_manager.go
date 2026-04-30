@@ -1004,7 +1004,7 @@ func (pm *ProjectManager) ReadFile(filePath string) (string, error) {
 // SaveFile writes content to a file
 func (pm *ProjectManager) SaveFile(filePath string, content string) error {
 	// Security: check path scope
-	
+
 	// Create backup for .env files automatically?
 	if filepath.Base(filePath) == ".env" {
 		em := NewEnvManager()

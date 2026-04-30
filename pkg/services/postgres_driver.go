@@ -381,7 +381,7 @@ func (d *PostgresDriver) ExecuteQuery(database, query string, txId string) (*Que
 		} else {
 			rows, err = targetDB.Query(query)
 		}
-		
+
 		if err != nil {
 			return nil, err
 		}

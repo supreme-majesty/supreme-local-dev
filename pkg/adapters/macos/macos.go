@@ -149,7 +149,7 @@ func (m *MacOSAdapter) GenerateCert(homeDir string, domains []string) error {
 	// 3. Generate
 	args := []string{"-cert-file", certPath, "-key-file", keyPath, "*.test", "sld.test", "localhost", "127.0.0.1", "::1"}
 	args = append(args, domains...)
-	
+
 	cmd := exec.Command("mkcert", args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -163,7 +163,7 @@ func (m *MacOSAdapter) InstallBinary() error {
 	}
 	dest := "/usr/local/bin/sld"
 	m.log.Info("Installing binary to %s...", dest)
-	
+
 	if err := m.runner.RunElevated("cp", exe, dest); err != nil {
 		return err
 	}
@@ -174,11 +174,11 @@ func (m *MacOSAdapter) Uninstall() error {
 	fmt.Println("Removing SLD from macOS...")
 	dest := "/usr/local/bin/sld"
 	exec.Command("sudo", "rm", dest).Run()
-	
+
 	prefix := m.getBrewPrefix()
 	configPath := filepath.Join(prefix, "etc", "nginx", "sld-sites.conf")
 	os.Remove(configPath)
-	
+
 	// Note: We don't remove brew packages as they might be used by other things
 	return nil
 }

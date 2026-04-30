@@ -121,7 +121,7 @@ func Initialize() (*Daemon, error) {
 
 	// Start Healer
 	instance.HealerService.Start()
-	
+
 	// Start QueryWatcher (try default local MySQL)
 	qw, err := services.NewQueryWatcher(eventBus, "root@tcp(127.0.0.1:3306)/")
 	if err == nil {

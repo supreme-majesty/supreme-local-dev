@@ -390,19 +390,19 @@ func (d *MySQLDriver) ExecuteQuery(database, query string, txId string) (*QueryR
 			return nil, fmt.Errorf("transaction %s not found or expired", txId)
 		}
 
-		if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(query)), "SELECT") || 
-		   strings.HasPrefix(strings.ToUpper(strings.TrimSpace(query)), "SHOW") ||
-		   strings.HasPrefix(strings.ToUpper(strings.TrimSpace(query)), "DESC") ||
-		   strings.HasPrefix(strings.ToUpper(strings.TrimSpace(query)), "EXPLAIN") {
+		if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(query)), "SELECT") ||
+			strings.HasPrefix(strings.ToUpper(strings.TrimSpace(query)), "SHOW") ||
+			strings.HasPrefix(strings.ToUpper(strings.TrimSpace(query)), "DESC") ||
+			strings.HasPrefix(strings.ToUpper(strings.TrimSpace(query)), "EXPLAIN") {
 			rows, err = tx.Query(query)
 		} else {
 			result, err = tx.Exec(query)
 		}
 	} else {
-		if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(query)), "SELECT") || 
-		   strings.HasPrefix(strings.ToUpper(strings.TrimSpace(query)), "SHOW") ||
-		   strings.HasPrefix(strings.ToUpper(strings.TrimSpace(query)), "DESC") ||
-		   strings.HasPrefix(strings.ToUpper(strings.TrimSpace(query)), "EXPLAIN") {
+		if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(query)), "SELECT") ||
+			strings.HasPrefix(strings.ToUpper(strings.TrimSpace(query)), "SHOW") ||
+			strings.HasPrefix(strings.ToUpper(strings.TrimSpace(query)), "DESC") ||
+			strings.HasPrefix(strings.ToUpper(strings.TrimSpace(query)), "EXPLAIN") {
 			rows, err = d.db.Query(query)
 		} else {
 			result, err = d.db.Exec(query)
@@ -412,7 +412,7 @@ func (d *MySQLDriver) ExecuteQuery(database, query string, txId string) (*QueryR
 	if err != nil {
 		return nil, err
 	}
-	
+
 	elapsed := time.Since(start).Milliseconds()
 
 	if result != nil {
@@ -657,11 +657,17 @@ func (d *MySQLDriver) GetTableInfo(database, table string) (*TableInfo, error) {
 		Engine:    row["ENGINE"].(string),
 		Collation: row["TABLE_COLLATION"].(string),
 	}
-	
+
 	// Handle numeric types safely
-	if v, ok := row["TABLE_ROWS"].(int64); ok { info.RowCount = v }
-	if v, ok := row["SIZE"].(int64); ok { info.Size = v }
-	if v, ok := row["OVERHEAD"].(int64); ok { info.Overhead = v }
+	if v, ok := row["TABLE_ROWS"].(int64); ok {
+		info.RowCount = v
+	}
+	if v, ok := row["SIZE"].(int64); ok {
+		info.Size = v
+	}
+	if v, ok := row["OVERHEAD"].(int64); ok {
+		info.Overhead = v
+	}
 
 	return info, nil
 }
@@ -906,7 +912,7 @@ func (m *MySQLDriver) GlobalSearch(database string, query string) ([]SearchResul
 		}
 
 		searchSQL := fmt.Sprintf("SELECT * FROM `%s`.`%s` WHERE %s LIMIT 10", database, table.Name, strings.Join(conditions, " OR "))
-		
+
 		rows, err := m.db.Query(searchSQL)
 		if err != nil {
 			continue
@@ -1008,7 +1014,7 @@ func (m *MySQLDriver) ExplainQuery(database, query string) (*QueryExplanation, e
 	cols, _ := rows.Columns()
 	var plan []map[string]interface{}
 	var estRows int64
-	
+
 	for rows.Next() {
 		columns := make([]interface{}, len(cols))
 		columnPointers := make([]interface{}, len(cols))

@@ -36,7 +36,7 @@ func (l *Logger) Success(format string, a ...interface{}) {
 func (l *Logger) log(level LogLevel, format string, a ...interface{}) {
 	timestamp := time.Now().Format("15:04:05")
 	var prefix string
-	
+
 	switch level {
 	case LevelInfo:
 		prefix = "  [INFO] "

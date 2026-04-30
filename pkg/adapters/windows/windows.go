@@ -84,7 +84,7 @@ func (w *WindowsAdapter) installWingetPackage(pkg string) error {
 
 func (w *WindowsAdapter) InstallPHP(version string) error {
 	w.log.Info("Automating PHP %s installation for Windows...", version)
-	
+
 	// 1. Define paths
 	toolsDir := `C:\tools`
 	phpDir := filepath.Join(toolsDir, "php"+version)
@@ -101,7 +101,7 @@ func (w *WindowsAdapter) InstallPHP(version string) error {
 	if version == "8.2" {
 		downloadURL = "https://windows.php.net/downloads/releases/php-8.2.12-Win32-vs16-x64.zip"
 	}
-	
+
 	zipPath := filepath.Join(os.TempDir(), "php.zip")
 	w.log.Info("Downloading PHP from %s...", downloadURL)
 	if err := util.DownloadFile(zipPath, downloadURL); err != nil {
@@ -205,13 +205,13 @@ func (w *WindowsAdapter) ListPHPVersions() ([]string, error) {
 func (w *WindowsAdapter) UpdateHosts(domains []string) error {
 	fmt.Println("Updating Windows hosts file (requires Admin)...")
 	hostsPath := `C:\Windows\System32\drivers\etc\hosts`
-	
+
 	// Prepare lines to add
 	var lines []string
 	for _, d := range domains {
 		lines = append(lines, fmt.Sprintf("127.0.0.1 %s", d))
 	}
-	
+
 	if len(lines) == 0 {
 		return nil
 	}
@@ -251,7 +251,7 @@ func (w *WindowsAdapter) GenerateCert(homeDir string, domains []string) error {
 
 	args := []string{"-cert-file", certPath, "-key-file", keyPath, "*.test", "sld.test", "localhost", "127.0.0.1", "::1"}
 	args = append(args, domains...)
-	
+
 	return exec.Command("mkcert", args...).Run()
 }
 
@@ -262,10 +262,10 @@ func (w *WindowsAdapter) InstallBinary() error {
 	}
 	destDir := `C:\Program Files\sld`
 	dest := filepath.Join(destDir, "sld.exe")
-	
+
 	os.MkdirAll(destDir, 0755)
 	fmt.Printf("Installing binary to %s...\n", dest)
-	
+
 	// Copy
 	input, _ := os.ReadFile(exe)
 	err = os.WriteFile(dest, input, 0755)
@@ -273,10 +273,10 @@ func (w *WindowsAdapter) InstallBinary() error {
 		// Might need admin/copy command
 		return exec.Command("powershell", "-Command", fmt.Sprintf("Copy-Item -Path '%s' -Destination '%s' -Force", exe, dest)).Run()
 	}
-	
+
 	// Add to PATH if not present
 	exec.Command("powershell", "-Command", fmt.Sprintf("[Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';%s', 'Machine')", destDir)).Run()
-	
+
 	return nil
 }
 
@@ -285,8 +285,8 @@ func (w *WindowsAdapter) Uninstall() error {
 	destDir := `C:\Program Files\sld`
 	return os.RemoveAll(destDir)
 }
-func (w *WindowsAdapter) AddWebUserToGroup(group string) error                { return nil }
-func (w *WindowsAdapter) RestartPHP() error                                   { return nil }
+func (w *WindowsAdapter) AddWebUserToGroup(group string) error { return nil }
+func (w *WindowsAdapter) RestartPHP() error                    { return nil }
 func (w *WindowsAdapter) CheckWifi() (bool, string) {
 	out, err := exec.Command("netsh", "wlan", "show", "interfaces").Output()
 	if err != nil {

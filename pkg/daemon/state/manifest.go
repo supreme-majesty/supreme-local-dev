@@ -31,7 +31,7 @@ func LoadManifest(dir string) (*Manifest, error) {
 			return nil, err
 		}
 	}
-	
+
 	m.path = path // Ensure path is set
 	return m, nil
 }
