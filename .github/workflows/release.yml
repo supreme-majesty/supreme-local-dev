@@ -317,7 +317,7 @@ jobs:
         package-daemon-linux,
         package-daemon-macos,
         package-daemon-windows,
-        build-tauri,
+        build-ui,
       ]
     runs-on: ubuntu-latest
     permissions:
