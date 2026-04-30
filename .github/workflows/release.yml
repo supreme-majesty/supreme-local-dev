@@ -56,7 +56,7 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: daemon-${{ matrix.goos }}
+          name: daemon-${{ matrix.goos }}-${{ matrix.goarch }}
           path: bin/${{ matrix.output_name }}
 
   package-daemon-linux:
@@ -69,7 +69,7 @@ jobs:
       - name: Download Linux Binary
         uses: actions/download-artifact@v4
         with:
-          name: daemon-linux
+          name: daemon-linux-amd64
           path: bin
 
       - name: Install FPM
@@ -106,7 +106,7 @@ jobs:
       - name: Download macOS Binary
         uses: actions/download-artifact@v4
         with:
-          name: daemon-darwin
+          name: daemon-darwin-amd64
           path: bin
 
       - name: Create PKG Installer
@@ -144,7 +144,7 @@ jobs:
       - name: Download Windows Binary
         uses: actions/download-artifact@v4
         with:
-          name: daemon-windows
+          name: daemon-windows-amd64
           path: bin
 
       - name: Create MSI Installer
