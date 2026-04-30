@@ -1,7 +1,7 @@
 {
   "name": "sld-dashboard",
   "private": true,
-  "version": "1.0.12",
+  "version": "2.1.6",
   "type": "module",
   "scripts": {
     "dev": "vite",
