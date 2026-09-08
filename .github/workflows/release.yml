@@ -325,33 +325,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download Daemon Assets
+      - name: Download All Artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: "daemon-*"
-          path: assets/daemon
-          merge-multiple: true
-
-      - name: Download Deb Assets
-        uses: actions/download-artifact@v4
-        with:
-          name: sld-deb
-          path: assets/deb
-
-      - name: Download PKG Assets
-        uses: actions/download-artifact@v4
-        with:
-          name: sld-pkg
-          path: assets/pkg
-
-      - name: Download MSI Assets
-        uses: actions/download-artifact@v4
-        with:
-          name: sld-msi
-          path: assets/msi
-
-      # Tauri action uploads its own assets to the release draft automatically.
-      # We just need to upload the extra daemon binaries and packages to the SAME release.
+          path: all-artifacts
 
       - name: Upload All Assets to Release
         uses: softprops/action-gh-release@v1
@@ -359,7 +336,7 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           files: |
-            assets/daemon/*
-            assets/deb/*.deb
-            assets/pkg/*.pkg
-            assets/msi/*.msi
+            all-artifacts/**/*.deb
+            all-artifacts/**/*.pkg
+            all-artifacts/**/*.msi
+            all-artifacts/daemon-*/**/*

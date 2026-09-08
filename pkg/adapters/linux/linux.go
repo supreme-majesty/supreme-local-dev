@@ -92,8 +92,8 @@ func (l *LinuxAdapter) InstallDependencies() error {
 
 		// Install packages
 		l.log.Info("Installing packages: %s", strings.Join(packages, ", "))
-		args := append([]string{"install", "-y"}, packages...)
-		if err := l.runner.RunElevated("apt-get", args...); err != nil {
+		args := append([]string{"DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y"}, packages...)
+		if err := l.runner.RunElevated("env", args...); err != nil {
 			return err
 		}
 
@@ -153,7 +153,7 @@ func (l *LinuxAdapter) InstallPHP(version string) error {
 	// Update apt cache first? Maybe too slow.
 	// Let's rely on it being somewhat fresh or apt failing.
 
-	cmd := exec.Command("sudo", "apt-get", "install", "-y",
+	cmd := exec.Command("sudo", "env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y",
 		packageName,
 		fmt.Sprintf("php%s-mysql", version),
 		fmt.Sprintf("php%s-mbstring", version),
@@ -558,7 +558,7 @@ func (l *LinuxAdapter) InstallMkcert() error {
 	// For simplicity, let's assume apt install works or fail with message.
 	// Actually, `libnss3-tools` is needed for mkcert.
 
-	cmd := exec.Command("sudo", "apt-get", "install", "-y", "mkcert", "libnss3-tools")
+	cmd := exec.Command("sudo", "env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "mkcert", "libnss3-tools")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
@@ -670,6 +670,10 @@ func (l *LinuxAdapter) InstallBinary() error {
 
 	// Copy binary
 	fmt.Printf("Installing binary to %s...\n", dest)
+	
+	// Remove destination first to prevent 'Text file busy' error if the daemon is running
+	exec.Command("sudo", "rm", "-f", dest).Run()
+
 	cmd := exec.Command("sudo", "cp", exe, dest)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout

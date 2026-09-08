@@ -39,13 +39,21 @@ func (r *Runner) RunElevated(name string, args ...string) error {
 	case "linux":
 		// On Linux, use sudo. In a pro version, we'd check for pkexec.
 		fullArgs := append([]string{name}, args...)
-		return exec.Command("sudo", fullArgs...).Run()
+		cmd := exec.Command("sudo", fullArgs...)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Stdin = os.Stdin
+		return cmd.Run()
 
 	case "darwin":
 		// On macOS, use sudo or osascript for a GUI prompt if needed.
 		// For CLI installers, sudo is standard.
 		fullArgs := append([]string{name}, args...)
-		return exec.Command("sudo", fullArgs...).Run()
+		cmd := exec.Command("sudo", fullArgs...)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Stdin = os.Stdin
+		return cmd.Run()
 
 	case "windows":
 		// On Windows, use PowerShell Start-Process with -Verb RunAs
