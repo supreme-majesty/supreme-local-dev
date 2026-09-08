@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -17,6 +18,50 @@ import (
 	"github.com/supreme-majesty/supreme-local-dev/pkg/daemon/api"
 	"github.com/supreme-majesty/supreme-local-dev/pkg/services"
 )
+
+const daemonBaseURL = "http://localhost:2025"
+
+// daemonPost sends a POST request to the running daemon API.
+// Returns an error if the daemon is unreachable or returns a non-success response.
+func daemonPost(endpoint string, body interface{}) error {
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("failed to encode request: %w", err)
+	}
+
+	resp, err := http.Post(daemonBaseURL+endpoint, "application/json", bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("daemon not reachable at %s — is the sld daemon running? (try: sudo systemctl start sld-daemon): %w", daemonBaseURL, err)
+	}
+	defer resp.Body.Close()
+
+	var res struct {
+		Success bool   `json:"success"`
+		Message string `json:"message"`
+		Error   string `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return fmt.Errorf("failed to decode daemon response: %w", err)
+	}
+
+	if !res.Success {
+		return fmt.Errorf("%s", res.Error)
+	}
+	if res.Message != "" {
+		fmt.Println(res.Message)
+	}
+	return nil
+}
+
+// daemonGet sends a GET request to the running daemon API and decodes into dest.
+func daemonGet(endpoint string, dest interface{}) error {
+	resp, err := http.Get(daemonBaseURL + endpoint)
+	if err != nil {
+		return fmt.Errorf("daemon not reachable at %s — is the sld daemon running? (try: sudo systemctl start sld-daemon): %w", daemonBaseURL, err)
+	}
+	defer resp.Body.Close()
+	return json.NewDecoder(resp.Body).Decode(dest)
+}
 
 var rootCmd = &cobra.Command{
 	Use:     "sld",
@@ -314,11 +359,8 @@ var unsecureCmd = &cobra.Command{
 	Use:   "unsecure",
 	Short: "Disable HTTPS and revert to HTTP",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		d, err := daemon.GetClient()
-		if err != nil {
-			return err
-		}
-		return d.Unsecure()
+		fmt.Println("Disabling HTTPS via daemon...")
+		return daemonPost("/api/unsecure", map[string]string{})
 	},
 }
 
@@ -326,11 +368,12 @@ var restartCmd = &cobra.Command{
 	Use:   "restart",
 	Short: "Restart Nginx, PHP, and Dnsmasq services",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		d, err := daemon.GetClient()
-		if err != nil {
+		fmt.Println("Restarting services via daemon...")
+		if err := daemonPost("/api/restart", map[string]string{}); err != nil {
 			return err
 		}
-		return d.Restart()
+		fmt.Println("✅ Services restarted.")
+		return nil
 	},
 }
 
@@ -338,11 +381,12 @@ var refreshCmd = &cobra.Command{
 	Use:   "refresh",
 	Short: "Re-scan all projects for configuration changes (.sld.yaml, composer.json)",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		d, err := daemon.GetClient()
-		if err != nil {
+		fmt.Println("Refreshing project scan via daemon...")
+		if err := daemonPost("/api/refresh", map[string]string{}); err != nil {
 			return err
 		}
-		return d.Refresh()
+		fmt.Println("✅ Refresh complete.")
+		return nil
 	},
 }
 
@@ -603,13 +647,12 @@ var phpCmd = &cobra.Command{
 			return fmt.Errorf("please specify a PHP version (e.g. 8.2)")
 		}
 		version := args[0]
-
-		d, err := daemon.GetClient()
-		if err != nil {
+		fmt.Printf("Switching PHP to %s via daemon...\n", version)
+		if err := daemonPost("/api/php", map[string]string{"version": version}); err != nil {
 			return err
 		}
-
-		return d.SwitchPHP(version)
+		fmt.Printf("✅ PHP switched to %s.\n", version)
+		return nil
 	},
 }
 
@@ -617,12 +660,12 @@ var secureCmd = &cobra.Command{
 	Use:   "secure",
 	Short: "Enable HTTPS (installs mkcert and updates config)",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		d, err := daemon.GetClient()
-		if err != nil {
+		fmt.Println("Enabling HTTPS via daemon (this may take a moment)...")
+		if err := daemonPost("/api/secure", map[string]string{}); err != nil {
 			return err
 		}
-
-		return d.Secure()
+		fmt.Println("✅ HTTPS enabled.")
+		return nil
 	},
 }
 
@@ -634,16 +677,19 @@ var parkCmd = &cobra.Command{
 		if len(args) > 0 {
 			path = args[0]
 		}
-
-		d, err := daemon.GetClient()
+		// Resolve to absolute path before sending to daemon
+		absPath, err := filepath.Abs(path)
 		if err != nil {
+			return fmt.Errorf("invalid path: %w", err)
+		}
+		if _, err := os.Stat(absPath); os.IsNotExist(err) {
+			return fmt.Errorf("directory does not exist: %s", absPath)
+		}
+		fmt.Printf("Parking %s via daemon...\n", absPath)
+		if err := daemonPost("/api/park", map[string]string{"path": absPath}); err != nil {
 			return err
 		}
-
-		if err := d.Park(path); err != nil {
-			return err
-		}
-		fmt.Printf("Parked directory: %s\n", path)
+		fmt.Printf("✅ Parked directory: %s\n", absPath)
 		return nil
 	},
 }
@@ -656,16 +702,14 @@ var forgetCmd = &cobra.Command{
 		if len(args) > 0 {
 			path = args[0]
 		}
-
-		d, err := daemon.GetClient()
+		absPath, err := filepath.Abs(path)
 		if err != nil {
+			return fmt.Errorf("invalid path: %w", err)
+		}
+		if err := daemonPost("/api/forget", map[string]string{"path": absPath}); err != nil {
 			return err
 		}
-
-		if err := d.Forget(path); err != nil {
-			return err
-		}
-		fmt.Printf("Forgot directory: %s\n", path)
+		fmt.Printf("✅ Forgot directory: %s\n", absPath)
 		return nil
 	},
 }
@@ -674,13 +718,18 @@ var pathsCmd = &cobra.Command{
 	Use:   "paths",
 	Short: "List all parked directories",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		d, err := daemon.GetClient()
-		if err != nil {
+		var state struct {
+			Paths []string `json:"paths"`
+		}
+		if err := daemonGet("/api/state", &state); err != nil {
 			return err
 		}
-
+		if len(state.Paths) == 0 {
+			fmt.Println("No parked paths. Use 'sld park <directory>' to add one.")
+			return nil
+		}
 		fmt.Println("Parked Paths:")
-		for _, p := range d.State.Data.Paths {
+		for _, p := range state.Paths {
 			fmt.Printf(" - %s\n", p)
 		}
 		return nil
@@ -693,22 +742,15 @@ var linkCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		path, _ := os.Getwd()
 		name := ""
-
 		if len(args) > 0 {
 			name = args[0]
 		} else {
 			name = filepath.Base(path)
 		}
-
-		d, err := daemon.GetClient()
-		if err != nil {
+		if err := daemonPost("/api/link", map[string]string{"name": name, "path": path}); err != nil {
 			return err
 		}
-
-		if err := d.Link(name, path); err != nil {
-			return err
-		}
-		fmt.Printf("Linked http://%s.test to %s\n", name, path)
+		fmt.Printf("✅ Linked http://%s.test to %s\n", name, path)
 		return nil
 	},
 }
@@ -724,16 +766,10 @@ var unlinkCmd = &cobra.Command{
 			cwd, _ := os.Getwd()
 			name = filepath.Base(cwd)
 		}
-
-		d, err := daemon.GetClient()
-		if err != nil {
+		if err := daemonPost("/api/unlink", map[string]string{"name": name}); err != nil {
 			return err
 		}
-
-		if err := d.Unlink(name); err != nil {
-			return err
-		}
-		fmt.Printf("Unlinked %s\n", name)
+		fmt.Printf("✅ Unlinked %s\n", name)
 		return nil
 	},
 }
@@ -742,13 +778,18 @@ var linksCmd = &cobra.Command{
 	Use:   "links",
 	Short: "List all linked sites",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		d, err := daemon.GetClient()
-		if err != nil {
+		var state struct {
+			Links map[string]string `json:"links"`
+		}
+		if err := daemonGet("/api/state", &state); err != nil {
 			return err
 		}
-
+		if len(state.Links) == 0 {
+			fmt.Println("No linked sites. Use 'sld link <name>' to add one.")
+			return nil
+		}
 		fmt.Println("Linked Sites:")
-		for name, path := range d.State.Data.Links {
+		for name, path := range state.Links {
 			fmt.Printf(" - %s -> %s\n", name, path)
 		}
 		return nil

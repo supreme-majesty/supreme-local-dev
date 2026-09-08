@@ -846,7 +846,8 @@ func (d *Daemon) GetSites() ([]Site, error) {
 	for _, path := range d.State.Data.Paths {
 		entries, err := os.ReadDir(path)
 		if err != nil {
-			// Log error but continue? Or skip
+			fmt.Printf("Warning: parked path '%s' is not accessible: %v\n", path, err)
+			fmt.Printf("  → Run 'sld forget %s' to remove it, or re-create the directory.\n", path)
 			continue
 		}
 		for _, entry := range entries {

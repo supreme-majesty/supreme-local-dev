@@ -38,7 +38,9 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/php", s.handlePHP)
 	mux.HandleFunc("/api/php/versions", s.handlePHPVersions)
 	mux.HandleFunc("/api/secure", s.handleSecure)
+	mux.HandleFunc("/api/unsecure", s.handleUnsecure)
 	mux.HandleFunc("/api/restart", s.handleRestart)
+	mux.HandleFunc("/api/refresh", s.handleRefresh)
 	mux.HandleFunc("/api/sites", s.handleSites)
 	mux.HandleFunc("/api/sites/update", s.handleSiteUpdate)
 	mux.HandleFunc("/api/ignore", s.handleIgnore)
@@ -348,6 +350,30 @@ func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request) {
 	}
 	d, _ := daemon.GetClient()
 	if err := d.Restart(); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+	jsonResponse(w, SuccessResponse{Success: true}, 200)
+}
+
+func (s *Server) handleUnsecure(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		return
+	}
+	d, _ := daemon.GetClient()
+	if err := d.Unsecure(); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+	jsonResponse(w, SuccessResponse{Success: true}, 200)
+}
+
+func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		return
+	}
+	d, _ := daemon.GetClient()
+	if err := d.Refresh(); err != nil {
 		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
 		return
 	}
