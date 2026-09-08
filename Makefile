@@ -1,11 +1,17 @@
-.PHONY: build run install clean
+.PHONY: build build-fast frontend run install update clean
 
 BINARY_NAME=sld
 MAIN_PATH=./cmd/sld
 
-# Build the binary
+# Build the binary (includes frontend rebuild)
 build: frontend
 	@echo "Building $(BINARY_NAME)..."
+	go build -o $(BINARY_NAME) $(MAIN_PATH)
+	@echo "Build complete."
+
+# Build backend only — skips npm (faster for backend-only changes)
+build-fast:
+	@echo "Building $(BINARY_NAME) (backend only)..."
 	go build -o $(BINARY_NAME) $(MAIN_PATH)
 	@echo "Build complete."
 
@@ -23,7 +29,20 @@ run: build
 	@echo "Starting daemon..."
 	./$(BINARY_NAME) daemon
 
-# Install to GOPATH
+# Build + install system-wide in one command.
+# Use 'make update' after pulling code changes.
+# Use 'make update-fast' if you only changed Go backend code.
+update: build
+	@echo "Installing $(BINARY_NAME)..."
+	sudo ./$(BINARY_NAME) install
+	@echo "Done! SLD updated successfully. 🚀"
+
+update-fast: build-fast
+	@echo "Installing $(BINARY_NAME) (fast)..."
+	sudo ./$(BINARY_NAME) install
+	@echo "Done! SLD updated successfully. 🚀"
+
+# Install to GOPATH (dev use)
 install:
 	go install $(MAIN_PATH)
 
