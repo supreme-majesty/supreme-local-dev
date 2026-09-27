@@ -1,0 +1,33 @@
+# Binaries
+/sld
+/sld-bin
+/sld-linux
+/sld-mac
+/sld-win.exe
+/main
+/debug-env
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test artifacts
+*.test
+/coverage.out
+
+# SLD local metadata & secrets
+.sld/secrets.json
+.sld/.env
+.sld/certs/
+~/.sld/
+
+# Node / frontend
+node_modules/
+dist/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
