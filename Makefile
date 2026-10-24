@@ -1,6 +1,7 @@
 .PHONY: build build-fast frontend run install update update-fast clean \
         restart refresh status park forget link unlink paths links logs daemon \
-        docker-up docker-up-pg docker-down docker-logs docker-build docker-ps docker-clean
+        docker-up docker-up-pg docker-down docker-logs docker-build docker-ps docker-clean \
+        docker-images docker-image-router docker-image-nginx docker-image-php
 
 BINARY_NAME=sld
 MAIN_PATH=./cmd/sld
@@ -131,4 +132,22 @@ docker-logs:
 
 docker-clean:
 	docker compose down -v
+
+# ─────────────────────────────────────────────
+#  V2 Official Docker Images
+# ─────────────────────────────────────────────
+
+docker-images: docker-image-router docker-image-nginx docker-image-php
+
+docker-image-router:
+	docker build -t ghcr.io/supreme-majesty/sld-router:2 -t ghcr.io/supreme-majesty/sld-router:latest docker/router
+
+docker-image-nginx:
+	docker build -t ghcr.io/supreme-majesty/sld-nginx:1 -t ghcr.io/supreme-majesty/sld-nginx:latest docker/nginx
+
+docker-image-php:
+	docker build --build-arg PHP_VERSION=8.1 -t ghcr.io/supreme-majesty/sld-php:8.1 docker/php
+	docker build --build-arg PHP_VERSION=8.2 -t ghcr.io/supreme-majesty/sld-php:8.2 docker/php
+	docker build --build-arg PHP_VERSION=8.3 -t ghcr.io/supreme-majesty/sld-php:8.3 docker/php
+	docker build --build-arg PHP_VERSION=8.4 -t ghcr.io/supreme-majesty/sld-php:8.4 docker/php
 

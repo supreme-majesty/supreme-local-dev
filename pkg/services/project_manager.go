@@ -63,7 +63,7 @@ var supportedEditors = []Editor{
 
 // DetectEditors scans path for available editors
 func (pm *ProjectManager) DetectEditors() []Editor {
-	var available []Editor
+	available := make([]Editor, 0)
 	seenBins := make(map[string]bool)
 
 	// Common paths to check beyond just PATH

@@ -1,0 +1,8 @@
+#!/bin/sh
+set -e
+
+# FastCGI readiness healthcheck probing port 9000
+SCRIPT_NAME=/ping \
+SCRIPT_FILENAME=/ping \
+REQUEST_METHOD=GET \
+cgi-fcgi -bind -connect 127.0.0.1:9000 2>&1 | grep -q "pong"

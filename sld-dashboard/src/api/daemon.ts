@@ -529,7 +529,8 @@ class DaemonApi {
   }
 
   async getEditors(): Promise<Editor[]> {
-    return this.request<Editor[]>("/system/editors");
+    const res = await this.request<Editor[]>("/system/editors");
+    return res || [];
   }
 
   async openInEditor(path: string, editor: string): Promise<ActionResponse> {
@@ -542,12 +543,14 @@ class DaemonApi {
   async getDirectories(path?: string): Promise<string[]> {
     const params = new URLSearchParams();
     if (path) params.set("path", path);
-    return this.request<string[]>(`/system/directories?${params.toString()}`);
+    const res = await this.request<string[]>(`/system/directories?${params.toString()}`);
+    return res || [];
   }
 
   // Service Management
   async getServiceStatus(): Promise<ServiceStatus[]> {
-    return this.request<ServiceStatus[]>("/services");
+    const res = await this.request<ServiceStatus[]>("/services");
+    return res || [];
   }
 
   async controlService(

@@ -43,7 +43,10 @@ export function useSites() {
 export function useServices() {
   return useQuery<ServiceStatus[]>({
     queryKey: queryKeys.services,
-    queryFn: () => api.getServiceStatus(),
+    queryFn: async () => {
+      const res = await api.getServiceStatus();
+      return res || [];
+    },
   });
 }
 
@@ -295,7 +298,10 @@ export function useTogglePluginMutation() {
 export function useEditors() {
   return useQuery<Editor[]>({
     queryKey: ["editors"],
-    queryFn: () => api.getEditors(),
+    queryFn: async () => {
+      const res = await api.getEditors();
+      return res || [];
+    },
   });
 }
 
@@ -363,7 +369,10 @@ export function useDirectories(path?: string) {
 export function useShareStatus() {
   return useQuery<Tunnel[]>({
     queryKey: ["tunnels"],
-    queryFn: () => api.getShareStatus(),
+    queryFn: async () => {
+      const res = await api.getShareStatus();
+      return res || [];
+    },
     refetchInterval: 5000,
   });
 }

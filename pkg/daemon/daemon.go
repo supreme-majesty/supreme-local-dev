@@ -798,6 +798,18 @@ func (d *Daemon) Unlink(name string) error {
 	return d.refreshNginxConfig()
 }
 
+// InContainer returns true when running within a container environment.
+func InContainer() bool {
+	v := strings.ToLower(os.Getenv("SLD_SKIP_INSTALL"))
+	if v == "1" || v == "true" || v == "yes" {
+		return true
+	}
+	if _, err := os.Stat("/.dockerenv"); err == nil {
+		return true
+	}
+	return false
+}
+
 // Refresh re-scans all projects for configuration changes
 func (d *Daemon) Refresh() error {
 	fmt.Println("Scanning parked paths...")
@@ -808,6 +820,10 @@ func (d *Daemon) Refresh() error {
 	fmt.Println("Scanning linked sites...")
 	for name, path := range d.State.Data.Links {
 		d.linkInternal(name, path) // Re-scan internal
+	}
+
+	if InContainer() {
+		return nil
 	}
 
 	if err := d.syncHosts(); err != nil {

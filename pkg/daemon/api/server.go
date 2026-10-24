@@ -681,6 +681,9 @@ func (s *Server) handleProjectFileSave(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSystemEditors(w http.ResponseWriter, r *http.Request) {
 	d, _ := daemon.GetClient()
 	editors := d.ProjectManager.DetectEditors()
+	if editors == nil {
+		editors = make([]services.Editor, 0)
+	}
 	jsonResponse(w, editors, 200)
 }
 
@@ -942,7 +945,13 @@ func (s *Server) handleShareStop(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleShareStatus(w http.ResponseWriter, r *http.Request) {
 	d, _ := daemon.GetClient()
-	tunnels := d.TunnelManager.GetTunnels()
+	var tunnels []*services.Tunnel
+	if d.TunnelManager != nil {
+		tunnels = d.TunnelManager.GetTunnels()
+	}
+	if tunnels == nil {
+		tunnels = make([]*services.Tunnel, 0)
+	}
 	jsonResponse(w, tunnels, 200)
 }
 

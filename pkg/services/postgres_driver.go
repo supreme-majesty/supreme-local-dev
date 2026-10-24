@@ -88,10 +88,7 @@ func (d *PostgresDriver) Connect(config ConnectionConfig) error {
 		if port == "" {
 			port = "5432"
 		}
-		dbName := config.Database
-		if dbName == "" {
-			dbName = "postgres"
-		}
+		dbName := "postgres"
 		if config.Password != "" {
 			dsn = fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable", config.User, config.Password, host, port, dbName)
 		} else {

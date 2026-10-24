@@ -14,6 +14,7 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
+	"github.com/supreme-majesty/supreme-local-dev/internal/v2"
 	"github.com/supreme-majesty/supreme-local-dev/pkg/daemon"
 	"github.com/supreme-majesty/supreme-local-dev/pkg/daemon/api"
 	"github.com/supreme-majesty/supreme-local-dev/pkg/daemon/state"
@@ -356,6 +357,8 @@ func init() {
 	serviceCmd.AddCommand(serviceStopCmd)
 	serviceCmd.AddCommand(serviceStatusCmd)
 
+	// V2 Docker-backed commands (sld v2 init, sld v2 start, sld v2 stop, etc.)
+	v2.RegisterCommands(rootCmd)
 }
 
 // --- Commands ---

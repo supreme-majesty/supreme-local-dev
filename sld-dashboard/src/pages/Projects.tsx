@@ -32,14 +32,18 @@ import { FileManager } from "@/components/project/FileManager";
 import { Code, Settings2, Terminal, FileCode } from "lucide-react";
 
 export default function Projects() {
-  const { data: projects = [], isLoading } = useSites();
-  const { data: editors = [] } = useEditors();
+  const { data: rawProjects, isLoading } = useSites();
+  const { data: rawEditors = [] } = useEditors();
   const ignoreMutation = useIgnoreMutation();
   const unlinkMutation = useUnlinkMutation();
   const openEditorMutation = useOpenInEditorMutation();
-  const { data: tunnels = [] } = useShareStatus();
+  const { data: rawTunnels = [] } = useShareStatus();
   const shareStartMutation = useShareStartMutation();
   const shareStopMutation = useShareStopMutation();
+
+  const projects = rawProjects || [];
+  const editors = rawEditors || [];
+  const tunnels = rawTunnels || [];
 
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "parked" | "linked">("all");
@@ -58,7 +62,7 @@ export default function Projects() {
 
   // Determine default editor (e.g. VS Code if available)
   const defaultEditor =
-    editors.find((e: { id: string }) => e.id === "vscode") || editors[0];
+    editors?.find((e: { id: string }) => e.id === "vscode") || editors?.[0];
 
   const handleOpenInEditor = (path: string, editorId?: string) => {
     const id = editorId || defaultEditor?.id;
