@@ -1,6 +1,6 @@
 .PHONY: build build-fast frontend run install update update-fast clean \
         restart refresh status park forget link unlink paths links logs daemon \
-        docker-up docker-down docker-logs docker-build
+        docker-up docker-up-pg docker-down docker-logs docker-build docker-ps docker-clean
 
 BINARY_NAME=sld
 MAIN_PATH=./cmd/sld
@@ -108,7 +108,7 @@ logs:
 	sld logs $(or $(svc),nginx-error)
 
 # ─────────────────────────────────────────────
-#  Docker (dashboard + MariaDB + phpMyAdmin)
+#  Docker (dashboard + MariaDB + phpMyAdmin + Redis + Mailpit)
 # ─────────────────────────────────────────────
 
 docker-build:
@@ -117,8 +117,18 @@ docker-build:
 docker-up:
 	docker compose up --build -d
 
+docker-up-pg:
+	docker compose --profile postgres up --build -d
+
 docker-down:
 	docker compose down
 
+docker-ps:
+	docker compose ps
+
 docker-logs:
 	docker compose logs -f --tail=100
+
+docker-clean:
+	docker compose down -v
+

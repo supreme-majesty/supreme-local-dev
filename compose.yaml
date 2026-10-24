@@ -7,7 +7,7 @@ services:
       dockerfile: Dockerfile
     image: sld:local
     ports:
-      - "2025:2025"
+      - "${SLD_PORT:-2025}:2025"
     environment:
       SLD_SKIP_INSTALL: "1"
       SLD_STATE_DIR: /home/sld/.sld
@@ -15,6 +15,17 @@ services:
       SLD_DB_PORT: "3306"
       SLD_DB_USER: root
       SLD_DB_PASS: ${MYSQL_ROOT_PASSWORD:-sld}
+      SLD_PG_HOST: postgres
+      SLD_PG_PORT: "5432"
+      SLD_PG_USER: ${POSTGRES_USER:-sld}
+      SLD_PG_PASS: ${POSTGRES_PASSWORD:-sld}
+      SLD_PG_DB: ${POSTGRES_DB:-app}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      MAIL_HOST: mailpit
+      MAIL_PORT: "1025"
+    volumes:
+      - sld-state:/home/sld/.sld
     depends_on:
       mariadb:
         condition: service_healthy
@@ -26,7 +37,7 @@ services:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-sld}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-app}
     ports:
-      - "3306:3306"
+      - "${MYSQL_PORT:-3306}:3306"
     volumes:
       - sld-mariadb:/var/lib/mysql
     healthcheck:
@@ -44,12 +55,32 @@ services:
       PMA_PASSWORD: ${MYSQL_ROOT_PASSWORD:-sld}
       UPLOAD_LIMIT: 64M
     ports:
-      - "8080:80"
+      - "${PMA_PORT:-8080}:80"
     volumes:
       - ./docker/phpmyadmin/config.user.inc.php:/etc/phpmyadmin/config.user.inc.php:ro
     depends_on:
       mariadb:
         condition: service_healthy
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - sld-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "${MAILPIT_SMTP_PORT:-1025}:1025"
+      - "${MAILPIT_UI_PORT:-8025}:8025"
     restart: unless-stopped
 
   postgres:
@@ -60,11 +91,19 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sld}
       POSTGRES_DB: ${POSTGRES_DB:-app}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - sld-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-sld} -d $${POSTGRES_DB:-app}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     restart: unless-stopped
 
 volumes:
+  sld-state:
   sld-mariadb:
   sld-postgres:
+  sld-redis:
+

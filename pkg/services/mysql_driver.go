@@ -30,6 +30,13 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
+func stateDir() string {
+	if dir := os.Getenv("SLD_STATE_DIR"); dir != "" {
+		return dir
+	}
+	return "/var/lib/sld"
+}
+
 // MySQLHost is the database host the manager should use (compose sets SLD_DB_HOST).
 func MySQLHost() string { return envOr("SLD_DB_HOST", "127.0.0.1") }
 

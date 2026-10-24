@@ -16,7 +16,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags "-s -w -X main.Version=${VERSION}
 
 FROM debian:bookworm-slim
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl mariadb-client \
+    && apt-get install -y --no-install-recommends ca-certificates curl mariadb-client postgresql-client \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --create-home --uid 10001 sld \
     && mkdir -p /var/lib/sld /home/sld/.sld \

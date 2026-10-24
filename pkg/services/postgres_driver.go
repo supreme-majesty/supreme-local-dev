@@ -23,6 +23,59 @@ func NewPostgresDriver() *PostgresDriver {
 	}
 }
 
+// PostgresHost returns the PostgreSQL database host (compose sets SLD_PG_HOST or POSTGRES_HOST).
+func PostgresHost() string {
+	if v := os.Getenv("SLD_PG_HOST"); v != "" {
+		return v
+	}
+	return envOr("POSTGRES_HOST", "127.0.0.1")
+}
+
+// PostgresPort returns the PostgreSQL database TCP port.
+func PostgresPort() string {
+	if v := os.Getenv("SLD_PG_PORT"); v != "" {
+		return v
+	}
+	return envOr("POSTGRES_PORT", "5432")
+}
+
+// PostgresUser returns the PostgreSQL database user.
+func PostgresUser() string {
+	if v := os.Getenv("SLD_PG_USER"); v != "" {
+		return v
+	}
+	return envOr("POSTGRES_USER", "postgres")
+}
+
+// PostgresPassword returns the PostgreSQL database password.
+func PostgresPassword() string {
+	if v := os.Getenv("SLD_PG_PASS"); v != "" {
+		return v
+	}
+	return os.Getenv("POSTGRES_PASSWORD")
+}
+
+// PostgresDB returns default database name.
+func PostgresDB() string {
+	if v := os.Getenv("SLD_PG_DB"); v != "" {
+		return v
+	}
+	return envOr("POSTGRES_DB", "postgres")
+}
+
+// PostgresDSN builds connection URL for PostgreSQL.
+func PostgresDSN() string {
+	user := PostgresUser()
+	pass := PostgresPassword()
+	host := PostgresHost()
+	port := PostgresPort()
+	db := PostgresDB()
+	if pass == "" {
+		return fmt.Sprintf("postgres://%s@%s:%s/%s?sslmode=disable", user, host, port, db)
+	}
+	return fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable", user, pass, host, port, db)
+}
+
 func (d *PostgresDriver) Connect(config ConnectionConfig) error {
 	var dsn string
 
@@ -35,26 +88,17 @@ func (d *PostgresDriver) Connect(config ConnectionConfig) error {
 		if port == "" {
 			port = "5432"
 		}
-		// Default postgres DSN
-		dsn = fmt.Sprintf("postgres://%s:%s@%s:%s/postgres?sslmode=disable", config.User, config.Password, host, port)
+		dbName := config.Database
+		if dbName == "" {
+			dbName = "postgres"
+		}
+		if config.Password != "" {
+			dsn = fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable", config.User, config.Password, host, port, dbName)
+		} else {
+			dsn = fmt.Sprintf("postgres://%s@%s:%s/%s?sslmode=disable", config.User, host, port, dbName)
+		}
 	} else {
-		// Auto-discovery from Environment
-		envUser := os.Getenv("SLD_DB_USER")
-		envPass := os.Getenv("SLD_DB_PASS")
-		envHost := os.Getenv("SLD_DB_HOST")
-		envPort := os.Getenv("SLD_DB_PORT")
-
-		if envUser == "" {
-			envUser = "postgres" // default superuser often
-		}
-		if envHost == "" {
-			envHost = "127.0.0.1"
-		}
-		if envPort == "" {
-			envPort = "5432"
-		}
-
-		dsn = fmt.Sprintf("postgres://%s:%s@%s:%s/postgres?sslmode=disable", envUser, envPass, envHost, envPort)
+		dsn = PostgresDSN()
 	}
 
 	db, err := sql.Open("postgres", dsn)
@@ -99,6 +143,34 @@ func (d *PostgresDriver) ListDatabases() ([]string, error) {
 		databases = append(databases, name)
 	}
 	return FilterUserDatabases(databases), nil
+}
+
+func (d *PostgresDriver) TableCounts() (map[string]int, error) {
+	if d.db == nil {
+		return nil, nil
+	}
+	rows, err := d.db.Query(`
+		SELECT table_catalog, COUNT(*)
+		FROM information_schema.tables
+		WHERE table_type = 'BASE TABLE'
+		  AND table_schema NOT IN ('pg_catalog', 'information_schema')
+		GROUP BY table_catalog
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	counts := make(map[string]int)
+	for rows.Next() {
+		var schema string
+		var count int
+		if err := rows.Scan(&schema, &count); err != nil {
+			continue
+		}
+		counts[schema] = count
+	}
+	return counts, nil
 }
 
 func (d *PostgresDriver) CreateDatabase(name string) error {

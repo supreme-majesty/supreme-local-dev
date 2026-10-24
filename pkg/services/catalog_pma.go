@@ -42,7 +42,7 @@ func ApplyPhpMyAdminHideConfig() error {
 	block := phpMyAdminHideBlock()
 
 	writeTargets := []string{
-		"/var/lib/sld/runtime/pma-hide-db.php",
+		filepath.Join(stateDir(), "runtime", "pma-hide-db.php"),
 		"/etc/phpmyadmin/conf.d/sld-hide-db.php",
 	}
 
@@ -71,7 +71,7 @@ func writeIfDirOK(path, contents string) error {
 	dir := filepath.Dir(path)
 	if _, err := os.Stat(dir); err != nil {
 		if os.IsNotExist(err) {
-			if dir == "/var/lib/sld/runtime" {
+			if dir == filepath.Join(stateDir(), "runtime") {
 				if mkErr := os.MkdirAll(dir, 0755); mkErr != nil {
 					return mkErr
 				}

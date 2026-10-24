@@ -137,7 +137,7 @@ func NewDatabaseService() *DatabaseService {
 	return &DatabaseService{
 		Driver:     NewMySQLDriver(),
 		driverName: "mysql",
-		SnapDir:    "/var/lib/sld/snapshots",
+		SnapDir:    filepath.Join(stateDir(), "snapshots"),
 	}
 }
 

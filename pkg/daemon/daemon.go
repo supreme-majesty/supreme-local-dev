@@ -61,15 +61,15 @@ func Initialize() (*Daemon, error) {
 	}
 
 	// 1a. Load Manifest
-	manifest, _ := state.LoadManifest("/var/lib/sld")
+	manifest, _ := state.LoadManifest(state.Dir())
 
 	// 2. Initialize Event Bus
 	eventBus := events.NewBus()
 
 	// 3. Initialize Plugin Manager
-	// We use /var/lib/sld/plugins for shared plugin data/binaries
-	pluginManager := plugins.NewManager("/var/lib/sld/plugins", stateManager)
-	tunnelManager := services.NewTunnelManager("/var/lib/sld")
+	// We use state.Dir()/plugins for shared plugin data/binaries
+	pluginManager := plugins.NewManager(filepath.Join(state.Dir(), "plugins"), stateManager)
+	tunnelManager := services.NewTunnelManager(state.Dir())
 	xrayService := services.NewXRayService(eventBus)
 	// LogWatcher moved down to depend on adapter
 	databaseService := services.NewDatabaseService()

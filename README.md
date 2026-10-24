@@ -86,20 +86,45 @@ sld daemon
 
 ## Docker
 
-This runs the **dashboard, MariaDB, and phpMyAdmin**. It does not install host Nginx/PHP or park `.test` sites; that remains the host CLI (`sld park` / V2 Docker runtime).
+Runs the **dashboard, MariaDB, phpMyAdmin, Redis, and Mailpit** in isolated containers with state and data persistence:
 
 ```bash
 cp .env.example .env   # optional; defaults are fine for local use
 docker compose up --build -d
 ```
 
-- Dashboard: http://localhost:2025
-- phpMyAdmin: http://localhost:8080 (system schemas are hidden)
-- MariaDB: `127.0.0.1:3306` user `root`, password `sld`
+### Services & Endpoints
+
+| Service | Port / URL | Credentials / Notes |
+|---|---|---|
+| **SLD Dashboard / API** | [http://localhost:2025](http://localhost:2025) | Control plane & Web UI |
+| **phpMyAdmin** | [http://localhost:8080](http://localhost:8080) | System catalogs automatically filtered |
+| **MariaDB (MySQL)** | `127.0.0.1:3306` | User: `root`, Password: `${MYSQL_ROOT_PASSWORD:-sld}` |
+| **Redis** | `127.0.0.1:6379` | Key-value store (persistent volume) |
+| **Mailpit Web UI** | [http://localhost:8025](http://localhost:8025) | Local email inbox |
+| **Mailpit SMTP** | `127.0.0.1:1025` | SMTP capture server |
+| **PostgreSQL** (Profile `postgres`) | `127.0.0.1:5432` | User: `${POSTGRES_USER:-sld}`, DB: `${POSTGRES_DB:-app}` |
+
+### Commands
 
 ```bash
-docker compose down          # stop
-docker compose --profile postgres up -d   # also start PostgreSQL on 5432
+# Start default stack (Dashboard, MariaDB, phpMyAdmin, Redis, Mailpit)
+docker compose up --build -d
+
+# Start stack including PostgreSQL
+docker compose --profile postgres up --build -d
+
+# Check status of containers
+docker compose ps
+
+# View logs
+docker compose logs -f
+
+# Stop containers
+docker compose down
+
+# Stop and purge volumes
+docker compose down -v
 ```
 
 ## phpMyAdmin

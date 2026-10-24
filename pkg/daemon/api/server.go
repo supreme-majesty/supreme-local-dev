@@ -956,11 +956,23 @@ func (s *Server) handleDBStatus(w http.ResponseWriter, r *http.Request) {
 	d, _ := daemon.GetClient()
 	// Check connection status
 	err := d.DatabaseService.Connect()
+
+	var host, port, user string
+	if d.DatabaseService.DriverName() == "postgres" {
+		host = services.PostgresHost()
+		port = services.PostgresPort()
+		user = services.PostgresUser()
+	} else {
+		host = services.MySQLHost()
+		port = services.MySQLPort()
+		user = services.MySQLUser()
+	}
+
 	status := map[string]interface{}{
 		"connected": err == nil,
-		"host":      services.MySQLHost(),
-		"port":      services.MySQLPort(),
-		"user":      services.MySQLUser(),
+		"host":      host,
+		"port":      port,
+		"user":      user,
 		"driver":    d.DatabaseService.DriverName(),
 	}
 	if err != nil {

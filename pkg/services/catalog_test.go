@@ -79,3 +79,27 @@ func TestReplaceMarkedBlock(t *testing.T) {
 	}
 }
 
+func TestDSNHelpers(t *testing.T) {
+	t.Setenv("SLD_DB_HOST", "test-db")
+	t.Setenv("SLD_DB_PORT", "3307")
+	t.Setenv("SLD_DB_USER", "admin")
+	t.Setenv("SLD_DB_PASS", "secret")
+	if got := MySQLDSN(); got != "admin:secret@tcp(test-db:3307)/" {
+		t.Fatalf("unexpected MySQLDSN: %s", got)
+	}
+
+	t.Setenv("SLD_PG_HOST", "test-pg")
+	t.Setenv("SLD_PG_PORT", "5433")
+	t.Setenv("SLD_PG_USER", "pguser")
+	t.Setenv("SLD_PG_PASS", "pgpass")
+	t.Setenv("SLD_PG_DB", "mydb")
+	if got := PostgresDSN(); got != "postgres://pguser:pgpass@test-pg:5433/mydb?sslmode=disable" {
+		t.Fatalf("unexpected PostgresDSN: %s", got)
+	}
+
+	t.Setenv("SLD_STATE_DIR", "/custom/state")
+	if got := stateDir(); got != "/custom/state" {
+		t.Fatalf("unexpected stateDir: %s", got)
+	}
+}
+
