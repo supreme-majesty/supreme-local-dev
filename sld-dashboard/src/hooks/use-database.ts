@@ -4,6 +4,7 @@ import { useAppStore } from "@/stores/useAppStore";
 
 export const dbKeys = {
   all: ["db"] as const,
+  status: () => [...dbKeys.all, "status"] as const,
   list: () => [...dbKeys.all, "list"] as const,
   tables: (db: string) => [...dbKeys.all, "tables", db] as const,
   columns: (db: string, table: string) =>
@@ -39,6 +40,36 @@ export function useDatabases() {
   return useQuery({
     queryKey: dbKeys.list(),
     queryFn: () => api.getDatabases(),
+  });
+}
+
+export function useDatabaseStatus() {
+  return useQuery({
+    queryKey: dbKeys.status(),
+    queryFn: () => api.getDatabaseStatus(),
+  });
+}
+
+export function useSetDatabaseDriverMutation() {
+  const queryClient = useQueryClient();
+  const addToast = useAppStore((s) => s.addToast);
+
+  return useMutation({
+    mutationFn: (driver: "mysql" | "postgres") => api.setDatabaseDriver(driver),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: dbKeys.all });
+      addToast({
+        type: "success",
+        title: data.driver === "postgres" ? "Using PostgreSQL" : "Using MySQL",
+      });
+    },
+    onError: (err: Error) => {
+      addToast({
+        type: "error",
+        title: "Could not switch database engine",
+        description: err.message,
+      });
+    },
   });
 }
 

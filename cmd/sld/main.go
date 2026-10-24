@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/supreme-majesty/supreme-local-dev/pkg/daemon"
 	"github.com/supreme-majesty/supreme-local-dev/pkg/daemon/api"
+	"github.com/supreme-majesty/supreme-local-dev/pkg/daemon/state"
 	"github.com/supreme-majesty/supreme-local-dev/pkg/services"
 )
 
@@ -186,9 +187,20 @@ func elevate() error {
 	return cmd.Run()
 }
 
+func inContainer() bool {
+	v := strings.ToLower(os.Getenv("SLD_SKIP_INSTALL"))
+	if v == "1" || v == "true" || v == "yes" {
+		return true
+	}
+	if _, err := os.Stat("/.dockerenv"); err == nil {
+		return true
+	}
+	return false
+}
+
 // isInstalled checks if SLD has been configured on the system
 func isInstalled() bool {
-	_, err := os.Stat("/var/lib/sld/state.json")
+	_, err := os.Stat(filepath.Join(state.Dir(), "state.json"))
 	return err == nil
 }
 
@@ -231,7 +243,9 @@ func main() {
 			cmd == "--version" || cmd == "-v" || cmd == "help" || cmd == "completion"
 
 		if !skipCheck && !isInstalled() {
-			if !autoInstall() {
+			if inContainer() {
+				fmt.Println("SLD container mode: skipping host install, starting control plane.")
+			} else if !autoInstall() {
 				os.Exit(1)
 			}
 		}

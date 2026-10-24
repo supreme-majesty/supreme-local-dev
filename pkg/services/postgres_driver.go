@@ -96,10 +96,9 @@ func (d *PostgresDriver) ListDatabases() ([]string, error) {
 		if err := rows.Scan(&name); err != nil {
 			continue
 		}
-		// Exclude 'postgres' if desired, but it's often user-accessible
 		databases = append(databases, name)
 	}
-	return databases, nil
+	return FilterUserDatabases(databases), nil
 }
 
 func (d *PostgresDriver) CreateDatabase(name string) error {

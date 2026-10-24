@@ -1,5 +1,6 @@
 .PHONY: build build-fast frontend run install update update-fast clean \
-        restart refresh status park forget link unlink paths links logs daemon
+        restart refresh status park forget link unlink paths links logs daemon \
+        docker-up docker-down docker-logs docker-build
 
 BINARY_NAME=sld
 MAIN_PATH=./cmd/sld
@@ -105,3 +106,19 @@ links:
 # Tail nginx error logs (default). Usage: make logs svc=nginx-access
 logs:
 	sld logs $(or $(svc),nginx-error)
+
+# ─────────────────────────────────────────────
+#  Docker (dashboard + MariaDB + phpMyAdmin)
+# ─────────────────────────────────────────────
+
+docker-build:
+	docker compose build
+
+docker-up:
+	docker compose up --build -d
+
+docker-down:
+	docker compose down
+
+docker-logs:
+	docker compose logs -f --tail=100

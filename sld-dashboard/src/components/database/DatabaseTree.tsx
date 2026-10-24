@@ -6,7 +6,6 @@ import {
   ChevronDown,
   Server,
   RefreshCw,
-  MoreVertical,
   Plus,
   Search,
   Folder,
@@ -524,11 +523,9 @@ export function DatabaseTree({
               size="sm"
               className="h-6 w-6 p-0"
               onClick={() => refetch()}
+              title="Refresh"
             >
               <RefreshCw size={12} />
-            </Button>
-            <Button variant="ghost" size="sm" className="h-6 w-6 p-0">
-              <MoreVertical size={12} />
             </Button>
           </div>
         </div>

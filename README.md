@@ -84,6 +84,24 @@ sld status
 sld daemon
 ```
 
+## Docker
+
+This runs the **dashboard, MariaDB, and phpMyAdmin**. It does not install host Nginx/PHP or park `.test` sites; that remains the host CLI (`sld park` / V2 Docker runtime).
+
+```bash
+cp .env.example .env   # optional; defaults are fine for local use
+docker compose up --build -d
+```
+
+- Dashboard: http://localhost:2025
+- phpMyAdmin: http://localhost:8080 (system schemas are hidden)
+- MariaDB: `127.0.0.1:3306` user `root`, password `sld`
+
+```bash
+docker compose down          # stop
+docker compose --profile postgres up -d   # also start PostgreSQL on 5432
+```
+
 ## phpMyAdmin
 
 Access phpMyAdmin at:

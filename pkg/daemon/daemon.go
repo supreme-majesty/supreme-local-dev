@@ -73,6 +73,9 @@ func Initialize() (*Daemon, error) {
 	xrayService := services.NewXRayService(eventBus)
 	// LogWatcher moved down to depend on adapter
 	databaseService := services.NewDatabaseService()
+	if err := services.ApplyPhpMyAdminHideConfig(); err != nil {
+		log.Printf("Warning: phpMyAdmin hide_db config: %v", err)
+	}
 	home := getRealUserHome()
 	baseDir := findBestDevDir(home)
 	projectManager := services.NewProjectManager(baseDir)
@@ -122,8 +125,8 @@ func Initialize() (*Daemon, error) {
 	// Start Healer
 	instance.HealerService.Start()
 
-	// Start QueryWatcher (try default local MySQL)
-	qw, err := services.NewQueryWatcher(eventBus, "root@tcp(127.0.0.1:3306)/")
+	// Start QueryWatcher against the configured MySQL (host or compose)
+	qw, err := services.NewQueryWatcher(eventBus, services.MySQLDSN())
 	if err == nil {
 		instance.QueryWatcher = qw
 		qw.Start()
@@ -213,6 +216,10 @@ func (d *Daemon) EnsureInstalled() error {
 	configFile := filepath.Join(sldBase, "runtime", "config.inc.php")
 	phpConfig := fmt.Sprintf("<?php $sld_state_path = '%s'; ?>", globalState)
 	os.WriteFile(configFile, []byte(phpConfig), 0644)
+
+	if err := services.ApplyPhpMyAdminHideConfig(); err != nil {
+		fmt.Printf("Warning: phpMyAdmin hide_db config: %v\n", err)
+	}
 
 	// Set PHP Version in State if detection succeeds
 	if v := d.Adapter.GetPHPVersion(); v != "" && d.State.Data.PHPVersion == "" {

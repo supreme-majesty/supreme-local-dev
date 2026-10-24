@@ -232,6 +232,26 @@ class DaemonApi {
   }
 
   // Database Management
+  async getDatabaseStatus(): Promise<{
+    connected: boolean;
+    host: string;
+    port: string;
+    user: string;
+    driver: "mysql" | "postgres";
+    error?: string;
+  }> {
+    return this.request("/db/status");
+  }
+
+  async setDatabaseDriver(driver: "mysql" | "postgres"): Promise<{
+    driver: "mysql" | "postgres";
+  }> {
+    return this.request("/db/driver", {
+      method: "POST",
+      body: JSON.stringify({ driver }),
+    });
+  }
+
   async getDatabases(): Promise<DatabaseInfo[]> {
     return this.request<DatabaseInfo[]>("/db/databases");
   }

@@ -117,36 +117,58 @@ type TableDiff struct {
 	IndexesToDrop  []string `json:"indexes_to_drop"`
 }
 
+// DatabaseSummary is a project database shown in the manager UI.
+type DatabaseSummary struct {
+	Name   string `json:"name"`
+	Tables int    `json:"tables"`
+}
+
 // DatabaseService manages database connections via drivers
 type DatabaseService struct {
-	db      *sql.DB // Legacy, to be replaced by driver
-	Driver  DatabaseDriver
-	dsn     string
-	SnapDir string
+	db         *sql.DB // Legacy, to be replaced by driver
+	Driver     DatabaseDriver
+	driverName string
+	dsn        string
+	SnapDir    string
 }
 
 // NewDatabaseService creates a new database service
 func NewDatabaseService() *DatabaseService {
-	// Default to MySQL for now
 	return &DatabaseService{
-		Driver:  NewMySQLDriver(),
-		SnapDir: "/var/lib/sld/snapshots",
+		Driver:     NewMySQLDriver(),
+		driverName: "mysql",
+		SnapDir:    "/var/lib/sld/snapshots",
 	}
 }
 
-// SetDriver switches the database driver (mysql or postgres)
-func (d *DatabaseService) SetDriver(driverName string) {
-	// Close existing
+// DriverName returns the active engine (mysql or postgres).
+func (d *DatabaseService) DriverName() string {
+	if d.driverName == "" {
+		return "mysql"
+	}
+	return d.driverName
+}
+
+// SetDriver switches the database driver (mysql or postgres) and reconnects.
+func (d *DatabaseService) SetDriver(driverName string) error {
+	if driverName == "" {
+		driverName = "mysql"
+	}
+	if driverName != "mysql" && driverName != "postgres" {
+		return fmt.Errorf("unsupported database driver %q", driverName)
+	}
+
 	if d.Driver != nil {
 		d.Driver.Close()
 	}
 
-	switch driverName {
-	case "postgres":
+	d.driverName = driverName
+	if driverName == "postgres" {
 		d.Driver = NewPostgresDriver()
-	default:
+	} else {
 		d.Driver = NewMySQLDriver()
 	}
+	return d.Connect()
 }
 
 // Connect establishes a connection
@@ -177,6 +199,9 @@ func (d *DatabaseService) ListDatabases() ([]string, error) {
 }
 
 func (d *DatabaseService) CreateDatabase(name string) error {
+	if err := RejectSystemDatabase(name); err != nil {
+		return err
+	}
 	if err := d.ensureConnected(); err != nil {
 		return err
 	}
@@ -184,6 +209,9 @@ func (d *DatabaseService) CreateDatabase(name string) error {
 }
 
 func (d *DatabaseService) DeleteDatabase(name string) error {
+	if err := RejectSystemDatabase(name); err != nil {
+		return err
+	}
 	if err := d.ensureConnected(); err != nil {
 		return err
 	}
@@ -191,10 +219,38 @@ func (d *DatabaseService) DeleteDatabase(name string) error {
 }
 
 func (d *DatabaseService) RenameDatabase(oldName, newName string) error {
+	if err := RejectSystemDatabase(oldName); err != nil {
+		return err
+	}
+	if err := RejectSystemDatabase(newName); err != nil {
+		return err
+	}
 	if err := d.ensureConnected(); err != nil {
 		return err
 	}
 	return d.Driver.RenameDatabase(oldName, newName)
+}
+
+func (d *DatabaseService) ListDatabaseSummaries() ([]DatabaseSummary, error) {
+	names, err := d.ListDatabases()
+	if err != nil {
+		return nil, err
+	}
+
+	counts := map[string]int{}
+	if counter, ok := d.Driver.(interface {
+		TableCounts() (map[string]int, error)
+	}); ok {
+		if c, cErr := counter.TableCounts(); cErr == nil {
+			counts = c
+		}
+	}
+
+	out := make([]DatabaseSummary, 0, len(names))
+	for _, name := range names {
+		out = append(out, DatabaseSummary{Name: name, Tables: counts[name]})
+	}
+	return out, nil
 }
 
 func (d *DatabaseService) Maintenance(database string, tables []string, operation string) ([]MaintenanceResult, error) {
@@ -335,6 +391,9 @@ func (d *DatabaseService) GetTableDataEx(database, table string, page, perPage i
 
 // ExecuteQuery executes a SQL query
 func (d *DatabaseService) ExecuteQuery(database, query string, txId string) (*QueryResult, error) {
+	if err := GuardCatalogSQL(query); err != nil {
+		return nil, err
+	}
 	if err := d.ensureConnected(); err != nil {
 		return nil, err
 	}
@@ -1064,6 +1123,12 @@ type CloneOptions struct {
 
 // CloneDatabase creates a copy of a database using mysqldump piped directly to mysql
 func (d *DatabaseService) CloneDatabase(source, target string, opts CloneOptions) error {
+	if err := RejectSystemDatabase(source); err != nil {
+		return err
+	}
+	if err := RejectSystemDatabase(target); err != nil {
+		return err
+	}
 	if err := d.ensureConnected(); err != nil {
 		return err
 	}

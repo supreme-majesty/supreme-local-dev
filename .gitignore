@@ -26,6 +26,9 @@
 node_modules/
 dist/
 
+# Docker local env
+.env
+
 # IDE / OS
 .idea/
 .vscode/

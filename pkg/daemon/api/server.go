@@ -30,6 +30,7 @@ func (s *Server) Start() error {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/api/state", s.handleState)
+	mux.HandleFunc("/api/health", s.handleHealth)
 	mux.HandleFunc("/api/status", s.handleServices) // Alias for frontend
 	mux.HandleFunc("/api/park", s.handlePark)
 	mux.HandleFunc("/api/forget", s.handleForget)
@@ -57,6 +58,7 @@ func (s *Server) Start() error {
 
 	// Database Manager
 	mux.HandleFunc("/api/db/status", s.handleDBStatus)
+	mux.HandleFunc("/api/db/driver", s.handleDBDriver)
 	mux.HandleFunc("/api/db/databases", s.handleDBDatabases)
 	mux.HandleFunc("/api/db/create", s.handleDBCreate)
 	mux.HandleFunc("/api/db/delete", s.handleDBDelete)
@@ -946,15 +948,20 @@ func (s *Server) handleShareStatus(w http.ResponseWriter, r *http.Request) {
 
 // Database Manager Handlers
 
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	jsonResponse(w, map[string]string{"status": "ok"}, 200)
+}
+
 func (s *Server) handleDBStatus(w http.ResponseWriter, r *http.Request) {
 	d, _ := daemon.GetClient()
 	// Check connection status
 	err := d.DatabaseService.Connect()
 	status := map[string]interface{}{
 		"connected": err == nil,
-		"host":      "localhost",
-		"port":      "3306",
-		"user":      "root",
+		"host":      services.MySQLHost(),
+		"port":      services.MySQLPort(),
+		"user":      services.MySQLUser(),
+		"driver":    d.DatabaseService.DriverName(),
 	}
 	if err != nil {
 		status["error"] = err.Error()
@@ -962,25 +969,38 @@ func (s *Server) handleDBStatus(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, status, 200)
 }
 
+func (s *Server) handleDBDriver(w http.ResponseWriter, r *http.Request) {
+	d, _ := daemon.GetClient()
+	if r.Method == "GET" {
+		jsonResponse(w, map[string]string{"driver": d.DatabaseService.DriverName()}, 200)
+		return
+	}
+	if r.Method != "POST" {
+		jsonResponse(w, ErrorResponse{Error: "GET or POST method required"}, 405)
+		return
+	}
+	var req struct {
+		Driver string `json:"driver"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
+		return
+	}
+	if err := d.DatabaseService.SetDriver(req.Driver); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+	jsonResponse(w, map[string]string{"driver": d.DatabaseService.DriverName()}, 200)
+}
+
 func (s *Server) handleDBDatabases(w http.ResponseWriter, r *http.Request) {
 	d, _ := daemon.GetClient()
-	databases, err := d.DatabaseService.ListDatabases()
+	summaries, err := d.DatabaseService.ListDatabaseSummaries()
 	if err != nil {
 		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
 		return
 	}
-
-	// Convert []string to object array for consistency with frontend
-	type DBInfo struct {
-		Name   string `json:"name"`
-		Tables int    `json:"tables"`
-	}
-	response := make([]DBInfo, 0)
-	for _, name := range databases {
-		response = append(response, DBInfo{Name: name, Tables: 0})
-	}
-
-	jsonResponse(w, response, 200)
+	jsonResponse(w, summaries, 200)
 }
 
 func (s *Server) handleDBTables(w http.ResponseWriter, r *http.Request) {

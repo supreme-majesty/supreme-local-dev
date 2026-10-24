@@ -23,6 +23,37 @@ func NewMySQLDriver() *MySQLDriver {
 	}
 }
 
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+// MySQLHost is the database host the manager should use (compose sets SLD_DB_HOST).
+func MySQLHost() string { return envOr("SLD_DB_HOST", "127.0.0.1") }
+
+// MySQLPort is the database TCP port.
+func MySQLPort() string { return envOr("SLD_DB_PORT", "3306") }
+
+// MySQLUser is the database user.
+func MySQLUser() string { return envOr("SLD_DB_USER", "root") }
+
+// MySQLPassword is the database password (empty for local socket/root).
+func MySQLPassword() string { return os.Getenv("SLD_DB_PASS") }
+
+// MySQLDSN builds a go-sql-driver DSN from environment, used by the daemon in Docker.
+func MySQLDSN() string {
+	user := MySQLUser()
+	pass := MySQLPassword()
+	host := MySQLHost()
+	port := MySQLPort()
+	if pass == "" {
+		return fmt.Sprintf("%s@tcp(%s:%s)/", user, host, port)
+	}
+	return fmt.Sprintf("%s:%s@tcp(%s:%s)/", user, pass, host, port)
+}
+
 func (d *MySQLDriver) Connect(config ConnectionConfig) error {
 	var dsn string
 
@@ -40,20 +71,8 @@ func (d *MySQLDriver) Connect(config ConnectionConfig) error {
 	} else {
 		// Auto-discovery logic (copied from original database.go)
 
-		// 1. Try Environment Variables
-		envUser := os.Getenv("SLD_DB_USER")
-		envPass := os.Getenv("SLD_DB_PASS")
-		envHost := os.Getenv("SLD_DB_HOST")
-		envPort := os.Getenv("SLD_DB_PORT")
-
-		if envUser != "" {
-			if envHost == "" {
-				envHost = "127.0.0.1"
-			}
-			if envPort == "" {
-				envPort = "3306"
-			}
-			dsn = fmt.Sprintf("%s:%s@tcp(%s:%s)/", envUser, envPass, envHost, envPort)
+		if os.Getenv("SLD_DB_HOST") != "" || os.Getenv("SLD_DB_USER") != "" || os.Getenv("SLD_DB_PASS") != "" {
+			dsn = MySQLDSN()
 		} else {
 			// 2. Try Current OS User (socket)
 			currentUser := os.Getenv("USER")
@@ -126,24 +145,42 @@ func (d *MySQLDriver) ListDatabases() ([]string, error) {
 	}
 	defer rows.Close()
 
-	systemDBs := map[string]bool{
-		"information_schema": true,
-		"mysql":              true,
-		"performance_schema": true,
-		"sys":                true,
-	}
-
 	var databases []string
 	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err != nil {
 			continue
 		}
-		if !systemDBs[name] {
-			databases = append(databases, name)
-		}
+		databases = append(databases, name)
 	}
-	return databases, nil
+	return FilterUserDatabases(databases), nil
+}
+
+func (d *MySQLDriver) TableCounts() (map[string]int, error) {
+	if d.db == nil {
+		return nil, nil
+	}
+	rows, err := d.db.Query(`
+		SELECT TABLE_SCHEMA, COUNT(*)
+		FROM information_schema.TABLES
+		WHERE TABLE_TYPE = 'BASE TABLE'
+		GROUP BY TABLE_SCHEMA
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	counts := make(map[string]int)
+	for rows.Next() {
+		var schema string
+		var count int
+		if err := rows.Scan(&schema, &count); err != nil {
+			continue
+		}
+		counts[schema] = count
+	}
+	return counts, nil
 }
 
 func (d *MySQLDriver) CreateDatabase(name string) error {

@@ -1,0 +1,70 @@
+name: sld
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: sld:local
+    ports:
+      - "2025:2025"
+    environment:
+      SLD_SKIP_INSTALL: "1"
+      SLD_STATE_DIR: /home/sld/.sld
+      SLD_DB_HOST: mariadb
+      SLD_DB_PORT: "3306"
+      SLD_DB_USER: root
+      SLD_DB_PASS: ${MYSQL_ROOT_PASSWORD:-sld}
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    restart: unless-stopped
+
+  mariadb:
+    image: mariadb:11.4
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-sld}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-app}
+    ports:
+      - "3306:3306"
+    volumes:
+      - sld-mariadb:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  phpmyadmin:
+    image: phpmyadmin:5
+    environment:
+      PMA_HOST: mariadb
+      PMA_USER: root
+      PMA_PASSWORD: ${MYSQL_ROOT_PASSWORD:-sld}
+      UPLOAD_LIMIT: 64M
+    ports:
+      - "8080:80"
+    volumes:
+      - ./docker/phpmyadmin/config.user.inc.php:/etc/phpmyadmin/config.user.inc.php:ro
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    restart: unless-stopped
+
+  postgres:
+    profiles: ["postgres"]
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-sld}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sld}
+      POSTGRES_DB: ${POSTGRES_DB:-app}
+    ports:
+      - "5432:5432"
+    volumes:
+      - sld-postgres:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  sld-mariadb:
+  sld-postgres:

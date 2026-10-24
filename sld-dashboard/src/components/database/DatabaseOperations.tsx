@@ -41,6 +41,8 @@ interface DatabaseOperationsProps {
   onSelectTable: (table: string) => void;
   onNavigateToRecord: (table: string, match: Record<string, unknown>) => void;
   onCreateTable: () => void;
+  onOpenSnapshots?: () => void;
+  onOpenSchemaMap?: () => void;
 }
 
 export function DatabaseOperations({
@@ -49,6 +51,8 @@ export function DatabaseOperations({
   onSelectTable,
   onNavigateToRecord,
   onCreateTable,
+  onOpenSnapshots,
+  onOpenSchemaMap,
 }: DatabaseOperationsProps) {
   const [newName, setNewName] = useState(database);
   const [copyName, setCopyName] = useState(`${database}_copy`);
@@ -196,6 +200,28 @@ export function DatabaseOperations({
 
   return (
     <div className="space-y-6 pb-12 mt-4 px-6 max-w-full overflow-x-hidden">
+      {(onOpenSnapshots || onOpenSchemaMap) && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">Database tools</CardTitle>
+            <CardDescription>
+              Snapshots and schema mapping live here instead of crowding the tab bar.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-wrap gap-2">
+            {onOpenSchemaMap && (
+              <Button variant="secondary" size="sm" onClick={onOpenSchemaMap}>
+                Schema Map
+              </Button>
+            )}
+            {onOpenSnapshots && (
+              <Button variant="secondary" size="sm" onClick={onOpenSnapshots}>
+                Snapshots
+              </Button>
+            )}
+          </CardContent>
+        </Card>
+      )}
       {/* Global Database Search */}
       <Card className="border-blue-500/20 bg-blue-500/5 overflow-visible">
         <CardHeader className="pb-3">

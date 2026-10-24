@@ -7,7 +7,6 @@ import {
   RefreshCw,
   Plus,
   Trash2,
-  HardDrive,
   Camera,
   RotateCcw,
   ArrowRight,
@@ -29,16 +28,8 @@ import {
   Clock,
   Copy,
   X,
-  Network,
-  Activity,
-  GitCompare,
-  Shield,
-  BookOpen,
-  Globe,
-  Sparkles,
 } from "lucide-react";
 
-import { SchemaDiffTool } from "@/components/database/SchemaDiffTool";
 import { formatBytes, formatDate } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
 import { Checkbox } from "@/components/ui/Checkbox";
@@ -50,8 +41,6 @@ import {
   CardDescription,
 } from "@/components/ui/Card";
 import { Label } from "@/components/ui/Label";
-import { SchemaVisualizer } from "@/components/database/SchemaVisualizer";
-import { PerformanceDashboard } from "@/components/database/PerformanceDashboard";
 import { convertToCSV, convertToSQL } from "@/lib/utils";
 import { Input } from "@/components/ui/Input";
 import { Badge } from "@/components/ui/Badge";
@@ -61,13 +50,7 @@ import { DataForm } from "@/components/database/DataForm";
 import { DatabaseStructure } from "@/components/database/DatabaseStructure";
 import { AlterTableDesigner } from "@/components/database/AlterTableDesigner";
 import { TableCreator } from "@/components/database/TableCreator";
-import { SecurityDashboard } from "@/components/database/SecurityDashboard";
-import { HealthMonitor } from "@/components/database/HealthMonitor";
-import { DocumentationPortal } from "@/components/database/DocumentationPortal";
-import { AuditTimeline } from "@/components/database/AuditTimeline";
 import { SmartImporter } from "@/components/database/SmartImporter";
-import { EnvironmentManager } from "@/components/database/EnvironmentManager";
-import { AIAssistant } from "@/components/database/AIAssistant";
 import { CloneDatabaseModal } from "@/components/database/CloneDatabaseModal";
 import { CreateDatabaseModal } from "@/components/database/CreateDatabaseModal";
 import { SchemaCanvas } from "@/components/database/SchemaCanvas";
@@ -83,6 +66,8 @@ import {
   useDeleteSnapshotMutation,
   useExecuteQueryMutation,
   useDeleteDatabaseMutation,
+  useDatabaseStatus,
+  useSetDatabaseDriverMutation,
 } from "@/hooks/use-database";
 import { api, type TableData, type QueryResult } from "@/api/daemon";
 
@@ -159,14 +144,39 @@ export default function Database() {
 
   // Sync activeTab with selection context
   useEffect(() => {
+    const serverTabs = new Set(["databases", "sql"]);
+    const dbTabs = new Set([
+      "structure",
+      "sql",
+      "snapshots",
+      "export",
+      "import",
+      "architect",
+      "operations",
+      "create-table",
+    ]);
+    const tableTabs = new Set([
+      "browse",
+      "structure",
+      "sql",
+      "search",
+      "insert",
+      "export",
+      "import",
+      "operations",
+      "triggers",
+      "edit",
+    ]);
     if (!selectedDB) {
-      if (activeTab !== "databases" && activeTab !== "sql") {
+      if (!serverTabs.has(activeTab)) {
         setActiveTab("databases");
       }
     } else if (!selectedTable) {
-      if (activeTab === "browse" || activeTab === "insert" || activeTab === "search") {
+      if (!dbTabs.has(activeTab)) {
         setActiveTab("structure");
       }
+    } else if (!tableTabs.has(activeTab)) {
+      setActiveTab("browse");
     }
   }, [selectedDB, selectedTable, activeTab]);
 
@@ -183,8 +193,18 @@ export default function Database() {
   });
 
   const { data: databases } = useDatabases();
+  const { data: dbStatus } = useDatabaseStatus();
+  const setDriverMutation = useSetDatabaseDriverMutation();
   const { data: tableSchema } = useTableColumns(selectedDB, selectedTable);
   const { data: snapshots } = useSnapshots();
+
+  useEffect(() => {
+    const driver = dbStatus?.driver;
+    if (driver === "mysql" || driver === "postgres") {
+      setDbDriver(driver);
+      localStorage.setItem("db_driver", driver);
+    }
+  }, [dbStatus?.driver]);
 
   // Helpers
   const pkCol = tableSchema?.find((c) => c.key === "PRI")?.name;
@@ -995,7 +1015,7 @@ $mysqli->close();
           onSelectTable={handleSelectTable}
           onCreateTable={(db) => {
             handleSelectDb(db);
-            setActiveTab("create_table");
+            setActiveTab("create-table");
           }}
           onCloneDatabase={handleCloneDatabase}
           onCreateDatabase={() => setIsCreateModalOpen(true)}
@@ -1055,9 +1075,9 @@ $mysqli->close();
                 const val = e.target.value as "mysql" | "postgres";
                 setDbDriver(val);
                 localStorage.setItem("db_driver", val);
-                // Reset selection when driver changes
                 setSelectedDB(null);
                 setSelectedTable(null);
+                setDriverMutation.mutate(val);
               }}
               className="bg-[var(--card)] border border-[var(--border)] text-[var(--foreground)] text-xs rounded-md px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
             >
@@ -1166,14 +1186,6 @@ $mysqli->close();
                   <Code2 size={14} /> SQL
                 </Button>
                 <Button
-                  variant={activeTab === "snapshots" ? "primary" : "ghost"}
-                  size="sm"
-                  onClick={() => setActiveTab("snapshots")}
-                  className="gap-2 rounded-b-none border-b-2 border-transparent data-[variant=primary]:border-[var(--primary)]"
-                >
-                  <HardDrive size={14} /> Snapshots
-                </Button>
-                <Button
                   variant={activeTab === "export" ? "primary" : "ghost"}
                   size="sm"
                   onClick={() => setActiveTab("export")}
@@ -1190,77 +1202,12 @@ $mysqli->close();
                   <FileDown size={14} /> Import
                 </Button>
                 <Button
-                  variant={activeTab === "architect" ? "primary" : "ghost"}
-                  size="sm"
-                  onClick={() => setActiveTab("architect")}
-                  className="gap-2 rounded-b-none border-b-2 border-transparent data-[variant=primary]:border-[var(--primary)]"
-                >
-                  <Network size={14} /> Schema Map
-                </Button>
-                <Button
                   variant={activeTab === "operations" ? "primary" : "ghost"}
                   size="sm"
                   onClick={() => setActiveTab("operations")}
                   className="gap-2 rounded-b-none border-b-2 border-transparent data-[variant=primary]:border-[var(--primary)]"
                 >
                   <Settings size={14} /> Operations
-                </Button>
-                <Button
-                  variant={activeTab === "performance" ? "primary" : "ghost"}
-                  size="sm"
-                  onClick={() => setActiveTab("performance")}
-                  className="gap-2 rounded-b-none border-b-2 border-transparent data-[variant=primary]:border-[var(--primary)]"
-                >
-                  <Activity size={14} /> Performance
-                </Button>
-                <Button
-                  variant={activeTab === "health" ? "primary" : "ghost"}
-                  size="sm"
-                  onClick={() => setActiveTab("health")}
-                  className="gap-2 rounded-b-none border-b-2 border-transparent data-[variant=primary]:border-[var(--primary)]"
-                >
-                  <Activity size={14} /> Health
-                </Button>
-                <Button
-                  variant={activeTab === "security" ? "primary" : "ghost"}
-                  size="sm"
-                  onClick={() => setActiveTab("security")}
-                  className="gap-2 rounded-b-none border-b-2 border-transparent data-[variant=primary]:border-[var(--primary)]"
-                >
-                  <Shield size={14} /> Security
-                </Button>
-
-                <Button
-                  variant={activeTab === "diff" ? "primary" : "ghost"}
-                  size="sm"
-                  onClick={() => setActiveTab("diff")}
-                  className="gap-2 rounded-b-none border-b-2 border-transparent data-[variant=primary]:border-[var(--primary)]"
-                >
-                  <GitCompare size={14} /> Diff & Sync
-                </Button>
-                <Button
-                  variant={activeTab === "docs" ? "primary" : "ghost"}
-                  size="sm"
-                  onClick={() => setActiveTab("docs")}
-                  className="gap-2 rounded-b-none border-b-2 border-transparent data-[variant=primary]:border-[var(--primary)]"
-                >
-                  <BookOpen size={14} /> Docs
-                </Button>
-                <Button
-                  variant={activeTab === "audit" ? "primary" : "ghost"}
-                  size="sm"
-                  onClick={() => setActiveTab("audit")}
-                  className="gap-2 rounded-b-none border-b-2 border-transparent data-[variant=primary]:border-[var(--primary)]"
-                >
-                  <HistoryIcon size={14} /> Audit
-                </Button>
-                <Button
-                  variant={activeTab === "ai" ? "primary" : "ghost"}
-                  size="sm"
-                  onClick={() => setActiveTab("ai")}
-                  className="gap-2 rounded-b-none border-b-2 border-transparent data-[variant=primary]:border-[var(--primary)]"
-                >
-                  <Sparkles size={14} className="text-blue-500" /> Ask AI
                 </Button>
               </>
             ) : (
@@ -1281,14 +1228,6 @@ $mysqli->close();
                   className="gap-2 rounded-b-none border-b-2 border-transparent data-[variant=primary]:border-[var(--primary)]"
                 >
                   <Code2 size={14} /> SQL
-                </Button>
-                <Button
-                  variant={activeTab === "environments" ? "primary" : "ghost"}
-                  size="sm"
-                  onClick={() => setActiveTab("environments")}
-                  className="gap-2 rounded-b-none border-b-2 border-transparent data-[variant=primary]:border-[var(--primary)]"
-                >
-                  <Globe size={14} /> Environments
                 </Button>
               </>
             )}
@@ -2169,24 +2108,6 @@ $mysqli->close();
             </div>
           )}
 
-          {activeTab === "environments" && (
-            <div className="flex-1 overflow-y-auto">
-              <EnvironmentManager />
-            </div>
-          )}
-
-          {activeTab === "ai" && selectedDB && (
-            <div className="flex-1 overflow-hidden p-6">
-              <AIAssistant database={selectedDB} />
-            </div>
-          )}
-
-          {activeTab === "schema" && selectedDB && (
-            <div className="mt-8">
-              <SchemaVisualizer database={selectedDB} />
-            </div>
-          )}
-
           {/* Context: DB, Tab: Snapshots */}
           {activeTab === "snapshots" && selectedDB && (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -2356,38 +2277,6 @@ $mysqli->close();
             </div>
           )}
 
-          {/* Context: DB, Tab: Performance */}
-          {activeTab === "performance" && selectedDB && (
-            <PerformanceDashboard database={selectedDB} />
-          )}
-
-          {/* Context: DB, Tab: Health */}
-          {activeTab === "health" && selectedDB && (
-            <HealthMonitor database={selectedDB} />
-          )}
-
-          {/* Context: DB, Tab: Security */}
-          {activeTab === "security" && selectedDB && (
-            <SecurityDashboard database={selectedDB} />
-          )}
-
-
-
-          {/* Context: DB, Tab: Diff */}
-          {activeTab === "diff" && selectedDB && (
-            <SchemaDiffTool currentDatabase={selectedDB} />
-          )}
-
-          {/* Context: DB, Tab: Docs */}
-          {activeTab === "docs" && selectedDB && (
-            <DocumentationPortal database={selectedDB} />
-          )}
-
-          {/* Context: DB, Tab: Audit */}
-          {activeTab === "audit" && (
-            <AuditTimeline />
-          )}
-
           {/* Operations Context: Database */}
           {activeTab === "operations" && selectedDB && !selectedTable && (
             <DatabaseOperations
@@ -2396,6 +2285,8 @@ $mysqli->close();
               onSelectTable={setSelectedTable}
               onNavigateToRecord={handleNavigateToRecord}
               onCreateTable={() => setActiveTab("create-table")}
+              onOpenSnapshots={() => setActiveTab("snapshots")}
+              onOpenSchemaMap={() => setActiveTab("architect")}
             />
           )}
 
@@ -2570,15 +2461,7 @@ $mysqli->close();
                         <Button
                           variant="danger"
                           size="sm"
-                          onClick={() => {
-                            // Dirty hack to set selectedDB for the handler, or just call mutate directly
-                            if (confirm(`Drop database ${db.name}?`)) {
-                              executeQueryMutation.mutate({
-                                database: db.name,
-                                query: `DROP DATABASE \`${db.name}\``,
-                              });
-                            }
-                          }}
+                          onClick={() => handleDeleteDatabase(db.name)}
                         >
                           <Trash2 size={14} />
                         </Button>

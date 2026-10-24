@@ -7,6 +7,25 @@
  * It routes requests to the appropriate project based on the hostname.
  */
 
+function sld_apply_phpmyadmin_hide($projectPath) {
+    $snippet = __DIR__ . '/pma-hide-db.php';
+    if (!file_exists($snippet) || !is_dir($projectPath)) {
+        return;
+    }
+
+    $destinations = array(
+        '/etc/phpmyadmin/conf.d/sld-hide-db.php',
+        $projectPath . '/conf.d/sld-hide-db.php',
+    );
+
+    foreach ($destinations as $dest) {
+        $dir = dirname($dest);
+        if (is_dir($dir) && is_writable($dir)) {
+            @copy($snippet, $dest);
+        }
+    }
+}
+
 // 1. Identify the host
 $host = $_SERVER['HTTP_HOST'];
 $tld = 'test'; // To be loaded from state in real impl
@@ -62,6 +81,8 @@ if ($domain === 'phpmyadmin') {
         echo "</ul>";
         exit;
     }
+
+    sld_apply_phpmyadmin_hide($projectPath);
 }
 
 // 2. Handle Localhost & Tools
@@ -84,6 +105,7 @@ if ($domain === 'localhost') {
         }
 
         if ($toolPath) {
+            sld_apply_phpmyadmin_hide($toolPath);
             // Fix URI for the tool
             // We need to serve this directory.
             $projectPath = $toolPath;

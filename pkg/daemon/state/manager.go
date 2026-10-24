@@ -38,10 +38,17 @@ type Manager struct {
 	Data     *State
 }
 
+// Dir is the on-disk state directory. Override with SLD_STATE_DIR in containers.
+func Dir() string {
+	if dir := os.Getenv("SLD_STATE_DIR"); dir != "" {
+		return dir
+	}
+	return "/var/lib/sld"
+}
+
 // NewManager creates a new State Manager pointing to the global config path.
 func NewManager() (*Manager, error) {
-	// Global path for multi-user support
-	configDir := "/var/lib/sld"
+	configDir := Dir()
 
 	// Ensure directory exists (usually created by installer, but good safety)
 	if err := os.MkdirAll(configDir, 0777); err != nil {
