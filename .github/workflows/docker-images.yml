@@ -13,6 +13,8 @@ on:
 permissions:
   contents: read
   packages: write
+  id-token: write
+  attestations: write
 
 env:
   REGISTRY: ghcr.io
@@ -48,9 +50,19 @@ jobs:
           context: ./docker/router
           platforms: linux/amd64,linux/arm64
           push: true
+          sbom: true
+          provenance: true
           tags: |
             ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/sld-router:2
             ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/sld-router:latest
+
+      - name: Scan sld-router image with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/sld-router:2
+          format: "table"
+          ignore-unfixed: true
+          severity: "CRITICAL,HIGH"
 
   build-nginx:
     name: Build & Push sld-nginx
@@ -82,9 +94,19 @@ jobs:
           context: ./docker/nginx
           platforms: linux/amd64,linux/arm64
           push: true
+          sbom: true
+          provenance: true
           tags: |
             ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/sld-nginx:1
             ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/sld-nginx:latest
+
+      - name: Scan sld-nginx image with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/sld-nginx:1
+          format: "table"
+          ignore-unfixed: true
+          severity: "CRITICAL,HIGH"
 
   build-php:
     name: Build & Push sld-php (${{ matrix.php_version }})
@@ -122,5 +144,15 @@ jobs:
             PHP_VERSION=${{ matrix.php_version }}
           platforms: linux/amd64,linux/arm64
           push: true
+          sbom: true
+          provenance: true
           tags: |
             ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/sld-php:${{ matrix.php_version }}
+
+      - name: Scan sld-php (${{ matrix.php_version }}) image with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/sld-php:${{ matrix.php_version }}
+          format: "table"
+          ignore-unfixed: true
+          severity: "CRITICAL,HIGH"

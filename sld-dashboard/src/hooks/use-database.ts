@@ -40,6 +40,7 @@ export function useDatabases() {
   return useQuery({
     queryKey: dbKeys.list(),
     queryFn: () => api.getDatabases(),
+    retry: false,
   });
 }
 
@@ -47,6 +48,7 @@ export function useDatabaseStatus() {
   return useQuery({
     queryKey: dbKeys.status(),
     queryFn: () => api.getDatabaseStatus(),
+    retry: false,
   });
 }
 
@@ -75,8 +77,11 @@ export function useSetDatabaseTargetMutation() {
       password?: string;
     }) => api.setDatabaseTarget(source),
     onSuccess: (data) => {
+      // Clear cached tables/columns/data from previous target before refetching
+      queryClient.removeQueries({ queryKey: [...dbKeys.all, "tables"] });
+      queryClient.removeQueries({ queryKey: [...dbKeys.all, "columns"] });
+      queryClient.removeQueries({ queryKey: [...dbKeys.all, "data"] });
       queryClient.invalidateQueries({ queryKey: dbKeys.all });
-      queryClient.invalidateQueries({ queryKey: ["db", "sources"] });
       addToast({
         type: "success",
         title: "Target Database Connected",
@@ -84,6 +89,8 @@ export function useSetDatabaseTargetMutation() {
       });
     },
     onError: (err: Error) => {
+      queryClient.invalidateQueries({ queryKey: dbKeys.status() });
+      queryClient.invalidateQueries({ queryKey: ["db", "sources"] });
       addToast({
         type: "error",
         title: "Connection Failed",

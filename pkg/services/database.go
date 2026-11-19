@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/brianvoe/gofakeit/v6"
@@ -125,6 +126,7 @@ type DatabaseSummary struct {
 
 // DatabaseService manages database connections via drivers
 type DatabaseService struct {
+	mu           sync.RWMutex
 	db           *sql.DB // Legacy, to be replaced by driver
 	Driver       DatabaseDriver
 	driverName   string
@@ -146,13 +148,15 @@ func NewDatabaseService() *DatabaseService {
 
 // DriverName returns the active engine (mysql or postgres).
 func (d *DatabaseService) DriverName() string {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
 	if d.driverName == "" {
 		return "mysql"
 	}
 	return d.driverName
 }
 
-// SetDriver switches the database driver (mysql or postgres) and reconnects.
+// SetDriver switches the database driver (mysql or postgres) and reconnects atomically.
 func (d *DatabaseService) SetDriver(driverName string) error {
 	if driverName == "" {
 		driverName = "mysql"
@@ -161,23 +165,33 @@ func (d *DatabaseService) SetDriver(driverName string) error {
 		return fmt.Errorf("unsupported database driver %q", driverName)
 	}
 
-	if d.Driver != nil {
-		d.Driver.Close()
+	var nextDriver DatabaseDriver
+	if driverName == "postgres" {
+		nextDriver = NewPostgresDriver()
+	} else {
+		nextDriver = NewMySQLDriver()
 	}
 
+	if err := nextDriver.Connect(ConnectionConfig{}); err != nil {
+		return err
+	}
+
+	d.mu.Lock()
+	oldDriver := d.Driver
+	d.Driver = nextDriver
 	d.driverName = driverName
 	d.activeConfig = ConnectionConfig{}
 	d.activeTarget = "default"
+	d.mu.Unlock()
 
-	if driverName == "postgres" {
-		d.Driver = NewPostgresDriver()
-	} else {
-		d.Driver = NewMySQLDriver()
+	if oldDriver != nil {
+		_ = oldDriver.Close()
 	}
-	return d.Connect()
+	return nil
 }
 
-// SetTarget connects to a specific database container or host target
+// SetTarget connects to a specific database container or host target atomically.
+// If connecting fails, the previously active connection remains intact.
 func (d *DatabaseService) SetTarget(targetName string, driverName string, config ConnectionConfig) error {
 	if driverName == "" {
 		driverName = "mysql"
@@ -186,23 +200,34 @@ func (d *DatabaseService) SetTarget(targetName string, driverName string, config
 		return fmt.Errorf("unsupported database driver %q", driverName)
 	}
 
-	if d.Driver != nil {
-		d.Driver.Close()
+	var nextDriver DatabaseDriver
+	if driverName == "postgres" {
+		nextDriver = NewPostgresDriver()
+	} else {
+		nextDriver = NewMySQLDriver()
 	}
 
+	if err := nextDriver.Connect(config); err != nil {
+		return err
+	}
+
+	d.mu.Lock()
+	oldDriver := d.Driver
+	d.Driver = nextDriver
 	d.driverName = driverName
 	d.activeConfig = config
 	d.activeTarget = targetName
+	d.mu.Unlock()
 
-	if driverName == "postgres" {
-		d.Driver = NewPostgresDriver()
-	} else {
-		d.Driver = NewMySQLDriver()
+	if oldDriver != nil {
+		_ = oldDriver.Close()
 	}
-	return d.Driver.Connect(d.activeConfig)
+	return nil
 }
 
 func (d *DatabaseService) ActiveTarget() string {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
 	if d.activeTarget == "" {
 		return "default"
 	}
@@ -210,25 +235,58 @@ func (d *DatabaseService) ActiveTarget() string {
 }
 
 func (d *DatabaseService) ActiveConfig() ConnectionConfig {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
 	return d.activeConfig
 }
 
 // Connect establishes a connection using activeConfig (or default auto-discovery if empty)
 func (d *DatabaseService) Connect() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	return d.Driver.Connect(d.activeConfig)
+}
+
+// StatusCheck verifies connectivity without leaking connection pools on repeated polls.
+func (d *DatabaseService) StatusCheck() error {
+	return d.ensureConnected()
 }
 
 // Close closes the database connection
 func (d *DatabaseService) Close() {
-	d.Driver.Close()
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.Driver != nil {
+		_ = d.Driver.Close()
+	}
 }
 
 // ensureConnected reconnects if needed
 func (d *DatabaseService) ensureConnected() error {
-	if !d.Driver.IsConnected() {
-		return d.Connect()
+	d.mu.RLock()
+	drv := d.Driver
+	d.mu.RUnlock()
+
+	if drv != nil && drv.IsConnected() {
+		return nil
 	}
-	return nil
+	return d.Connect()
+}
+
+// GetCollations safely returns available server collations after ensuring a connection.
+func (d *DatabaseService) GetCollations() ([]CollationInfo, error) {
+	if err := d.ensureConnected(); err != nil {
+		return nil, err
+	}
+	return d.Driver.GetCollations()
+}
+
+// GetDatabaseSettings safely returns database charset/collation settings after ensuring a connection.
+func (d *DatabaseService) GetDatabaseSettings(database string) (*DatabaseSettings, error) {
+	if err := d.ensureConnected(); err != nil {
+		return nil, err
+	}
+	return d.Driver.GetDatabaseSettings(database)
 }
 
 // ListDatabases returns all user databases
@@ -975,8 +1033,15 @@ func (d *DatabaseService) ExplainQuery(database, query string) (*QueryExplanatio
 	return d.Driver.ExplainQuery(database, query)
 }
 
-// CreateSnapshot creates a database snapshot using mysqldump
+// CreateSnapshot creates a database snapshot using the active driver's dump utility (mysqldump / pg_dump)
 func (d *DatabaseService) CreateSnapshot(database, table string) (*Snapshot, error) {
+	if err := RejectSystemDatabase(database); err != nil {
+		return nil, err
+	}
+	if err := d.ensureConnected(); err != nil {
+		return nil, err
+	}
+
 	// Ensure snapshots directory exists
 	if err := os.MkdirAll(d.SnapDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create snapshots directory: %w", err)
@@ -988,29 +1053,21 @@ func (d *DatabaseService) CreateSnapshot(database, table string) (*Snapshot, err
 		// Use a double underscore to separate db and table more clearly
 		filename = fmt.Sprintf("%s__%s_%s.sql", database, table, timestamp)
 	}
-	filepath := filepath.Join(d.SnapDir, filename)
+	snapPath := filepath.Join(d.SnapDir, filename)
 
-	// Run mysqldump
-	args := []string{"-u", "root", database}
-	if table != "" {
-		args = append(args, table)
+	if err := d.Driver.CreateSnapshot(database, table, snapPath); err != nil {
+		return nil, err
 	}
-	cmd := exec.Command("mysqldump", args...)
-	output, err := cmd.Output()
+
+	info, err := os.Stat(snapPath)
 	if err != nil {
-		return nil, fmt.Errorf("mysqldump failed: %w", err)
+		return nil, fmt.Errorf("failed to stat snapshot: %w", err)
 	}
-
-	// Write to file
-	if err := os.WriteFile(filepath, output, 0644); err != nil {
-		return nil, fmt.Errorf("failed to write snapshot: %w", err)
-	}
-
-	info, _ := os.Stat(filepath)
 
 	return &Snapshot{
 		ID:        timestamp,
 		Database:  database,
+		Table:     table,
 		Filename:  filename,
 		Size:      info.Size(),
 		CreatedAt: time.Now(),
@@ -1077,21 +1134,24 @@ func (d *DatabaseService) ListSnapshots() ([]Snapshot, error) {
 
 // RestoreSnapshot restores a database from a snapshot
 func (d *DatabaseService) RestoreSnapshot(filename string) error {
-	filepath := filepath.Join(d.SnapDir, filename)
+	snapPath := filepath.Join(d.SnapDir, filename)
 
-	if _, err := os.Stat(filepath); os.IsNotExist(err) {
+	if _, err := os.Stat(snapPath); os.IsNotExist(err) {
 		return fmt.Errorf("snapshot not found: %s", filename)
 	}
 
-	// Parse database name from filename
-	name := strings.TrimSuffix(filename, ".sql")
-	parts := strings.Split(name, "_")
-	if len(parts) < 3 {
-		return fmt.Errorf("invalid snapshot filename")
+	dbName, err := parseSnapshotDBName(filename)
+	if err != nil {
+		return err
 	}
-	dbName := strings.Join(parts[:len(parts)-2], "_")
+	if err := RejectSystemDatabase(dbName); err != nil {
+		return err
+	}
+	if err := d.ensureConnected(); err != nil {
+		return err
+	}
 
-	return d.Driver.RestoreSnapshot(dbName, filepath)
+	return d.Driver.RestoreSnapshot(dbName, snapPath)
 }
 
 // DeleteSnapshot deletes a snapshot file
@@ -1136,22 +1196,15 @@ func (d *DatabaseService) RewindDatabase(snapshotFilename string) (*Snapshot, er
 	return autoBackup, nil
 }
 
-// ImportSQL imports a SQL file into a specific database
+// ImportSQL imports a .sql or .sql.gz file into a specific database on the active target server
 func (d *DatabaseService) ImportSQL(database, sqlFilePath string) error {
-	file, err := os.Open(sqlFilePath)
-	if err != nil {
-		return fmt.Errorf("failed to open SQL file: %w", err)
+	if err := RejectSystemDatabase(database); err != nil {
+		return err
 	}
-	defer file.Close()
-
-	cmd := exec.Command("mysql", "-u", "root", database)
-	cmd.Stdin = file
-
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("mysql import failed: %s", string(output))
+	if err := d.ensureConnected(); err != nil {
+		return err
 	}
-
-	return nil
+	return d.Driver.RestoreSnapshot(database, sqlFilePath)
 }
 
 type CloneOptions struct {
@@ -1162,7 +1215,7 @@ type CloneOptions struct {
 	AddConstraints   bool
 }
 
-// CloneDatabase creates a copy of a database using mysqldump piped directly to mysql
+// CloneDatabase creates a copy of a database using mysqldump/pg_dump piped directly to mysql/psql
 func (d *DatabaseService) CloneDatabase(source, target string, opts CloneOptions) error {
 	if err := RejectSystemDatabase(source); err != nil {
 		return err
@@ -1179,51 +1232,80 @@ func (d *DatabaseService) CloneDatabase(source, target string, opts CloneOptions
 		mode = "both"
 	}
 
-	// Validate source exists
-	var exists int
-	err := d.db.QueryRow("SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?", source).Scan(&exists)
-	if err != nil || exists == 0 {
+	// Validate source exists and check target via the active driver (never nil legacy d.db)
+	dbs, err := d.Driver.ListDatabases()
+	if err != nil {
+		return fmt.Errorf("failed to list databases: %w", err)
+	}
+	sourceExists := false
+	targetExists := false
+	for _, dbName := range dbs {
+		if dbName == source {
+			sourceExists = true
+		}
+		if dbName == target {
+			targetExists = true
+		}
+	}
+	if !sourceExists {
 		return fmt.Errorf("source database '%s' not found", source)
 	}
 
-	// Check target if we are creating it
 	if opts.CreateDatabase {
-		err = d.db.QueryRow("SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?", target).Scan(&exists)
-		if err == nil && exists > 0 {
+		if targetExists {
 			return fmt.Errorf("target database '%s' already exists", target)
 		}
-
-		// Create target database
-		_, err = d.db.Exec(fmt.Sprintf("CREATE DATABASE `%s`", target))
-		if err != nil {
+		if err := d.Driver.CreateDatabase(target); err != nil {
 			return fmt.Errorf("failed to create target database: %w", err)
 		}
 	}
 
-	// Prepare mysqldump args
-	dumpArgs := []string{"-u", "root"}
-	switch mode {
-	case "structure":
-		dumpArgs = append(dumpArgs, "--no-data")
-	case "data":
-		dumpArgs = append(dumpArgs, "--no-create-info")
-	}
+	activeCfg := d.ActiveConfig()
+	var dumpCmd, importCmd *exec.Cmd
 
-	if opts.AddDropTable {
-		dumpArgs = append(dumpArgs, "--add-drop-table")
+	if d.DriverName() == "postgres" {
+		dumpExtra := []string{}
+		switch mode {
+		case "structure":
+			dumpExtra = append(dumpExtra, "--schema-only")
+		case "data":
+			dumpExtra = append(dumpExtra, "--data-only")
+		}
+		if opts.AddDropTable {
+			dumpExtra = append(dumpExtra, "--clean", "--if-exists")
+		}
+		dumpExtra = append(dumpExtra, "-d", source)
+		dumpArgs, dumpEnv := buildPostgresCLIArgs(activeCfg, dumpExtra...)
+		importArgs, importEnv := buildPostgresCLIArgs(activeCfg, "-v", "ON_ERROR_STOP=1", "-d", target)
+		dumpCmd = exec.Command("pg_dump", dumpArgs...)
+		dumpCmd.Env = dumpEnv
+		importCmd = exec.Command("psql", importArgs...)
+		importCmd.Env = importEnv
 	} else {
-		dumpArgs = append(dumpArgs, "--skip-add-drop-table")
+		dumpExtra := []string{"--single-transaction", "--quick"}
+		switch mode {
+		case "structure":
+			dumpExtra = append(dumpExtra, "--no-data")
+		case "data":
+			dumpExtra = append(dumpExtra, "--no-create-info")
+		}
+		if opts.AddDropTable {
+			dumpExtra = append(dumpExtra, "--add-drop-table")
+		} else {
+			dumpExtra = append(dumpExtra, "--skip-add-drop-table")
+		}
+		if opts.AddConstraints {
+			dumpExtra = append(dumpExtra, "--routines", "--triggers", "--events")
+		}
+		dumpExtra = append(dumpExtra, source)
+
+		dumpArgs, dumpEnv := buildMySQLCLIArgs(activeCfg, dumpExtra...)
+		importArgs, importEnv := buildMySQLCLIArgs(activeCfg, "--default-character-set=utf8mb4", target)
+		dumpCmd = exec.Command("mysqldump", dumpArgs...)
+		dumpCmd.Env = dumpEnv
+		importCmd = exec.Command("mysql", importArgs...)
+		importCmd.Env = importEnv
 	}
-
-	if opts.AddConstraints {
-		dumpArgs = append(dumpArgs, "--routines", "--triggers", "--events")
-	}
-
-	dumpArgs = append(dumpArgs, source)
-
-	// Use pipe: mysqldump source | mysql target
-	dumpCmd := exec.Command("mysqldump", dumpArgs...)
-	importCmd := exec.Command("mysql", "-u", "root", target)
 
 	// Create pipe
 	pipe, err := dumpCmd.StdoutPipe()
@@ -1271,9 +1353,6 @@ func (d *DatabaseService) GetForeignValues(database, table, column string) ([]Fo
 	if err := d.ensureConnected(); err != nil {
 		return nil, err
 	}
-	if _, err := d.db.Exec("USE " + database); err != nil {
-		return nil, err
-	}
 
 	// 1. Get columns to find a likely label
 	cols, err := d.GetTableColumns(database, table)
@@ -1317,39 +1396,35 @@ func (d *DatabaseService) GetForeignValues(database, table, column string) ([]Fo
 		}
 	}
 
-	// Safety check: quote identifiers
-	query := fmt.Sprintf("SELECT DISTINCT `%s`, `%s` FROM `%s` ORDER BY `%s` LIMIT 100", column, labelCol, table, labelCol)
-	// If labelCol is same as column, we only select once to avoid ambiguity in scan?
-	// Actually SQL handles `SELECT id, id ...` fine, but let's be clean.
-	if labelCol == column {
-		query = fmt.Sprintf("SELECT DISTINCT `%s` FROM `%s` ORDER BY `%s` LIMIT 100", column, table, column)
+	q := func(ident string) string {
+		if d.DriverName() == "postgres" {
+			return `"` + strings.ReplaceAll(ident, `"`, `""`) + `"`
+		}
+		return "`" + strings.ReplaceAll(ident, "`", "``") + "`"
 	}
 
-	rows, err := d.db.Query(query)
+	var query string
+	if labelCol == column {
+		query = fmt.Sprintf("SELECT DISTINCT %s AS fk_val FROM %s ORDER BY %s LIMIT 100", q(column), q(table), q(column))
+	} else {
+		query = fmt.Sprintf("SELECT DISTINCT %s AS fk_val, %s AS fk_label FROM %s ORDER BY %s LIMIT 100", q(column), q(labelCol), q(table), q(labelCol))
+	}
+
+	rows, err := d.Driver.Query(database, query, nil)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	var results []ForeignValue
-	for rows.Next() {
-		var val string
-		var label string
-
-		if labelCol == column {
-			if err := rows.Scan(&val); err != nil {
-				return nil, err
-			}
-			label = val
-		} else {
-			if err := rows.Scan(&val, &label); err != nil {
-				return nil, err
-			}
+	results := make([]ForeignValue, 0, len(rows))
+	for _, r := range rows {
+		val := fmt.Sprintf("%v", r["fk_val"])
+		label := val
+		if lbl, ok := r["fk_label"]; ok && lbl != nil {
+			label = fmt.Sprintf("%v", lbl)
 		}
 
-		// Create composite label if different
 		displayLabel := val
-		if label != val {
+		if label != val && label != "" {
 			displayLabel = fmt.Sprintf("%s - %s", val, label)
 		}
 

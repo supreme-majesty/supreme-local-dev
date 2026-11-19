@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   Database as DatabaseIcon,
   Table as TableIcon,
@@ -52,6 +52,7 @@ import { DatabaseStructure } from "@/components/database/DatabaseStructure";
 import { AlterTableDesigner } from "@/components/database/AlterTableDesigner";
 import { TableCreator } from "@/components/database/TableCreator";
 import { SmartImporter } from "@/components/database/SmartImporter";
+import { SQLImporter } from "@/components/database/SQLImporter";
 import { CloneDatabaseModal } from "@/components/database/CloneDatabaseModal";
 import { CreateDatabaseModal } from "@/components/database/CreateDatabaseModal";
 import { SchemaCanvas } from "@/components/database/SchemaCanvas";
@@ -113,6 +114,9 @@ export default function Database() {
   const [showExplainModal, setShowExplainModal] = useState(false);
   const [showPhpModal, setShowPhpModal] = useState(false);
   const [explainData, setExplainData] = useState<QueryResult | null>(null);
+  const [showStoppedServers, setShowStoppedServers] = useState(false);
+  const [importMode, setImportMode] = useState<"sql" | "data">("sql");
+  const autoFallbackAttemptedRef = useRef(false);
 
   // New Database Modal
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -195,14 +199,76 @@ export default function Database() {
     profile: profiling,
   });
 
-  const { data: databases } = useDatabases();
-  const { data: dbStatus } = useDatabaseStatus();
+  const {
+    data: databases,
+    isLoading: loadingDatabases,
+    isError: isDatabasesError,
+    error: databasesError,
+    refetch: refetchDatabases,
+  } = useDatabases();
+  const { data: dbStatus, refetch: refetchStatus } = useDatabaseStatus();
   const setDriverMutation = useSetDatabaseDriverMutation();
-  const { data: rawSources } = useDatabaseSources();
+  const {
+    data: rawSources,
+    refetch: refetchSources,
+    isFetching: fetchingSources,
+  } = useDatabaseSources();
   const sources = useMemo(() => rawSources || [], [rawSources]);
+  const activeSource = useMemo(
+    () => sources.find((s) => s.is_active) || sources[0],
+    [sources],
+  );
+  const runningSources = useMemo(
+    () => sources.filter((s) => s.type === "default" || s.status === "running"),
+    [sources],
+  );
+  const stoppedDockerCount = sources.length - runningSources.length;
+  const visibleSources = showStoppedServers ? sources : runningSources;
   const setTargetMutation = useSetDatabaseTargetMutation();
   const { data: tableSchema } = useTableColumns(selectedDB, selectedTable);
   const { data: snapshots } = useSnapshots();
+
+  const handleSelectTarget = useCallback(
+    (source: (typeof sources)[number]) => {
+      setTargetMutation.mutate(
+        {
+          id: source.id,
+          driver: source.driver,
+          host: source.host,
+          port: source.port,
+          user: source.user,
+          password: source.password,
+        },
+        {
+          onSuccess: () => {
+            setSelectedDB(null);
+            setSelectedTable(null);
+          },
+        },
+      );
+    },
+    [setTargetMutation],
+  );
+
+  // If the default DB is unreachable on initial open, auto-connect to the first running Docker DB
+  useEffect(() => {
+    if (
+      autoFallbackAttemptedRef.current ||
+      setTargetMutation.isPending ||
+      !dbStatus ||
+      dbStatus.connected ||
+      (dbStatus.active_target && dbStatus.active_target !== "default")
+    ) {
+      return;
+    }
+    const firstRunningDocker = sources.find(
+      (s) => s.type === "docker" && s.status === "running",
+    );
+    if (firstRunningDocker) {
+      autoFallbackAttemptedRef.current = true;
+      handleSelectTarget(firstRunningDocker);
+    }
+  }, [dbStatus, sources, setTargetMutation.isPending, handleSelectTarget]);
 
   useEffect(() => {
     const driver = dbStatus?.driver;
@@ -1017,6 +1083,11 @@ $mysqli->close();
         <DatabaseTree
           selectedDb={selectedDB}
           selectedTable={selectedTable}
+          serverLabel={
+            activeSource?.name ||
+            (dbStatus?.host ? `${dbStatus.host}:${dbStatus.port || "3306"}` : "Localhost")
+          }
+          connected={dbStatus?.connected}
           onSelectDb={handleSelectDb}
           onSelectTable={handleSelectTable}
           onCreateTable={(db) => {
@@ -1074,44 +1145,73 @@ $mysqli->close();
           </div>
 
           <div className="flex gap-2 items-center">
+            {dbStatus && (
+              <span
+                className={`inline-flex items-center gap-1.5 text-[11px] font-medium px-2 py-0.5 rounded-full border ${
+                  dbStatus.connected
+                    ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
+                    : "bg-red-500/10 text-red-400 border-red-500/30"
+                }`}
+                title={dbStatus.error || `${dbStatus.host}:${dbStatus.port}`}
+              >
+                <span
+                  className={`h-1.5 w-1.5 rounded-full ${
+                    dbStatus.connected ? "bg-emerald-500" : "bg-red-500"
+                  }`}
+                />
+                {dbStatus.connected ? "Connected" : "Disconnected"}
+              </span>
+            )}
+
             {/* Target Selector (Default / Docker DB Containers) */}
             {sources.length > 0 && (
               <div className="flex items-center gap-1.5 bg-[var(--card)] border border-[var(--border)] rounded-md px-2.5 py-1 text-xs shadow-xs">
                 <Boxes size={14} className="text-[var(--primary)] shrink-0" />
                 <span className="text-[var(--muted-foreground)] font-medium text-[10px] uppercase tracking-wider">Target:</span>
                 <select
-                  value={sources.find((s) => s.is_active)?.id || "default"}
+                  value={activeSource?.id || "default"}
+                  disabled={setTargetMutation.isPending}
                   onChange={(e) => {
                     const targetId = e.target.value;
                     const selectedSource = sources.find((s) => s.id === targetId);
                     if (selectedSource) {
-                      setSelectedDB(null);
-                      setSelectedTable(null);
-                      setTargetMutation.mutate({
-                        id: selectedSource.id,
-                        driver: selectedSource.driver,
-                        host: selectedSource.host,
-                        port: selectedSource.port,
-                        user: selectedSource.user,
-                        password: selectedSource.password,
-                      });
+                      handleSelectTarget(selectedSource);
                     }
                   }}
-                  className="bg-transparent text-[var(--foreground)] text-xs font-medium focus:outline-none cursor-pointer"
+                  className="bg-transparent text-[var(--foreground)] text-xs font-medium focus:outline-none cursor-pointer disabled:opacity-50"
                 >
-                  {sources.map((src) => (
-                    <option key={src.id} value={src.id} className="bg-[var(--card)] text-[var(--foreground)]">
-                      {src.type === "docker" ? "🐳 " : "⚙️ "}
-                      {src.name} ({src.driver.toUpperCase()}{src.port ? ` :${src.port}` : ""})
-                    </option>
-                  ))}
+                  {sources.map((src) => {
+                    const isStopped = src.type === "docker" && src.status !== "running";
+                    return (
+                      <option
+                        key={src.id}
+                        value={src.id}
+                        disabled={isStopped}
+                        className="bg-[var(--card)] text-[var(--foreground)]"
+                      >
+                        {src.type === "docker" ? (isStopped ? "⏸ " : "🐳 ") : "⚙️ "}
+                        {src.name} ({src.driver.toUpperCase()}
+                        {src.port ? ` :${src.port}` : ""}
+                        {isStopped ? " · stopped" : ""})
+                      </option>
+                    );
+                  })}
                 </select>
+                <button
+                  type="button"
+                  onClick={() => refetchSources()}
+                  className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] ml-1"
+                  title="Refresh Docker database sources"
+                >
+                  <RefreshCw size={12} className={fetchingSources ? "animate-spin" : ""} />
+                </button>
               </div>
             )}
 
             {/* Driver Selector */}
             <select
               value={dbDriver}
+              disabled={setDriverMutation.isPending || setTargetMutation.isPending}
               onChange={(e) => {
                 const val = e.target.value as "mysql" | "postgres";
                 setDbDriver(val);
@@ -1120,7 +1220,7 @@ $mysqli->close();
                 setSelectedTable(null);
                 setDriverMutation.mutate(val);
               }}
-              className="bg-[var(--card)] border border-[var(--border)] text-[var(--foreground)] text-xs rounded-md px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
+              className="bg-[var(--card)] border border-[var(--border)] text-[var(--foreground)] text-xs rounded-md px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[var(--primary)] disabled:opacity-50"
             >
               <option value="mysql">MySQL</option>
               <option value="postgres">PostgreSQL</option>
@@ -2308,7 +2408,39 @@ $mysqli->close();
 
           {/* Context: Import */}
           {activeTab === "import" && selectedDB && (
-            <SmartImporter database={selectedDB} />
+            <div className="w-full mt-4 px-4 pb-12 space-y-6">
+              <div className="flex items-center justify-center">
+                <div className="inline-flex rounded-lg border border-[var(--border)] bg-[var(--card)] p-1 gap-1">
+                  <Button
+                    size="sm"
+                    variant={importMode === "sql" ? "primary" : "ghost"}
+                    onClick={() => setImportMode("sql")}
+                  >
+                    SQL Dump (.sql / .sql.gz)
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={importMode === "data" ? "primary" : "ghost"}
+                    onClick={() => setImportMode("data")}
+                  >
+                    CSV / JSON Table Import
+                  </Button>
+                </div>
+              </div>
+
+              {importMode === "sql" ? (
+                <SQLImporter
+                  database={selectedDB}
+                  serverLabel={activeSource?.name || dbStatus?.host}
+                  onSuccessViewTables={() => {
+                    setSelectedTable(null);
+                    setActiveTab("structure");
+                  }}
+                />
+              ) : (
+                <SmartImporter database={selectedDB} />
+              )}
+            </div>
           )}
 
           {/* Context: DB, Tab: Architect */}
@@ -2463,53 +2595,221 @@ $mysqli->close();
 
           {/* Context: Databases Management */}
           {activeTab === "databases" && (
-            <div className="w-full mt-8 px-6 pb-12">
-              <div className="flex justify-between items-center mb-6">
-                <h2 className="text-xl font-semibold">Databases</h2>
-                <Button onClick={() => setIsCreateModalOpen(true)}>
-                  <Plus size={16} className="mr-2" /> Create Database
-                </Button>
-              </div>
+            <div className="w-full mt-6 px-6 pb-12 space-y-8">
+              {/* Discovered Database Servers quick switcher */}
+              {sources.length > 1 && (
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-sm font-semibold text-[var(--muted-foreground)] uppercase tracking-wider flex items-center gap-2">
+                      <Boxes size={15} className="text-[var(--primary)]" />
+                      Database Servers ({runningSources.length} active
+                      {stoppedDockerCount > 0 ? `, ${stoppedDockerCount} stopped` : ""})
+                    </h3>
+                    <div className="flex items-center gap-2">
+                      {stoppedDockerCount > 0 && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setShowStoppedServers((v) => !v)}
+                        >
+                          {showStoppedServers
+                            ? "Hide stopped"
+                            : `Show stopped (${stoppedDockerCount})`}
+                        </Button>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => refetchSources()}
+                        disabled={fetchingSources}
+                      >
+                        <RefreshCw size={13} className={`mr-1.5 ${fetchingSources ? "animate-spin" : ""}`} />
+                        Scan Docker
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                    {visibleSources.map((src) => {
+                      const isStopped = src.type === "docker" && src.status !== "running";
+                      return (
+                        <button
+                          key={src.id}
+                          type="button"
+                          disabled={isStopped || setTargetMutation.isPending}
+                          onClick={() => handleSelectTarget(src)}
+                          className={`text-left p-3 rounded-lg border transition-all ${
+                            src.is_active
+                              ? "border-[var(--primary)] bg-[var(--primary)]/10"
+                              : "border-[var(--border)] bg-[var(--card)] hover:border-[var(--primary)]/60"
+                          } ${isStopped ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
+                        >
+                          <div className="flex items-center justify-between gap-2 mb-1">
+                            <span className="font-medium text-sm truncate" title={src.name}>
+                              {src.name}
+                            </span>
+                            <span
+                              className={`text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded shrink-0 ${
+                                src.is_active
+                                  ? "bg-[var(--primary)] text-white"
+                                  : isStopped
+                                    ? "bg-red-500/15 text-red-400"
+                                    : "bg-emerald-500/15 text-emerald-400"
+                              }`}
+                            >
+                              {src.is_active ? "Active" : isStopped ? "Stopped" : "Running"}
+                            </span>
+                          </div>
+                          <div className="text-xs text-[var(--muted-foreground)] font-mono truncate">
+                            {src.driver.toUpperCase()} · {src.host}:{src.port}
+                          </div>
+                          {src.database && (
+                            <div className="text-[11px] text-[var(--muted-foreground)] mt-1 truncate">
+                              DB: {src.database}
+                            </div>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {(databases || []).map((db) => (
-                  <Card
-                    key={db.name}
-                    className="hover:border-[var(--primary)] transition-colors"
-                  >
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                      <CardTitle className="text-base font-medium">
-                        {db.name}
-                      </CardTitle>
-                      <DatabaseIcon
-                        size={16}
-                        className="text-[var(--muted-foreground)]"
-                      />
-                    </CardHeader>
-                    <CardContent>
-                      <div className="text-xs text-[var(--muted-foreground)] mb-4">
-                        {db.tables ?? 0} tables
+              <div>
+                <div className="flex justify-between items-center mb-6">
+                  <div>
+                    <h2 className="text-xl font-semibold">
+                      Databases
+                      {activeSource ? ` — ${activeSource.name}` : ""}
+                    </h2>
+                    {dbStatus?.host && (
+                      <p className="text-xs text-[var(--muted-foreground)] font-mono mt-0.5">
+                        {dbStatus.user || "root"}@{dbStatus.host}:{dbStatus.port} ({dbStatus.driver})
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => {
+                        refetchStatus();
+                        refetchDatabases();
+                      }}
+                    >
+                      <RefreshCw size={14} className="mr-1.5" /> Refresh
+                    </Button>
+                    <Button
+                      onClick={() => setIsCreateModalOpen(true)}
+                      disabled={dbStatus?.connected === false}
+                    >
+                      <Plus size={16} className="mr-2" /> Create Database
+                    </Button>
+                  </div>
+                </div>
+
+                {(loadingDatabases || setTargetMutation.isPending) && (
+                  <div className="flex items-center justify-center py-12 text-sm text-[var(--muted-foreground)] gap-2">
+                    <RefreshCw size={16} className="animate-spin" />
+                    <span>Loading databases...</span>
+                  </div>
+                )}
+
+                {!loadingDatabases && !setTargetMutation.isPending && (isDatabasesError || dbStatus?.connected === false) && (
+                  <Card className="border-red-500/30 bg-red-500/5">
+                    <CardContent className="p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                      <div>
+                        <h3 className="text-sm font-semibold text-red-400 mb-1">
+                          Unable to connect to {activeSource?.name || "database server"}
+                        </h3>
+                        <p className="text-xs text-[var(--muted-foreground)] font-mono break-all">
+                          {databasesError instanceof Error
+                            ? databasesError.message
+                            : dbStatus?.error || "Database server unreachable"}
+                        </p>
                       </div>
-                      <div className="flex gap-2">
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          className="w-full"
-                          onClick={() => setSelectedDB(db.name)}
-                        >
-                          Manage
-                        </Button>
-                        <Button
-                          variant="danger"
-                          size="sm"
-                          onClick={() => handleDeleteDatabase(db.name)}
-                        >
-                          <Trash2 size={14} />
-                        </Button>
-                      </div>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => {
+                          refetchStatus();
+                          refetchDatabases();
+                        }}
+                      >
+                        <RefreshCw size={14} className="mr-1.5" /> Retry
+                      </Button>
                     </CardContent>
                   </Card>
-                ))}
+                )}
+
+                {!loadingDatabases &&
+                  !setTargetMutation.isPending &&
+                  !isDatabasesError &&
+                  dbStatus?.connected !== false &&
+                  (databases || []).length === 0 && (
+                    <Card>
+                      <CardContent className="py-12 text-center">
+                        <DatabaseIcon
+                          size={32}
+                          className="mx-auto mb-3 text-[var(--muted-foreground)] opacity-60"
+                        />
+                        <p className="text-sm font-medium mb-1">
+                          No user databases found on this server
+                        </p>
+                        <p className="text-xs text-[var(--muted-foreground)] mb-4">
+                          System catalogs are hidden automatically. Create a new database or switch to another Docker server above.
+                        </p>
+                        <Button size="sm" onClick={() => setIsCreateModalOpen(true)}>
+                          <Plus size={14} className="mr-1.5" /> Create Database
+                        </Button>
+                      </CardContent>
+                    </Card>
+                  )}
+
+                {!loadingDatabases &&
+                  !setTargetMutation.isPending &&
+                  !isDatabasesError &&
+                  (databases || []).length > 0 && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {(databases || []).map((db) => (
+                        <Card
+                          key={db.name}
+                          className="hover:border-[var(--primary)] transition-colors"
+                        >
+                          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                            <CardTitle className="text-base font-medium">
+                              {db.name}
+                            </CardTitle>
+                            <DatabaseIcon
+                              size={16}
+                              className="text-[var(--muted-foreground)]"
+                            />
+                          </CardHeader>
+                          <CardContent>
+                            <div className="text-xs text-[var(--muted-foreground)] mb-4">
+                              {db.tables ?? 0} tables
+                            </div>
+                            <div className="flex gap-2">
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                className="w-full"
+                                onClick={() => setSelectedDB(db.name)}
+                              >
+                                Manage
+                              </Button>
+                              <Button
+                                variant="danger"
+                                size="sm"
+                                onClick={() => handleDeleteDatabase(db.name)}
+                              >
+                                <Trash2 size={14} />
+                              </Button>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  )}
               </div>
             </div>
           )}

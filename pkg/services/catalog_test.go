@@ -84,7 +84,7 @@ func TestDSNHelpers(t *testing.T) {
 	t.Setenv("SLD_DB_PORT", "3307")
 	t.Setenv("SLD_DB_USER", "admin")
 	t.Setenv("SLD_DB_PASS", "secret")
-	if got := MySQLDSN(); got != "admin:secret@tcp(test-db:3307)/" {
+	if got := MySQLDSN(); got != "admin:secret@tcp(test-db:3307)/?timeout=5s&readTimeout=15s&writeTimeout=15s" {
 		t.Fatalf("unexpected MySQLDSN: %s", got)
 	}
 
@@ -93,7 +93,7 @@ func TestDSNHelpers(t *testing.T) {
 	t.Setenv("SLD_PG_USER", "pguser")
 	t.Setenv("SLD_PG_PASS", "pgpass")
 	t.Setenv("SLD_PG_DB", "mydb")
-	if got := PostgresDSN(); got != "postgres://pguser:pgpass@test-pg:5433/mydb?sslmode=disable" {
+	if got := PostgresDSN(); got != "postgres://pguser:pgpass@test-pg:5433/mydb?sslmode=disable&connect_timeout=5" {
 		t.Fatalf("unexpected PostgresDSN: %s", got)
 	}
 
@@ -102,4 +102,3 @@ func TestDSNHelpers(t *testing.T) {
 		t.Fatalf("unexpected stateDir: %s", got)
 	}
 }
-

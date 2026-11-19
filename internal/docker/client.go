@@ -21,7 +21,10 @@ import (
 type EngineClient interface {
 	Ping(ctx context.Context) error
 	EnsureNetwork(ctx context.Context, name string, labels map[string]string) (string, error)
+	RemoveNetwork(ctx context.Context, nameOrID string) error
 	EnsureVolume(ctx context.Context, name string, labels map[string]string) (string, error)
+	RemoveVolume(ctx context.Context, name string, force bool) error
+	ListProjectVolumes(ctx context.Context, projectID string) ([]string, error)
 	ListProjectContainers(ctx context.Context, projectID string) ([]*reconcile.ActualContainer, error)
 	ListAllContainers(ctx context.Context) ([]*reconcile.ActualContainer, error)
 	CreateContainer(ctx context.Context, desired *reconcile.DesiredContainer) (string, error)
@@ -82,6 +85,31 @@ func (e *DockerEngine) EnsureNetwork(ctx context.Context, name string, labels ma
 	return resp.ID, nil
 }
 
+// RemoveNetwork deletes a Docker network by exact name or ID if it exists.
+func (e *DockerEngine) RemoveNetwork(ctx context.Context, nameOrID string) error {
+	f := filters.NewArgs(filters.Arg("name", nameOrID))
+	existing, err := e.cli.NetworkList(ctx, network.ListOptions{Filters: f})
+	if err != nil {
+		return fmt.Errorf("failed to list networks: %w", err)
+	}
+
+	targetID := ""
+	for _, n := range existing {
+		if n.Name == nameOrID || n.ID == nameOrID {
+			targetID = n.ID
+			break
+		}
+	}
+	if targetID == "" {
+		return nil // Already absent
+	}
+
+	if err := e.cli.NetworkRemove(ctx, targetID); err != nil {
+		return fmt.Errorf("failed to remove network %s: %w", nameOrID, err)
+	}
+	return nil
+}
+
 // EnsureVolume verifies the existence of a volume and creates it if missing.
 func (e *DockerEngine) EnsureVolume(ctx context.Context, name string, labels map[string]string) (string, error) {
 	v, err := e.cli.VolumeInspect(ctx, name)
@@ -97,6 +125,34 @@ func (e *DockerEngine) EnsureVolume(ctx context.Context, name string, labels map
 		return "", fmt.Errorf("failed to create volume %s: %w", name, err)
 	}
 	return resp.Name, nil
+}
+
+// RemoveVolume deletes a Docker volume by name.
+func (e *DockerEngine) RemoveVolume(ctx context.Context, name string, force bool) error {
+	if err := e.cli.VolumeRemove(ctx, name, force); err != nil {
+		if client.IsErrNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to remove volume %s: %w", name, err)
+	}
+	return nil
+}
+
+// ListProjectVolumes returns all named volumes labeled with the given project ID.
+func (e *DockerEngine) ListProjectVolumes(ctx context.Context, projectID string) ([]string, error) {
+	f := filters.NewArgs(
+		filters.Arg("label", fmt.Sprintf("%s=true", LabelSLD)),
+		filters.Arg("label", fmt.Sprintf("%s=%s", LabelProject, projectID)),
+	)
+	resp, err := e.cli.VolumeList(ctx, volume.ListOptions{Filters: f})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list project volumes: %w", err)
+	}
+	names := make([]string, 0, len(resp.Volumes))
+	for _, v := range resp.Volumes {
+		names = append(names, v.Name)
+	}
+	return names, nil
 }
 
 // ListProjectContainers returns all containers labeled with a specific project ID.
@@ -185,14 +241,26 @@ func (e *DockerEngine) CreateContainer(ctx context.Context, desired *reconcile.D
 
 	containerConfig := &container.Config{
 		Image:        desired.Image,
+		Cmd:          desired.Cmd,
+		WorkingDir:   desired.WorkingDir,
 		Env:          envList,
 		Labels:       desired.Labels,
 		ExposedPorts: exposedPorts,
+	}
+	if desired.Healthcheck != nil && len(desired.Healthcheck.Test) > 0 {
+		containerConfig.Healthcheck = &container.HealthConfig{
+			Test:        desired.Healthcheck.Test,
+			Interval:    desired.Healthcheck.Interval,
+			Timeout:     desired.Healthcheck.Timeout,
+			StartPeriod: desired.Healthcheck.StartPeriod,
+			Retries:     desired.Healthcheck.Retries,
+		}
 	}
 
 	hostConfig := &container.HostConfig{
 		Binds:        desired.Volumes,
 		PortBindings: portBindings,
+		ExtraHosts:   desired.ExtraHosts,
 		RestartPolicy: container.RestartPolicy{
 			Name: "unless-stopped",
 		},

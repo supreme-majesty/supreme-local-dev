@@ -23,6 +23,8 @@ import { buildDatabaseTree, type TreeNode } from "./tree-utils";
 interface DatabaseTreeProps {
   selectedDb: string | null;
   selectedTable: string | null;
+  serverLabel?: string;
+  connected?: boolean;
   onSelectDb: (db: string) => void;
   onSelectTable: (db: string, table: string) => void;
   onCreateTable: (db: string) => void;
@@ -101,7 +103,7 @@ function DatabaseParamsNode({
   // The Parent only renders this <DatabaseParamsNode> when it is expanded.
   // So we can always fetch here.
 
-  const { data: tables = [], isLoading } = useTables(dbName);
+  const { data: tables = [], isLoading, isError, error } = useTables(dbName);
 
   const filteredTables = (tables || []).filter((t) =>
     t.name?.toLowerCase().includes(effectiveFilter.toLowerCase()),
@@ -263,7 +265,12 @@ function DatabaseParamsNode({
             onSelect={() => onSelectTable(t.name)}
           />
         ))}
-        {filteredTables.length === 0 && !isLoading && (
+        {isError && !isLoading && (
+          <div className="px-6 py-2 text-xs text-red-400">
+            {error instanceof Error ? error.message : "Failed to load tables"}
+          </div>
+        )}
+        {!isError && filteredTables.length === 0 && !isLoading && (
           <div className="px-6 py-2 text-xs text-[var(--muted-foreground)] italic">
             {effectiveFilter ? "No matching tables" : "No tables"}
           </div>
@@ -454,6 +461,8 @@ function RecursiveTreeNode({
 export function DatabaseTree({
   selectedDb,
   selectedTable,
+  serverLabel,
+  connected,
   onSelectDb,
   onSelectTable,
   onCreateTable,
@@ -461,7 +470,7 @@ export function DatabaseTree({
   onCreateDatabase,
   onDeleteDatabase,
 }: DatabaseTreeProps) {
-  const { data: databases = [], isLoading, refetch } = useDatabases();
+  const { data: databases = [], isLoading, isError, error, refetch } = useDatabases();
   const renameMutation = useRenameDatabaseMutation();
   const [searchTerm, setSearchTerm] = useState("");
   const [contextMenu, setContextMenu] = useState<{
@@ -503,10 +512,21 @@ export function DatabaseTree({
     >
       {/* Header */}
       <div className="p-3 border-b border-[var(--border)] flex flex-col gap-2 bg-[var(--muted)]/20">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 text-sm font-semibold">
-            <Server size={16} className="text-purple-400" />
-            <span>Localhost</span>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 text-sm font-semibold min-w-0">
+            <Server size={16} className="text-purple-400 shrink-0" />
+            <span className="truncate" title={serverLabel || "Localhost"}>
+              {serverLabel || "Localhost"}
+            </span>
+            {connected !== undefined && (
+              <span
+                className={cn(
+                  "h-2 w-2 rounded-full shrink-0",
+                  connected ? "bg-emerald-500" : "bg-red-500",
+                )}
+                title={connected ? "Connected" : "Disconnected"}
+              />
+            )}
           </div>
           <div className="flex gap-1">
             <Button
@@ -567,7 +587,13 @@ export function DatabaseTree({
           />
         ))}
 
-        {!isLoading && tree.length === 0 && (
+        {!isLoading && isError && (
+          <div className="text-center py-8 text-red-400 text-xs px-3">
+            {error instanceof Error ? error.message : "Failed to load databases"}
+          </div>
+        )}
+
+        {!isLoading && !isError && tree.length === 0 && (
           <div className="text-center py-8 text-[var(--muted-foreground)] text-xs">
             No databases found
           </div>

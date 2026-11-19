@@ -1,22 +1,19 @@
 package dns
 
 import (
-	"bufio"
 	"os"
 	"strings"
 	"testing"
 )
 
-func TestHasHostsEntry_Parser(t *testing.T) {
+func TestHostsEntryLifecycle(t *testing.T) {
 	tempFile, err := os.CreateTemp("", "hosts-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp hosts file: %v", err)
 	}
 	defer os.Remove(tempFile.Name())
 
-	sampleHosts := `
-# Copyright (c) 1993-2009 Microsoft Corp.
-#
+	sampleHosts := `# Sample hosts
 127.0.0.1       localhost
 ::1             localhost
 127.0.0.1       my-laravel-app.test # added by sld
@@ -27,7 +24,6 @@ func TestHasHostsEntry_Parser(t *testing.T) {
 	}
 	tempFile.Close()
 
-	// Test parsing helper function directly
 	testCases := []struct {
 		domain   string
 		expected bool
@@ -41,43 +37,52 @@ func TestHasHostsEntry_Parser(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		found := parseHostsForDomain(tempFile.Name(), tc.domain)
+		found, err := HasHostsEntryInFile(tempFile.Name(), tc.domain)
+		if err != nil {
+			t.Fatalf("HasHostsEntryInFile(%q) error: %v", tc.domain, err)
+		}
 		if found != tc.expected {
 			t.Errorf("domain %q: expected %v, got %v", tc.domain, tc.expected, found)
 		}
 	}
-}
 
-func parseHostsForDomain(path, domain string) bool {
-	file, err := os.Open(path)
-	if err != nil {
-		return false
+	// Add new entry (idempotent)
+	if err := AddHostsEntryToFile(tempFile.Name(), "shop.test"); err != nil {
+		t.Fatalf("AddHostsEntryToFile failed: %v", err)
 	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if strings.HasPrefix(line, "#") || line == "" {
-			continue
-		}
-
-		fields := strings.Fields(line)
-		if len(fields) >= 2 {
-			ip := fields[0]
-			if ip == "127.0.0.1" || ip == "::1" {
-				for _, host := range fields[1:] {
-					if strings.EqualFold(host, domain) {
-						return true
-					}
-				}
-			}
-		}
+	if err := AddHostsEntryToFile(tempFile.Name(), "shop.test"); err != nil {
+		t.Fatalf("second AddHostsEntryToFile failed: %v", err)
 	}
-	return false
+	found, err := HasHostsEntryInFile(tempFile.Name(), "shop.test")
+	if err != nil || !found {
+		t.Fatalf("expected shop.test to exist after add (found=%v, err=%v)", found, err)
+	}
+
+	// Ensure duplicate wasn't written twice
+	content, _ := os.ReadFile(tempFile.Name())
+	if strings.Count(string(content), "shop.test") != 1 {
+		t.Errorf("expected exactly 1 occurrence of shop.test, got %d", strings.Count(string(content), "shop.test"))
+	}
+
+	// Remove SLD-managed entry
+	if err := RemoveHostsEntryFromFile(tempFile.Name(), "shop.test"); err != nil {
+		t.Fatalf("RemoveHostsEntryFromFile failed: %v", err)
+	}
+	found, _ = HasHostsEntryInFile(tempFile.Name(), "shop.test")
+	if found {
+		t.Errorf("expected shop.test to be removed")
+	}
+
+	// Non-SLD entries should NOT be removed
+	if err := RemoveHostsEntryFromFile(tempFile.Name(), "api.test"); err != nil {
+		t.Fatalf("RemoveHostsEntryFromFile(api.test) error: %v", err)
+	}
+	found, _ = HasHostsEntryInFile(tempFile.Name(), "api.test")
+	if !found {
+		t.Errorf("expected non-SLD managed api.test to remain untouched")
+	}
 }
 
 func TestEnsureResolver_NoPanic(t *testing.T) {
-	// Should not panic on any OS
 	_ = EnsureResolver("test")
 }

@@ -167,8 +167,8 @@ func TestResolvePHPConstraint(t *testing.T) {
 		{"^8.1", "8.1", false},
 		{"8.2", "8.2", false},
 		{">=8.2", "8.4", false},
-		{"^7.4", "", true},  // Fatal error: no silent downgrade
-		{"<8.0", "", true},  // Fatal error: no silent downgrade
+		{"^7.4", "", true}, // Fatal error: no silent downgrade
+		{"<8.0", "", true}, // Fatal error: no silent downgrade
 		{"invalid", "", true},
 	}
 

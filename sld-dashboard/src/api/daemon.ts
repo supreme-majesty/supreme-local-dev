@@ -44,6 +44,7 @@ export interface Project {
 export interface DatabaseSource {
   id: string;
   name: string;
+  container_name?: string;
   driver: "mysql" | "postgres";
   host: string;
   port: string;
@@ -152,7 +153,10 @@ export interface Snapshot {
 export interface QueryResult {
   columns: string[] | null;
   rows: unknown[] | null;
-  rowCount: number;
+  rowCount?: number;
+  row_count?: number;
+  affected_rows?: number;
+  execution_time_ms?: number;
   message?: string;
   error?: string;
 }
@@ -253,6 +257,7 @@ class DaemonApi {
     port: string;
     user: string;
     driver: "mysql" | "postgres";
+    active_target?: string;
     error?: string;
   }> {
     return this.request("/db/status");
@@ -316,7 +321,10 @@ class DaemonApi {
   }
 
   async getTables(database: string): Promise<TableInfo[]> {
-    return this.request<TableInfo[]>(`/db/tables?db=${database}`);
+    const res = await this.request<TableInfo[]>(
+      `/db/tables?db=${encodeURIComponent(database)}`,
+    );
+    return res || [];
   }
 
   async getTableData(
@@ -344,15 +352,17 @@ class DaemonApi {
   }
 
   async getTableSchema(database: string, table: string): Promise<ColumnInfo[]> {
-    return this.request<ColumnInfo[]>(
-      `/db/schema?db=${database}&table=${table}`,
+    const res = await this.request<ColumnInfo[]>(
+      `/db/schema?db=${encodeURIComponent(database)}&table=${encodeURIComponent(table)}`,
     );
+    return res || [];
   }
 
   async getTableIndexes(database: string, table: string): Promise<IndexInfo[]> {
-    return this.request<IndexInfo[]>(
-      `/db/indexes?db=${database}&table=${table}`,
+    const res = await this.request<IndexInfo[]>(
+      `/db/indexes?db=${encodeURIComponent(database)}&table=${encodeURIComponent(table)}`,
     );
+    return res || [];
   }
 
   async getForeignValues(
@@ -380,7 +390,7 @@ class DaemonApi {
   }
 
   async restoreSnapshot(filename: string): Promise<void> {
-    return this.request("/db/restore", {
+    return this.request("/db/snapshots/restore", {
       method: "POST",
       body: JSON.stringify({ path: filename }),
     });
@@ -414,7 +424,7 @@ class DaemonApi {
     file: File,
     database: string,
     restore: boolean = true,
-  ): Promise<void> {
+  ): Promise<ActionResponse> {
     const formData = new FormData();
     formData.append("file", file);
     formData.append("database", database);
@@ -425,9 +435,19 @@ class DaemonApi {
     });
 
     if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.error || "Import failed");
+      let message = `Import failed (${res.status})`;
+      const contentType = res.headers.get("content-type") || "";
+      if (contentType.includes("application/json")) {
+        const err = await res.json().catch(() => ({}));
+        message = err.error || err.message || message;
+      } else {
+        const text = await res.text().catch(() => "");
+        if (text.trim()) message = text.trim();
+      }
+      throw new Error(message);
     }
+
+    return res.json();
   }
 
   // State

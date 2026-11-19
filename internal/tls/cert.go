@@ -16,10 +16,10 @@ import (
 )
 
 const (
-	CertFileName    = "wildcard.crt"
-	KeyFileName     = "wildcard.key"
-	TraefikTLSConf  = "tls.yml"
-	DefaultTLD      = "test"
+	CertFileName   = "wildcard.crt"
+	KeyFileName    = "wildcard.key"
+	TraefikTLSConf = "tls.yml"
+	DefaultTLD     = "test"
 )
 
 // CertManager handles certificate generation and Traefik TLS configuration.
@@ -143,9 +143,9 @@ func (cm *CertManager) generateSelfSigned(tld string) error {
 	template := x509.Certificate{
 		SerialNumber: serialNumber,
 		Subject: pkix.Name{
-			Organization:  []string{"Supreme Local Dev (SLD)"},
-			CommonName:    wildcard,
-			Country:       []string{"US"},
+			Organization: []string{"Supreme Local Dev (SLD)"},
+			CommonName:   wildcard,
+			Country:      []string{"US"},
 		},
 		NotBefore:             time.Now().Add(-1 * time.Hour),
 		NotAfter:              time.Now().Add(365 * 24 * time.Hour), // 1 year

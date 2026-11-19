@@ -75,6 +75,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/db/snapshots", s.handleDBSnapshots)
 	mux.HandleFunc("/api/db/snapshots/download", s.handleDBDownload)
 	mux.HandleFunc("/api/db/snapshots/restore", s.handleDBRestore)
+	mux.HandleFunc("/api/db/restore", s.handleDBRestore)
 	mux.HandleFunc("/api/db/import", s.handleDBImport)
 	mux.HandleFunc("/api/db/query", s.handleDBQuery)
 	mux.HandleFunc("/api/db/transaction", s.handleDBTransaction)
@@ -967,8 +968,8 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDBStatus(w http.ResponseWriter, r *http.Request) {
 	d, _ := daemon.GetClient()
-	// Check connection status
-	err := d.DatabaseService.Connect()
+	// Verify connection status without leaking connection pools on repeated polls
+	err := d.DatabaseService.StatusCheck()
 
 	cfg := d.DatabaseService.ActiveConfig()
 	host := cfg.Host
@@ -1026,29 +1027,39 @@ func (s *Server) handleDBSources(w http.ResponseWriter, r *http.Request) {
 		"host":      defaultHost,
 		"port":      defaultPort,
 		"user":      defaultUser,
+		"status":    "running",
 		"is_active": d.DatabaseService.ActiveTarget() == "default",
 		"type":      "default",
 	})
 
-	// 2. Discover Docker database containers
+	// 2. Discover Docker database containers (running first, then stopped)
 	if d.DockerDiscovery != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		discovered, err := d.DockerDiscovery.DiscoverDatabaseContainers(ctx)
 		cancel()
 		if err == nil {
+			var running, stopped []services.DiscoveredDatabase
 			for _, db := range discovered {
+				if db.Status == "running" {
+					running = append(running, db)
+				} else {
+					stopped = append(stopped, db)
+				}
+			}
+			for _, db := range append(running, stopped...) {
 				sources = append(sources, map[string]interface{}{
-					"id":        db.ID,
-					"name":      db.Name,
-					"driver":    db.Driver,
-					"host":      db.Host,
-					"port":      db.Port,
-					"user":      db.User,
-					"database":  db.Database,
-					"status":    db.Status,
-					"image":     db.Image,
-					"is_active": d.DatabaseService.ActiveTarget() == db.ID,
-					"type":      "docker",
+					"id":             db.ID,
+					"name":           db.Name,
+					"container_name": db.ContainerName,
+					"driver":         db.Driver,
+					"host":           db.Host,
+					"port":           db.Port,
+					"user":           db.User,
+					"database":       db.Database,
+					"status":         db.Status,
+					"image":          db.Image,
+					"is_active":      d.DatabaseService.ActiveTarget() == db.ID,
+					"type":           "docker",
 				})
 			}
 		}
@@ -1078,9 +1089,50 @@ func (s *Server) handleDBTarget(w http.ResponseWriter, r *http.Request) {
 
 	d, _ := daemon.GetClient()
 	if req.ID == "" || req.ID == "default" {
-		_ = d.DatabaseService.SetDriver(req.Driver)
+		if err := d.DatabaseService.SetDriver(req.Driver); err != nil {
+			jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+			return
+		}
 		jsonResponse(w, SuccessResponse{Success: true, Message: "Switched to default database"}, 200)
 		return
+	}
+
+	var found *services.DiscoveredDatabase
+	if d.DockerDiscovery != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		dbTarget, err := d.DockerDiscovery.FindDatabase(ctx, req.ID)
+		cancel()
+		if err == nil && dbTarget != nil {
+			found = dbTarget
+			if found.Status != "running" {
+				jsonResponse(w, ErrorResponse{Error: fmt.Sprintf("container %s is %s — start it before connecting", found.Name, found.Status)}, 400)
+				return
+			}
+			// If running inside Docker and target has no published port or shared network, attach to its network
+			netCtx, netCancel := context.WithTimeout(context.Background(), 3*time.Second)
+			resolvedHost, resolvedPort, _ := d.DockerDiscovery.EnsureNetworkAccess(netCtx, found)
+			netCancel()
+
+			if req.Driver == "" {
+				req.Driver = found.Driver
+			}
+			if resolvedHost != "" {
+				req.Host = resolvedHost
+			} else if req.Host == "" {
+				req.Host = found.Host
+			}
+			if resolvedPort != "" {
+				req.Port = resolvedPort
+			} else if req.Port == "" {
+				req.Port = found.Port
+			}
+			if req.User == "" {
+				req.User = found.User
+			}
+			if req.Password == "" {
+				req.Password = found.Password
+			}
+		}
 	}
 
 	cfg := services.ConnectionConfig{
@@ -1091,11 +1143,28 @@ func (s *Server) handleDBTarget(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := d.DatabaseService.SetTarget(req.ID, req.Driver, cfg); err != nil {
+		// Automatic fallback to MYSQL_USER/MYSQL_PASSWORD if root login was rejected
+		if found != nil && found.AltUser != "" && found.AltUser != cfg.User {
+			altCfg := services.ConnectionConfig{
+				Host:     cfg.Host,
+				Port:     cfg.Port,
+				User:     found.AltUser,
+				Password: found.AltPassword,
+			}
+			if altErr := d.DatabaseService.SetTarget(req.ID, req.Driver, altCfg); altErr == nil {
+				jsonResponse(w, SuccessResponse{Success: true, Message: fmt.Sprintf("Connected to %s", found.Name)}, 200)
+				return
+			}
+		}
 		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
 		return
 	}
 
-	jsonResponse(w, SuccessResponse{Success: true, Message: fmt.Sprintf("Connected to database target %s", req.ID)}, 200)
+	label := req.ID
+	if found != nil && found.Name != "" {
+		label = found.Name
+	}
+	jsonResponse(w, SuccessResponse{Success: true, Message: fmt.Sprintf("Connected to %s", label)}, 200)
 }
 
 func (s *Server) handleDBDriver(w http.ResponseWriter, r *http.Request) {
@@ -1148,6 +1217,9 @@ func (s *Server) handleDBTables(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
 		return
 	}
+	if tables == nil {
+		tables = make([]services.TableInfo, 0)
+	}
 	jsonResponse(w, tables, 200)
 }
 
@@ -1163,6 +1235,9 @@ func (s *Server) handleDBRelationships(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
 		return
+	}
+	if rels == nil {
+		rels = make([]services.TableRelationship, 0)
 	}
 	jsonResponse(w, rels, 200)
 }
@@ -1180,6 +1255,9 @@ func (s *Server) handleDBIndexes(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
 		return
+	}
+	if indexes == nil {
+		indexes = make([]services.IndexInfo, 0)
 	}
 	jsonResponse(w, indexes, 200)
 }
@@ -1280,10 +1358,14 @@ func (s *Server) handleDBTableData(w http.ResponseWriter, r *http.Request) {
 	limit := 50
 	offset := 0
 	if l := r.URL.Query().Get("limit"); l != "" {
-		limit, _ = strconv.Atoi(l)
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
+			limit = parsed
+		}
 	}
 	if o := r.URL.Query().Get("offset"); o != "" {
-		offset, _ = strconv.Atoi(o)
+		if parsed, err := strconv.Atoi(o); err == nil && parsed >= 0 {
+			offset = parsed
+		}
 	}
 
 	// New parameters: sort, order, profile
@@ -1302,16 +1384,21 @@ func (s *Server) handleDBTableData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Return rows as maps to match frontend expectation
-	var colNames []string
-	for _, col := range data.Columns {
-		colNames = append(colNames, col.Name)
+	cols := data.Columns
+	if cols == nil {
+		cols = make([]services.ColumnInfo, 0)
+	}
+	rows := data.Rows
+	if rows == nil {
+		rows = make([]map[string]interface{}, 0)
 	}
 
 	resp := map[string]interface{}{
-		"columns":     data.Columns,
-		"rows":        data.Rows,
+		"columns":     cols,
+		"rows":        rows,
 		"total":       data.Total,
+		"page":        data.Page,
+		"per_page":    data.PerPage,
 		"limit":       data.PerPage,
 		"offset":      (data.Page - 1) * data.PerPage,
 		"total_pages": data.TotalPages,
@@ -1339,6 +1426,9 @@ func (s *Server) handleDBSchema(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
 		return
 	}
+	if schema == nil {
+		schema = make([]services.ColumnInfo, 0)
+	}
 	jsonResponse(w, schema, 200)
 }
 
@@ -1355,7 +1445,7 @@ func (s *Server) handleDBSnapshots(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Filter by DB if requested and map to frontend format
-		var response []map[string]interface{}
+		response := make([]map[string]interface{}, 0)
 		for _, s := range snapshots {
 			if db != "" && s.Database != db {
 				continue
@@ -1951,10 +2041,13 @@ func (s *Server) handleDBDownload(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDBCollations(w http.ResponseWriter, r *http.Request) {
 	d, _ := daemon.GetClient()
-	collations, err := d.DatabaseService.Driver.GetCollations()
+	collations, err := d.DatabaseService.GetCollations()
 	if err != nil {
 		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
 		return
+	}
+	if collations == nil {
+		collations = make([]services.CollationInfo, 0)
 	}
 	jsonResponse(w, collations, 200)
 }
@@ -1967,7 +2060,7 @@ func (s *Server) handleDBSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	d, _ := daemon.GetClient()
-	settings, err := d.DatabaseService.Driver.GetDatabaseSettings(db)
+	settings, err := d.DatabaseService.GetDatabaseSettings(db)
 	if err != nil {
 		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
 		return
@@ -1977,6 +2070,7 @@ func (s *Server) handleDBSettings(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDBImport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
+		jsonResponse(w, ErrorResponse{Error: "POST method required"}, 405)
 		return
 	}
 
@@ -2000,49 +2094,73 @@ func (s *Server) handleDBImport(w http.ResponseWriter, r *http.Request) {
 	defer file.Close()
 
 	d, _ := daemon.GetClient()
+	filename := filepath.Base(handler.Filename)
+	shouldRestore := r.URL.Query().Get("restore") == "true"
 
-	// Create snapshots dir if not exists
-	os.MkdirAll(d.DatabaseService.SnapDir, 0755)
+	if shouldRestore {
+		lowerName := strings.ToLower(filename)
+		if !strings.HasSuffix(lowerName, ".sql") && !strings.HasSuffix(lowerName, ".gz") {
+			jsonResponse(w, ErrorResponse{Error: "Only .sql and .sql.gz files are supported for SQL import"}, 400)
+			return
+		}
 
-	// Save file
-	// We preserve the name but might prefix timestamp if collision?
-	// For now just overwrite or simple save.
-	filename := handler.Filename
-	// Sanitize
-	filename = filepath.Base(filename)
-
-	destPath := filepath.Join(d.DatabaseService.SnapDir, filename)
-
-	// Write
-	dst, err := os.Create(destPath)
-	if err != nil {
-		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
-		return
-	}
-	defer dst.Close()
-
-	if _, err := io.Copy(dst, file); err != nil {
-		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
-		return
-	}
-
-	// Check if we should restore
-	if r.URL.Query().Get("restore") == "true" {
-		// Get target database from form field or query param
 		dbName := r.FormValue("database")
 		if dbName == "" {
 			dbName = r.URL.Query().Get("database")
 		}
 		if dbName == "" {
-			jsonResponse(w, ErrorResponse{Error: "database parameter required for restore"}, 400)
+			jsonResponse(w, ErrorResponse{Error: "database parameter required for SQL import"}, 400)
 			return
 		}
 
-		// Run mysql import directly
-		if err := d.DatabaseService.ImportSQL(dbName, destPath); err != nil {
-			jsonResponse(w, ErrorResponse{Error: "Upload successful but restore failed: " + err.Error()}, 500)
+		tmpFile, err := os.CreateTemp("", "sld-sql-import-*-"+filename)
+		if err != nil {
+			jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
 			return
 		}
+		destPath := tmpFile.Name()
+		defer os.Remove(destPath)
+
+		if _, err := io.Copy(tmpFile, file); err != nil {
+			_ = tmpFile.Close()
+			jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+			return
+		}
+		// Flush and close before invoking mysql/psql so Windows/Linux handles see the complete file
+		if err := tmpFile.Close(); err != nil {
+			jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+			return
+		}
+
+		if err := d.DatabaseService.ImportSQL(dbName, destPath); err != nil {
+			jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+			return
+		}
+
+		jsonResponse(w, SuccessResponse{
+			Success: true,
+			Message: fmt.Sprintf("Imported %s into %s successfully", filename, dbName),
+		}, 200)
+		return
+	}
+
+	// Snapshot upload only (restore=false)
+	_ = os.MkdirAll(d.DatabaseService.SnapDir, 0755)
+	destPath := filepath.Join(d.DatabaseService.SnapDir, filename)
+
+	dst, err := os.Create(destPath)
+	if err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+	if _, err := io.Copy(dst, file); err != nil {
+		_ = dst.Close()
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+	if err := dst.Close(); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
 	}
 
 	jsonResponse(w, SuccessResponse{Success: true, Message: "File uploaded successfully"}, 200)

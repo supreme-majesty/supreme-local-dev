@@ -3,12 +3,15 @@ package orchestrate
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/docker/docker/api/types/container"
 	"github.com/supreme-majesty/supreme-local-dev/internal/config"
 	"github.com/supreme-majesty/supreme-local-dev/internal/docker"
 	"github.com/supreme-majesty/supreme-local-dev/internal/project"
@@ -32,12 +35,18 @@ const (
 
 // Orchestrator manages the lifecycle of Docker containers for SLD projects.
 type Orchestrator struct {
-	engine docker.EngineClient
+	engine             docker.EngineClient
+	healthTimeout      time.Duration
+	healthPollInterval time.Duration
 }
 
 // NewOrchestrator creates an Orchestrator backed by the given Docker engine.
 func NewOrchestrator(engine docker.EngineClient) *Orchestrator {
-	return &Orchestrator{engine: engine}
+	return &Orchestrator{
+		engine:             engine,
+		healthTimeout:      30 * time.Second,
+		healthPollInterval: 500 * time.Millisecond,
+	}
 }
 
 // Engine returns the underlying Docker engine client.
@@ -117,7 +126,28 @@ func (o *Orchestrator) EnsureGlobalInfra(ctx context.Context) error {
 
 	plan := reconcile.DiffContainer(desired, routerActual)
 
-	return o.applyPlan(ctx, plan)
+	_, err = o.applyPlan(ctx, plan)
+	return err
+}
+
+// RecreateRouter forces recreation of the global sld-router container (e.g. after image update or cert refresh).
+func (o *Orchestrator) RecreateRouter(ctx context.Context) error {
+	containers, err := o.engine.ListAllContainers(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to list containers: %w", err)
+	}
+	for _, c := range containers {
+		if c.Name == RouterContainer {
+			if c.State == "running" {
+				_ = o.engine.StopContainer(ctx, c.ID, 10)
+			}
+			if err := o.engine.RemoveContainer(ctx, c.ID, true); err != nil {
+				return fmt.Errorf("failed to remove old router: %w", err)
+			}
+			break
+		}
+	}
+	return o.EnsureGlobalInfra(ctx)
 }
 
 // StartProject starts all containers defined by the project spec.
@@ -140,7 +170,7 @@ func (o *Orchestrator) StartProject(ctx context.Context, spec *ProjectSpec) erro
 	}
 	_ = projectNetID
 
-	// 2. Build desired container specs
+	// 2. Build desired container specs (ordered by dependency: DB/Redis/Mailpit -> PHP -> Nginx -> Node)
 	desired, err := o.buildDesiredContainers(spec)
 	if err != nil {
 		return fmt.Errorf("failed to build desired state: %w", err)
@@ -162,12 +192,49 @@ func (o *Orchestrator) StartProject(ctx context.Context, spec *ProjectSpec) erro
 		actualMap[a.Name] = a
 	}
 
-	// 5. Compute and apply plan
+	// 5. Compute and apply plan in dependency order, verifying health checks
 	plan := reconcile.ComputeContainerPlan(desired, actualMap)
 
 	for _, p := range plan {
-		if err := o.applyPlan(ctx, p); err != nil {
+		containerID, err := o.applyPlan(ctx, p)
+		if err != nil {
 			return fmt.Errorf("failed to apply plan for %s: %w", p.ResourceName, err)
+		}
+		if containerID != "" && (p.Action == reconcile.ActionCreate || p.Action == reconcile.ActionStart || p.Action == reconcile.ActionRecreate) {
+			if err := o.waitForHealthy(ctx, containerID, p.ResourceName); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// DestroyProject tears down all containers, the project network, and optionally persistent volumes.
+func (o *Orchestrator) DestroyProject(ctx context.Context, identity *project.Identity, removeVolumes bool) error {
+	if err := o.StopProject(ctx, identity.ID); err != nil {
+		return err
+	}
+
+	if err := o.engine.RemoveNetwork(ctx, identity.NetworkName()); err != nil {
+		return fmt.Errorf("failed to remove project network %s: %w", identity.NetworkName(), err)
+	}
+
+	if removeVolumes {
+		seen := make(map[string]bool)
+		if labeledVols, err := o.engine.ListProjectVolumes(ctx, identity.ID); err == nil {
+			for _, v := range labeledVols {
+				seen[v] = true
+			}
+		}
+		// Also include deterministic default volume names in case labels are missing
+		seen[identity.DBVolumeName()] = true
+		seen[identity.RedisVolumeName()] = true
+
+		for volName := range seen {
+			if err := o.engine.RemoveVolume(ctx, volName, true); err != nil {
+				return fmt.Errorf("failed to remove volume %s: %w", volName, err)
+			}
 		}
 	}
 
@@ -200,25 +267,11 @@ func (o *Orchestrator) ProjectStatus(ctx context.Context, projectID string) ([]*
 	return o.engine.ListProjectContainers(ctx, projectID)
 }
 
-// buildDesiredContainers produces the full list of desired containers for a project.
+// buildDesiredContainers produces the full list of desired containers for a project
+// in strict startup dependency order: auxiliary services (DB, Redis, Mailpit) -> PHP -> Nginx -> Node.
 func (o *Orchestrator) buildDesiredContainers(spec *ProjectSpec) ([]*reconcile.DesiredContainer, error) {
 	var containers []*reconcile.DesiredContainer
-	id := spec.Identity
 	cfg := spec.Config
-
-	// --- PHP Container ---
-	phpDesired, err := o.buildPHP(spec)
-	if err != nil {
-		return nil, err
-	}
-	containers = append(containers, phpDesired)
-
-	// --- Nginx Container ---
-	nginxDesired, err := o.buildNginx(spec)
-	if err != nil {
-		return nil, err
-	}
-	containers = append(containers, nginxDesired)
 
 	// --- Database Container ---
 	if cfg.Services.Database.Type != "" {
@@ -247,6 +300,20 @@ func (o *Orchestrator) buildDesiredContainers(spec *ProjectSpec) ([]*reconcile.D
 		containers = append(containers, mailpitDesired)
 	}
 
+	// --- PHP Container ---
+	phpDesired, err := o.buildPHP(spec)
+	if err != nil {
+		return nil, err
+	}
+	containers = append(containers, phpDesired)
+
+	// --- Nginx Container ---
+	nginxDesired, err := o.buildNginx(spec)
+	if err != nil {
+		return nil, err
+	}
+	containers = append(containers, nginxDesired)
+
 	// --- Node Dev Server Container ---
 	if cfg.Node.DevServer.Enabled {
 		nodeDesired, err := o.buildNode(spec)
@@ -256,7 +323,6 @@ func (o *Orchestrator) buildDesiredContainers(spec *ProjectSpec) ([]*reconcile.D
 		containers = append(containers, nodeDesired)
 	}
 
-	_ = id
 	return containers, nil
 }
 
@@ -333,9 +399,11 @@ func (o *Orchestrator) buildPHP(spec *ProjectSpec) (*reconcile.DesiredContainer,
 		Service:     docker.ServicePHP,
 		Image:       phpImage,
 		ConfigHash:  spec.ConfigHash,
+		WorkingDir:  "/app",
 		Labels:      labels,
 		Environment: env,
 		Networks:    []string{id.NetworkName()},
+		ExtraHosts:  []string{"host.docker.internal:host-gateway"},
 		Volumes: []string{
 			fmt.Sprintf("%s:/app", spec.ProjectRoot),
 		},
@@ -366,6 +434,7 @@ func (o *Orchestrator) buildNginx(spec *ProjectSpec) (*reconcile.DesiredContaine
 	}
 
 	labels["traefik.enable"] = "true"
+	labels["traefik.docker.network"] = GlobalNetwork
 	labels["traefik.http.routers."+id.ID+".rule"] = fmt.Sprintf("Host(`%s`)", domain)
 	labels["traefik.http.routers."+id.ID+".entrypoints"] = "web"
 	labels["traefik.http.services."+id.ID+".loadbalancer.server.port"] = "80"
@@ -435,6 +504,7 @@ func (o *Orchestrator) buildDatabase(spec *ProjectSpec) (*reconcile.DesiredConta
 		Volumes: []string{
 			fmt.Sprintf("%s:%s", id.DBVolumeName(), resolveDBDataDir(dbCfg.Type)),
 		},
+		Healthcheck: resolveDBHealthcheck(dbCfg.Type),
 	}, nil
 }
 
@@ -468,6 +538,13 @@ func (o *Orchestrator) buildRedis(spec *ProjectSpec) (*reconcile.DesiredContaine
 		Volumes: []string{
 			fmt.Sprintf("%s:/data", id.RedisVolumeName()),
 		},
+		Healthcheck: &reconcile.HealthcheckConfig{
+			Test:        []string{"CMD", "redis-cli", "ping"},
+			Interval:    5 * time.Second,
+			Timeout:     2 * time.Second,
+			StartPeriod: 2 * time.Second,
+			Retries:     3,
+		},
 	}, nil
 }
 
@@ -489,6 +566,7 @@ func (o *Orchestrator) buildMailpit(spec *ProjectSpec) (*reconcile.DesiredContai
 	// Expose Mailpit UI via Traefik
 	mailDomain := fmt.Sprintf("mail.%s", spec.Config.Domain.Name)
 	labels["traefik.enable"] = "true"
+	labels["traefik.docker.network"] = GlobalNetwork
 	labels["traefik.http.routers."+id.ID+"-mail.rule"] = fmt.Sprintf("Host(`%s`)", mailDomain)
 	labels["traefik.http.routers."+id.ID+"-mail.entrypoints"] = "web"
 	labels["traefik.http.services."+id.ID+"-mail.loadbalancer.server.port"] = "8025"
@@ -503,7 +581,7 @@ func (o *Orchestrator) buildMailpit(spec *ProjectSpec) (*reconcile.DesiredContai
 	}, nil
 }
 
-// buildNode creates an ephemeral Node dev server container spec.
+// buildNode creates a managed Node dev server container spec.
 func (o *Orchestrator) buildNode(spec *ProjectSpec) (*reconcile.DesiredContainer, error) {
 	id := spec.Identity
 	nodeCfg := spec.Config.Node
@@ -531,11 +609,13 @@ func (o *Orchestrator) buildNode(spec *ProjectSpec) (*reconcile.DesiredContainer
 		}
 	}
 
-	// The command is the dev server start command
-	env := map[string]string{}
-	if nodeCfg.DevServer.Command != "" {
-		// We'll use the command as an environment variable for flexibility
-		env["SLD_NODE_CMD"] = nodeCfg.DevServer.Command
+	nodeCmd := strings.TrimSpace(nodeCfg.DevServer.Command)
+	if nodeCmd == "" {
+		nodeCmd = "npm run dev"
+	}
+
+	env := map[string]string{
+		"SLD_NODE_CMD": nodeCmd,
 	}
 
 	return &reconcile.DesiredContainer{
@@ -543,6 +623,8 @@ func (o *Orchestrator) buildNode(spec *ProjectSpec) (*reconcile.DesiredContainer
 		Service:     docker.ServiceNode,
 		Image:       nodeImage,
 		ConfigHash:  spec.ConfigHash,
+		WorkingDir:  "/app",
+		Cmd:         []string{"sh", "-c", nodeCmd},
 		Labels:      labels,
 		Environment: env,
 		Ports:       ports,
@@ -584,21 +666,27 @@ func (o *Orchestrator) ensureProjectVolumes(ctx context.Context, spec *ProjectSp
 	return nil
 }
 
-// applyPlan executes a single reconciliation plan entry.
-func (o *Orchestrator) applyPlan(ctx context.Context, plan reconcile.DesiredResourcePlan) error {
+// applyPlan executes a single reconciliation plan entry and returns the resulting container ID (if started/created).
+func (o *Orchestrator) applyPlan(ctx context.Context, plan reconcile.DesiredResourcePlan) (string, error) {
 	switch plan.Action {
 	case reconcile.ActionNoOp:
-		return nil
+		return "", nil
 
 	case reconcile.ActionCreate:
 		id, err := o.engine.CreateContainer(ctx, plan.Desired)
 		if err != nil {
-			return err
+			return "", err
 		}
-		return o.engine.StartContainer(ctx, id)
+		if err := o.engine.StartContainer(ctx, id); err != nil {
+			return "", err
+		}
+		return id, nil
 
 	case reconcile.ActionStart:
-		return o.engine.StartContainer(ctx, plan.Actual.ID)
+		if err := o.engine.StartContainer(ctx, plan.Actual.ID); err != nil {
+			return "", err
+		}
+		return plan.Actual.ID, nil
 
 	case reconcile.ActionRecreate:
 		if plan.Actual != nil {
@@ -609,21 +697,126 @@ func (o *Orchestrator) applyPlan(ctx context.Context, plan reconcile.DesiredReso
 		}
 		id, err := o.engine.CreateContainer(ctx, plan.Desired)
 		if err != nil {
-			return err
+			return "", err
 		}
-		return o.engine.StartContainer(ctx, id)
+		if err := o.engine.StartContainer(ctx, id); err != nil {
+			return "", err
+		}
+		return id, nil
 
 	case reconcile.ActionRemove:
 		if plan.Actual != nil {
 			if plan.Actual.State == "running" {
 				_ = o.engine.StopContainer(ctx, plan.Actual.ID, 10)
 			}
-			return o.engine.RemoveContainer(ctx, plan.Actual.ID, true)
+			return "", o.engine.RemoveContainer(ctx, plan.Actual.ID, true)
 		}
-		return nil
+		return "", nil
 
 	default:
-		return fmt.Errorf("unknown action: %s", plan.Action)
+		return "", fmt.Errorf("unknown action: %s", plan.Action)
+	}
+}
+
+// waitForHealthy polls a container's Docker health check until healthy, unhealthy, exited, or timeout.
+// Containers without a Docker healthcheck return immediately.
+func (o *Orchestrator) waitForHealthy(ctx context.Context, containerID, name string) error {
+	timeout := o.healthTimeout
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	interval := o.healthPollInterval
+	if interval <= 0 {
+		interval = 500 * time.Millisecond
+	}
+
+	deadline := time.Now().Add(timeout)
+	for {
+		inspect, err := o.engine.InspectContainer(ctx, containerID)
+		if err != nil {
+			return fmt.Errorf("failed to inspect %s during health check: %w", name, err)
+		}
+
+		// No state or no healthcheck configured (e.g. Mailpit, Node, or mock engine) -> ready immediately
+		if inspect.ContainerJSONBase == nil || inspect.State == nil {
+			return nil
+		}
+		if inspect.State.Status == "exited" || inspect.State.Status == "dead" {
+			stderrTail := o.readContainerStderrTail(ctx, containerID)
+			if stderrTail != "" {
+				return fmt.Errorf("container %s exited unexpectedly (exit code %d):\n%s", name, inspect.State.ExitCode, stderrTail)
+			}
+			return fmt.Errorf("container %s exited unexpectedly (exit code %d)", name, inspect.State.ExitCode)
+		}
+		if inspect.State.Health == nil {
+			return nil
+		}
+
+		switch inspect.State.Health.Status {
+		case "healthy":
+			return nil
+		case "unhealthy":
+			stderrTail := o.readContainerStderrTail(ctx, containerID)
+			if stderrTail != "" {
+				return fmt.Errorf("container %s became unhealthy:\n%s", name, stderrTail)
+			}
+			return fmt.Errorf("container %s became unhealthy", name)
+		}
+
+		if time.Now().After(deadline) {
+			stderrTail := o.readContainerStderrTail(ctx, containerID)
+			if stderrTail != "" {
+				return fmt.Errorf("timed out waiting for %s to become healthy:\n%s", name, stderrTail)
+			}
+			return fmt.Errorf("timed out waiting for %s to become healthy", name)
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(interval):
+			if interval < 2*time.Second {
+				interval += 250 * time.Millisecond
+			}
+		}
+	}
+}
+
+func (o *Orchestrator) readContainerStderrTail(ctx context.Context, containerID string) string {
+	reader, err := o.engine.ContainerLogs(ctx, containerID, container.LogsOptions{
+		ShowStderr: true,
+		ShowStdout: false,
+		Tail:       "20",
+	})
+	if err != nil || reader == nil {
+		return ""
+	}
+	defer reader.Close()
+	data, err := io.ReadAll(io.LimitReader(reader, 4096))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+func resolveDBHealthcheck(dbType string) *reconcile.HealthcheckConfig {
+	switch strings.ToLower(dbType) {
+	case "postgres", "postgresql":
+		return &reconcile.HealthcheckConfig{
+			Test:        []string{"CMD-SHELL", `pg_isready -h 127.0.0.1 -U "$POSTGRES_USER" || exit 1`},
+			Interval:    5 * time.Second,
+			Timeout:     3 * time.Second,
+			StartPeriod: 10 * time.Second,
+			Retries:     5,
+		}
+	default:
+		return &reconcile.HealthcheckConfig{
+			Test:        []string{"CMD-SHELL", "mysqladmin ping -h 127.0.0.1 --silent || exit 1"},
+			Interval:    5 * time.Second,
+			Timeout:     3 * time.Second,
+			StartPeriod: 10 * time.Second,
+			Retries:     5,
+		}
 	}
 }
 

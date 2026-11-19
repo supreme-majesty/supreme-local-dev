@@ -27,6 +27,11 @@ services:
     volumes:
       - sld-state:/home/sld/.sld
       - /var/run/docker.sock:/var/run/docker.sock
+    # Docker Desktop socket is root:root mode 660; join gid 0 so discovery works.
+    group_add:
+      - "0"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       mariadb:
         condition: service_healthy

@@ -1,5 +1,7 @@
 package reconcile
 
+import "time"
+
 // ActionType represents the action determined by the diff engine.
 type ActionType string
 
@@ -12,17 +14,30 @@ const (
 	ActionRemove   ActionType = "REMOVE"
 )
 
+// HealthcheckConfig defines a Docker container healthcheck specification.
+type HealthcheckConfig struct {
+	Test        []string
+	Interval    time.Duration
+	Timeout     time.Duration
+	StartPeriod time.Duration
+	Retries     int
+}
+
 // DesiredContainer defines the required configuration of a container.
 type DesiredContainer struct {
 	Name        string
 	Service     string
 	Image       string
 	ConfigHash  string
+	Cmd         []string
+	WorkingDir  string
 	Environment map[string]string
 	Ports       []string
 	Networks    []string
 	Volumes     []string
+	ExtraHosts  []string
 	Labels      map[string]string
+	Healthcheck *HealthcheckConfig
 }
 
 // ActualContainer represents the current state of a container in Docker.

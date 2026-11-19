@@ -3,6 +3,7 @@ package services
 import (
 	"database/sql"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -14,6 +15,7 @@ import (
 type PostgresDriver struct {
 	db        *sql.DB
 	dsn       string
+	cfg       ConnectionConfig
 	activeTxs map[string]*sql.Tx
 }
 
@@ -71,15 +73,19 @@ func PostgresDSN() string {
 	port := PostgresPort()
 	db := PostgresDB()
 	if pass == "" {
-		return fmt.Sprintf("postgres://%s@%s:%s/%s?sslmode=disable", user, host, port, db)
+		return fmt.Sprintf("postgres://%s@%s:%s/%s?sslmode=disable&connect_timeout=5", user, host, port, db)
 	}
-	return fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable", user, pass, host, port, db)
+	return fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable&connect_timeout=5", user, pass, host, port, db)
 }
 
 func (d *PostgresDriver) Connect(config ConnectionConfig) error {
 	var dsn string
 
-	if config.User != "" {
+	if config.User != "" || config.Host != "" {
+		user := config.User
+		if user == "" {
+			user = "postgres"
+		}
 		host := config.Host
 		if host == "" {
 			host = "127.0.0.1"
@@ -90,9 +96,9 @@ func (d *PostgresDriver) Connect(config ConnectionConfig) error {
 		}
 		dbName := "postgres"
 		if config.Password != "" {
-			dsn = fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable", config.User, config.Password, host, port, dbName)
+			dsn = fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable&connect_timeout=5", user, config.Password, host, port, dbName)
 		} else {
-			dsn = fmt.Sprintf("postgres://%s@%s:%s/%s?sslmode=disable", config.User, host, port, dbName)
+			dsn = fmt.Sprintf("postgres://%s@%s:%s/%s?sslmode=disable&connect_timeout=5", user, host, port, dbName)
 		}
 	} else {
 		dsn = PostgresDSN()
@@ -102,14 +108,21 @@ func (d *PostgresDriver) Connect(config ConnectionConfig) error {
 	if err != nil {
 		return err
 	}
+	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(5 * time.Minute)
 
 	if err := db.Ping(); err != nil {
 		db.Close()
 		return fmt.Errorf("failed to connect to PostgreSQL: %w", err)
 	}
 
+	if d.db != nil {
+		_ = d.db.Close()
+	}
 	d.db = db
 	d.dsn = dsn
+	d.cfg = config
 	return nil
 }
 
@@ -207,19 +220,7 @@ func (d *PostgresDriver) ListTables(database string) ([]TableInfo, error) {
 	// But d.db is connected to 'postgres' initially.
 	// So we DO need to switch.
 
-	// Create a temporary connection string
-	baseDSN := d.dsn
-	// Replace /postgres? with /database?
-	// This is hacky. Better to rebuild DSN from config if we had it stored.
-	// Assuming DSN structure: postgres://user:pass@host:port/dbname?args
-
-	targetDSN := strings.Replace(baseDSN, "/postgres?", "/"+database+"?", 1)
-	if !strings.Contains(targetDSN, "/"+database+"?") {
-		// maybe no query params
-		if strings.HasSuffix(baseDSN, "/postgres") {
-			targetDSN = strings.TrimSuffix(baseDSN, "/postgres") + "/" + database
-		}
-	}
+	targetDSN := replacePostgresDB(d.dsn, database)
 
 	tempDB, err := sql.Open("postgres", targetDSN)
 	if err != nil {
@@ -262,7 +263,7 @@ func (d *PostgresDriver) ListTables(database string) ([]TableInfo, error) {
 
 func (d *PostgresDriver) GetTableColumns(database, table string) ([]ColumnInfo, error) {
 	// Connect to target DB
-	targetDSN := strings.Replace(d.dsn, "/postgres?", "/"+database+"?", 1)
+	targetDSN := replacePostgresDB(d.dsn, database)
 	tempDB, err := sql.Open("postgres", targetDSN)
 	if err != nil {
 		return nil, err
@@ -342,7 +343,7 @@ func (d *PostgresDriver) GetTableData(database, table string, page, perPage int)
 }
 
 func (d *PostgresDriver) GetTableDataEx(database, table string, page, perPage int, sortCol, sortOrder string, profile bool) (*TableData, error) {
-	targetDSN := strings.Replace(d.dsn, "/postgres?", "/"+database+"?", 1)
+	targetDSN := replacePostgresDB(d.dsn, database)
 	tempDB, err := sql.Open("postgres", targetDSN)
 	if err != nil {
 		return nil, err
@@ -430,7 +431,7 @@ func (d *PostgresDriver) ExecuteQuery(database, query string, txId string) (*Que
 			return nil, fmt.Errorf("transaction %s not found", txId)
 		}
 	} else {
-		targetDSN := strings.Replace(d.dsn, "/postgres?", "/"+database+"?", 1)
+		targetDSN := replacePostgresDB(d.dsn, database)
 		targetDB, err = sql.Open("postgres", targetDSN)
 		if err != nil {
 			return nil, err
@@ -593,7 +594,7 @@ func (d *PostgresDriver) BatchInsert(database, table string, columns []string, d
 		} else {
 			// If not in a persistent transaction, we still need the right database connection.
 			// Reusing the logic from ExecuteQuery for simple connection per query.
-			targetDSN := strings.Replace(d.dsn, "/postgres?", "/"+database+"?", 1)
+			targetDSN := replacePostgresDB(d.dsn, database)
 			tempDB, err := sql.Open("postgres", targetDSN)
 			if err != nil {
 				return err
@@ -610,12 +611,98 @@ func (d *PostgresDriver) BatchInsert(database, table string, columns []string, d
 	return nil
 }
 
+// replacePostgresDB returns a copy of a postgres:// DSN targeting the specified database.
+func replacePostgresDB(dsn, database string) string {
+	if database == "" {
+		return dsn
+	}
+	u, err := url.Parse(dsn)
+	if err == nil && u.Scheme != "" {
+		u.Path = "/" + database
+		return u.String()
+	}
+	return strings.Replace(dsn, "/postgres?", "/"+database+"?", 1)
+}
+
 func (d *PostgresDriver) Query(database, query string, args []interface{}) ([]map[string]interface{}, error) {
-	return nil, fmt.Errorf("Query not implemented for Postgres")
+	if d.db == nil {
+		return nil, fmt.Errorf("database not connected")
+	}
+
+	conn := d.db
+	var tempDB *sql.DB
+	if database != "" {
+		var err error
+		tempDB, err = sql.Open("postgres", replacePostgresDB(d.dsn, database))
+		if err != nil {
+			return nil, err
+		}
+		defer tempDB.Close()
+		conn = tempDB
+	}
+
+	rows, err := conn.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	cols, err := rows.Columns()
+	if err != nil {
+		return nil, err
+	}
+
+	results := make([]map[string]interface{}, 0)
+	for rows.Next() {
+		values := make([]interface{}, len(cols))
+		valuePtrs := make([]interface{}, len(cols))
+		for i := range values {
+			valuePtrs[i] = &values[i]
+		}
+		if err := rows.Scan(valuePtrs...); err != nil {
+			return nil, err
+		}
+		row := make(map[string]interface{}, len(cols))
+		for i, col := range cols {
+			if b, ok := values[i].([]byte); ok {
+				row[col] = string(b)
+			} else {
+				row[col] = values[i]
+			}
+		}
+		results = append(results, row)
+	}
+	return results, rows.Err()
 }
 
 func (d *PostgresDriver) GetTableInfo(database, table string) (*TableInfo, error) {
-	return nil, fmt.Errorf("GetTableInfo not implemented for Postgres")
+	if d.db == nil {
+		return nil, fmt.Errorf("database not connected")
+	}
+	tempDB, err := sql.Open("postgres", replacePostgresDB(d.dsn, database))
+	if err != nil {
+		return nil, err
+	}
+	defer tempDB.Close()
+
+	query := `
+		SELECT
+			table_name,
+			COALESCE((SELECT n_live_tup FROM pg_stat_user_tables WHERE relname = table_name LIMIT 1), 0) AS row_count,
+			'heap' AS engine,
+			'default' AS collation,
+			pg_total_relation_size(quote_ident(table_name)) AS size,
+			0 AS overhead
+		FROM information_schema.tables
+		WHERE table_schema = 'public' AND table_name = $1
+		LIMIT 1
+	`
+	var info TableInfo
+	err = tempDB.QueryRow(query, table).Scan(&info.Name, &info.RowCount, &info.Engine, &info.Collation, &info.Size, &info.Overhead)
+	if err != nil {
+		return nil, fmt.Errorf("table info not found: %w", err)
+	}
+	return &info, nil
 }
 
 func (d *PostgresDriver) GetStats(database string) (map[string]interface{}, error) {
@@ -681,11 +768,37 @@ func (d *PostgresDriver) GetStats(database string) (map[string]interface{}, erro
 }
 
 func (d *PostgresDriver) GetForeignValues(database, table, column string) ([]string, error) {
-	return []string{}, nil
+	if d.db == nil || table == "" || column == "" {
+		return []string{}, nil
+	}
+	tempDB, err := sql.Open("postgres", replacePostgresDB(d.dsn, database))
+	if err != nil {
+		return nil, err
+	}
+	defer tempDB.Close()
+
+	quotedTable := `"` + strings.ReplaceAll(table, `"`, `""`) + `"`
+	quotedCol := `"` + strings.ReplaceAll(column, `"`, `""`) + `"`
+	query := fmt.Sprintf("SELECT DISTINCT %s::text FROM %s WHERE %s IS NOT NULL ORDER BY 1 LIMIT 100", quotedCol, quotedTable, quotedCol)
+
+	rows, err := tempDB.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	vals := make([]string, 0)
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err == nil {
+			vals = append(vals, v)
+		}
+	}
+	return vals, nil
 }
 
 func (d *PostgresDriver) GetTableRelationships(database string) ([]TableRelationship, error) {
-	targetDSN := strings.Replace(d.dsn, "/postgres?", "/"+database+"?", 1)
+	targetDSN := replacePostgresDB(d.dsn, database)
 	tempDB, err := sql.Open("postgres", targetDSN)
 	if err != nil {
 		return nil, err
@@ -728,35 +841,71 @@ func (d *PostgresDriver) GetTableRelationships(database string) ([]TableRelation
 }
 
 func (d *PostgresDriver) CreateSnapshot(database, table string, filepath string) error {
-	// pg_dump
-	args := []string{"-h", "localhost", "-U", "postgres", database}
+	extra := []string{"-d", database}
 	if table != "" {
-		args = append(args, "-t", table)
+		extra = append(extra, "-t", table)
 	}
-	cmd := exec.Command("pg_dump", args...)
-	// Set PGPASSWORD if needed env var
-	output, err := cmd.Output()
-	if err != nil {
-		return fmt.Errorf("pg_dump failed: %w", err)
-	}
-	return os.WriteFile(filepath, output, 0644)
-}
+	args, env := buildPostgresCLIArgs(d.cfg, extra...)
 
-func (d *PostgresDriver) RestoreSnapshot(database, filepath string) error {
-	cmd := exec.Command("psql", "-h", "localhost", "-U", "postgres", database)
-	file, err := os.Open(filepath)
+	outFile, err := os.Create(filepath)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create snapshot file: %w", err)
 	}
-	defer file.Close()
-	cmd.Stdin = file
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("restore failed: %s", string(out))
+
+	var stderr strings.Builder
+	cmd := exec.Command("pg_dump", args...)
+	cmd.Env = env
+	cmd.Stdout = outFile
+	cmd.Stderr = &stderr
+
+	err = cmd.Run()
+	_ = outFile.Close()
+	if err != nil {
+		_ = os.Remove(filepath)
+		msg := strings.TrimSpace(stderr.String())
+		if msg != "" {
+			return fmt.Errorf("pg_dump failed: %s", msg)
+		}
+		return fmt.Errorf("pg_dump failed: %w", err)
 	}
 	return nil
 }
+
+func (d *PostgresDriver) RestoreSnapshot(database, filepath string) error {
+	if _, err := exec.LookPath("psql"); err == nil {
+		reader, err := openMaybeGzip(filepath)
+		if err != nil {
+			return fmt.Errorf("failed to open SQL file: %w", err)
+		}
+		defer reader.Close()
+
+		args, env := buildPostgresCLIArgs(d.cfg, "-v", "ON_ERROR_STOP=1", "-d", database)
+		cmd := exec.Command("psql", args...)
+		cmd.Env = env
+		cmd.Stdin = reader
+		if out, err := cmd.CombinedOutput(); err != nil {
+			msg := strings.TrimSpace(string(out))
+			if msg != "" {
+				return fmt.Errorf("psql import failed: %s", msg)
+			}
+			return fmt.Errorf("psql import failed: %w", err)
+		}
+		return nil
+	}
+
+	// Fallback: execute SQL statements directly over Go SQL connection when psql CLI is unavailable
+	if d.db == nil {
+		return fmt.Errorf("database not connected and psql CLI not found in PATH")
+	}
+	tempDB, err := sql.Open("postgres", replacePostgresDB(d.dsn, database))
+	if err != nil {
+		return err
+	}
+	defer tempDB.Close()
+	return execSQLFileFallback(tempDB, filepath)
+}
 func (d *PostgresDriver) GetTableIndexes(database, table string) ([]IndexInfo, error) {
-	targetDSN := strings.Replace(d.dsn, "/postgres?", "/"+database+"?", 1)
+	targetDSN := replacePostgresDB(d.dsn, database)
 	tempDB, err := sql.Open("postgres", targetDSN)
 	if err != nil {
 		return nil, err
@@ -813,7 +962,7 @@ func (d *PostgresDriver) GetTableIndexes(database, table string) ([]IndexInfo, e
 }
 
 func (d *PostgresDriver) Maintenance(database string, tables []string, operation string) ([]MaintenanceResult, error) {
-	targetDSN := strings.Replace(d.dsn, "/postgres?", "/"+database+"?", 1)
+	targetDSN := replacePostgresDB(d.dsn, database)
 	tempDB, err := sql.Open("postgres", targetDSN)
 	if err != nil {
 		return nil, err
@@ -872,7 +1021,7 @@ func (d *PostgresDriver) Maintenance(database string, tables []string, operation
 }
 
 func (d *PostgresDriver) GlobalSearch(database string, query string) ([]SearchResult, error) {
-	targetDSN := strings.Replace(d.dsn, "/postgres?", "/"+database+"?", 1)
+	targetDSN := replacePostgresDB(d.dsn, database)
 	tempDB, err := sql.Open("postgres", targetDSN)
 	if err != nil {
 		return nil, err
@@ -980,7 +1129,7 @@ func (d *PostgresDriver) GetDatabaseSettings(database string) (*DatabaseSettings
 
 func (d *PostgresDriver) ExplainQuery(database, query string) (*QueryExplanation, error) {
 	// Connect to target DB
-	targetDSN := strings.Replace(d.dsn, "/postgres?", "/"+database+"?", 1)
+	targetDSN := replacePostgresDB(d.dsn, database)
 	tempDB, err := sql.Open("postgres", targetDSN)
 	if err != nil {
 		return nil, err

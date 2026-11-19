@@ -14,6 +14,7 @@ import (
 type MySQLDriver struct {
 	db        *sql.DB
 	dsn       string
+	cfg       ConnectionConfig
 	activeTxs map[string]*sql.Tx
 }
 
@@ -56,16 +57,20 @@ func MySQLDSN() string {
 	host := MySQLHost()
 	port := MySQLPort()
 	if pass == "" {
-		return fmt.Sprintf("%s@tcp(%s:%s)/", user, host, port)
+		return fmt.Sprintf("%s@tcp(%s:%s)/?timeout=5s&readTimeout=15s&writeTimeout=15s", user, host, port)
 	}
-	return fmt.Sprintf("%s:%s@tcp(%s:%s)/", user, pass, host, port)
+	return fmt.Sprintf("%s:%s@tcp(%s:%s)/?timeout=5s&readTimeout=15s&writeTimeout=15s", user, pass, host, port)
 }
 
 func (d *MySQLDriver) Connect(config ConnectionConfig) error {
 	var dsn string
 
 	// If config is provided, use it
-	if config.User != "" {
+	if config.User != "" || config.Host != "" {
+		user := config.User
+		if user == "" {
+			user = "root"
+		}
 		host := config.Host
 		if host == "" {
 			host = "127.0.0.1"
@@ -74,7 +79,11 @@ func (d *MySQLDriver) Connect(config ConnectionConfig) error {
 		if port == "" {
 			port = "3306"
 		}
-		dsn = fmt.Sprintf("%s:%s@tcp(%s:%s)/", config.User, config.Password, host, port)
+		if config.Password == "" {
+			dsn = fmt.Sprintf("%s@tcp(%s:%s)/?timeout=5s&readTimeout=15s&writeTimeout=15s", user, host, port)
+		} else {
+			dsn = fmt.Sprintf("%s:%s@tcp(%s:%s)/?timeout=5s&readTimeout=15s&writeTimeout=15s", user, config.Password, host, port)
+		}
 	} else {
 		// Auto-discovery logic (copied from original database.go)
 
@@ -94,7 +103,7 @@ func (d *MySQLDriver) Connect(config ConnectionConfig) error {
 			if currentUser != "" && currentUser != "root" {
 				for _, sock := range socketPaths {
 					if _, err := os.Stat(sock); err == nil {
-						dsn = fmt.Sprintf("%s@unix(%s)/", currentUser, sock)
+						dsn = fmt.Sprintf("%s@unix(%s)/?timeout=5s&readTimeout=15s&writeTimeout=15s", currentUser, sock)
 						socketFound = true
 						break
 					}
@@ -105,7 +114,7 @@ func (d *MySQLDriver) Connect(config ConnectionConfig) error {
 			if !socketFound {
 				for _, sock := range socketPaths {
 					if _, err := os.Stat(sock); err == nil {
-						dsn = fmt.Sprintf("root@unix(%s)/", sock)
+						dsn = fmt.Sprintf("root@unix(%s)/?timeout=5s&readTimeout=15s&writeTimeout=15s", sock)
 						socketFound = true
 						break
 					}
@@ -114,7 +123,7 @@ func (d *MySQLDriver) Connect(config ConnectionConfig) error {
 
 			// 4. Fallback TCP
 			if !socketFound {
-				dsn = "root@tcp(127.0.0.1:3306)/"
+				dsn = "root@tcp(127.0.0.1:3306)/?timeout=5s&readTimeout=15s&writeTimeout=15s"
 			}
 		}
 	}
@@ -123,14 +132,21 @@ func (d *MySQLDriver) Connect(config ConnectionConfig) error {
 	if err != nil {
 		return err
 	}
+	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(5 * time.Minute)
 
 	if err := db.Ping(); err != nil {
 		db.Close()
 		return err
 	}
 
+	if d.db != nil {
+		_ = d.db.Close()
+	}
 	d.db = db
 	d.dsn = dsn
+	d.cfg = config
 	return nil
 }
 
@@ -772,9 +788,34 @@ func (d *MySQLDriver) GetStats(database string) (map[string]interface{}, error) 
 }
 
 func (d *MySQLDriver) GetForeignValues(database, table, column string) ([]string, error) {
-	// Not implemented in original database.go, but interface requires it?
-	// Original code didn't have this.
-	return []string{}, nil
+	if d.db == nil || table == "" || column == "" {
+		return []string{}, nil
+	}
+	quotedDB := "`" + strings.ReplaceAll(database, "`", "``") + "`"
+	quotedTable := "`" + strings.ReplaceAll(table, "`", "``") + "`"
+	quotedCol := "`" + strings.ReplaceAll(column, "`", "``") + "`"
+
+	var query string
+	if database != "" {
+		query = fmt.Sprintf("SELECT DISTINCT CAST(%s AS CHAR) FROM %s.%s WHERE %s IS NOT NULL ORDER BY 1 LIMIT 100", quotedCol, quotedDB, quotedTable, quotedCol)
+	} else {
+		query = fmt.Sprintf("SELECT DISTINCT CAST(%s AS CHAR) FROM %s WHERE %s IS NOT NULL ORDER BY 1 LIMIT 100", quotedCol, quotedTable, quotedCol)
+	}
+
+	rows, err := d.db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	vals := make([]string, 0)
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err == nil {
+			vals = append(vals, v)
+		}
+	}
+	return vals, nil
 }
 
 func (d *MySQLDriver) GetTableRelationships(database string) ([]TableRelationship, error) {
@@ -806,30 +847,83 @@ func (d *MySQLDriver) GetTableRelationships(database string) ([]TableRelationshi
 }
 
 func (d *MySQLDriver) CreateSnapshot(database, table string, filepath string) error {
-	args := []string{"-u", "root", database}
+	extra := []string{"--single-transaction", "--quick", database}
 	if table != "" {
-		args = append(args, table)
+		extra = append(extra, table)
 	}
-	cmd := exec.Command("mysqldump", args...)
-	output, err := cmd.Output()
+	args, env := buildMySQLCLIArgs(d.cfg, extra...)
+
+	bin := "mysqldump"
+	if _, err := exec.LookPath(bin); err != nil {
+		if _, err2 := exec.LookPath("mariadb-dump"); err2 == nil {
+			bin = "mariadb-dump"
+		} else {
+			return fmt.Errorf("mysqldump not found in PATH: %w", err)
+		}
+	}
+
+	outFile, err := os.Create(filepath)
 	if err != nil {
+		return fmt.Errorf("failed to create snapshot file: %w", err)
+	}
+
+	var stderr strings.Builder
+	cmd := exec.Command(bin, args...)
+	cmd.Env = env
+	cmd.Stdout = outFile
+	cmd.Stderr = &stderr
+
+	err = cmd.Run()
+	_ = outFile.Close()
+	if err != nil {
+		_ = os.Remove(filepath)
+		msg := strings.TrimSpace(stderr.String())
+		if msg != "" {
+			return fmt.Errorf("mysqldump failed: %s", msg)
+		}
 		return fmt.Errorf("mysqldump failed: %w", err)
 	}
-	return os.WriteFile(filepath, output, 0644)
+	return nil
 }
 
 func (d *MySQLDriver) RestoreSnapshot(database string, filepath string) error {
-	cmd := exec.Command("mysql", "-u", "root", database)
-	file, err := os.Open(filepath)
-	if err != nil {
-		return err
+	// Prefer native mysql / mariadb CLI for full dump compatibility & speed
+	bin := ""
+	if _, err := exec.LookPath("mysql"); err == nil {
+		bin = "mysql"
+	} else if _, err := exec.LookPath("mariadb"); err == nil {
+		bin = "mariadb"
 	}
-	defer file.Close()
-	cmd.Stdin = file
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("restore failed: %s", string(output))
+
+	if bin != "" {
+		reader, err := openMaybeGzip(filepath)
+		if err != nil {
+			return fmt.Errorf("failed to open SQL file: %w", err)
+		}
+		defer reader.Close()
+
+		args, env := buildMySQLCLIArgs(d.cfg, "--default-character-set=utf8mb4", database)
+		cmd := exec.Command(bin, args...)
+		cmd.Env = env
+		cmd.Stdin = reader
+		if output, err := cmd.CombinedOutput(); err != nil {
+			msg := strings.TrimSpace(string(output))
+			if msg != "" {
+				return fmt.Errorf("mysql import failed: %s", msg)
+			}
+			return fmt.Errorf("mysql import failed: %w", err)
+		}
+		return nil
 	}
-	return nil
+
+	// Fallback: execute SQL statements directly over the Go SQL connection when mysql CLI is unavailable
+	if d.db == nil {
+		return fmt.Errorf("database not connected and mysql CLI not found in PATH")
+	}
+	if _, err := d.db.Exec("USE `" + strings.ReplaceAll(database, "`", "``") + "`"); err != nil {
+		return fmt.Errorf("failed to select database %s: %w", database, err)
+	}
+	return execSQLFileFallback(d.db, filepath)
 }
 func (d *MySQLDriver) GetTableIndexes(database, table string) ([]IndexInfo, error) {
 	if _, err := d.db.Exec("USE " + database); err != nil {
