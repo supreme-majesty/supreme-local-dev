@@ -1,6 +1,6 @@
 .PHONY: build build-fast frontend run install update update-fast clean \
         restart refresh status park forget link unlink paths links logs daemon \
-        docker-up docker-up-pg docker-down docker-logs docker-build docker-ps docker-clean \
+        docker-config docker-up docker-up-pg docker-app docker-stop docker-down docker-logs docker-build docker-ps docker-shell docker-clean \
         docker-images docker-image-router docker-image-nginx docker-image-php
 
 BINARY_NAME=sld
@@ -112,6 +112,9 @@ logs:
 #  Docker (dashboard + MariaDB + phpMyAdmin + Redis + Mailpit)
 # ─────────────────────────────────────────────
 
+docker-config:
+	docker compose config -q
+
 docker-build:
 	docker compose build
 
@@ -120,6 +123,13 @@ docker-up:
 
 docker-up-pg:
 	docker compose --profile postgres up --build -d
+
+# Start only the SLD dashboard/control plane (useful when host ports 3306/6379 are used by other projects)
+docker-app:
+	docker compose up --build -d --no-deps app
+
+docker-stop:
+	docker compose stop
 
 docker-down:
 	docker compose down
@@ -130,6 +140,10 @@ docker-ps:
 docker-logs:
 	docker compose logs -f --tail=100
 
+docker-shell:
+	docker compose exec app sh
+
+# WARNING: Destructive — deletes persistent sld-mariadb, sld-postgres, sld-redis, and sld-state volumes!
 docker-clean:
 	docker compose down -v
 

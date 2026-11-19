@@ -6,7 +6,8 @@ RUN apt-get update \
 
 COPY default.conf.template /etc/nginx/templates/default.conf.template
 COPY entrypoint.sh /usr/local/bin/sld-nginx-entrypoint
-RUN chmod +x /usr/local/bin/sld-nginx-entrypoint
+RUN sed -i 's/\r$//' /usr/local/bin/sld-nginx-entrypoint \
+    && chmod +x /usr/local/bin/sld-nginx-entrypoint
 
 EXPOSE 80
 

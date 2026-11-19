@@ -54,7 +54,8 @@ RUN { \
 
 COPY entrypoint.sh /usr/local/bin/sld-php-entrypoint
 COPY sld-php-healthcheck /usr/local/bin/sld-php-healthcheck
-RUN chmod +x /usr/local/bin/sld-php-entrypoint /usr/local/bin/sld-php-healthcheck
+RUN sed -i 's/\r$//' /usr/local/bin/sld-php-entrypoint /usr/local/bin/sld-php-healthcheck \
+    && chmod +x /usr/local/bin/sld-php-entrypoint /usr/local/bin/sld-php-healthcheck
 
 WORKDIR /app
 

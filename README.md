@@ -86,46 +86,68 @@ sld daemon
 
 ## Docker
 
-Runs the **dashboard, MariaDB, phpMyAdmin, Redis, and Mailpit** in isolated containers with state and data persistence:
+Runs the **SLD dashboard/API, MariaDB, phpMyAdmin, Redis, and Mailpit** (plus optional **PostgreSQL**) in project-scoped containers (`name: sld`, bridge network `sld-net`) with loopback-only host bindings (`127.0.0.1` by default) and named-volume persistence:
 
 ```bash
-cp .env.example .env   # optional; defaults are fine for local use
+cp .env.example .env   # optional; override MYSQL_PORT / REDIS_PORT if 3306 or 6379 are already in use
+docker compose config -q
 docker compose up --build -d
+```
+
+If another local project already binds port `3306` or `6379` and you only want the SLD dashboard (which auto-discovers and connects to your running Docker databases):
+
+```bash
+docker compose up --build -d --no-deps app
 ```
 
 ### Services & Endpoints
 
-| Service | Port / URL | Credentials / Notes |
+All host ports bind to `${SLD_BIND_HOST:-127.0.0.1}` so local development services are not exposed on LAN/Wi-Fi.
+
+| Service | Host Binding / URL | Credentials / Notes |
 |---|---|---|
-| **SLD Dashboard / API** | [http://localhost:2025](http://localhost:2025) | Control plane & Web UI |
-| **phpMyAdmin** | [http://localhost:8080](http://localhost:8080) | System catalogs automatically filtered |
-| **MariaDB (MySQL)** | `127.0.0.1:3306` | User: `root`, Password: `${MYSQL_ROOT_PASSWORD:-sld}` |
-| **Redis** | `127.0.0.1:6379` | Key-value store (persistent volume) |
-| **Mailpit Web UI** | [http://localhost:8025](http://localhost:8025) | Local email inbox |
-| **Mailpit SMTP** | `127.0.0.1:1025` | SMTP capture server |
-| **PostgreSQL** (Profile `postgres`) | `127.0.0.1:5432` | User: `${POSTGRES_USER:-sld}`, DB: `${POSTGRES_DB:-app}` |
+| **SLD Dashboard / API (`app`)** | [http://127.0.0.1:2025](http://127.0.0.1:2025) | Control plane, Docker DB discovery, SQL import/export, Web UI |
+| **phpMyAdmin (`phpmyadmin`)** | [http://127.0.0.1:8080](http://127.0.0.1:8080) | System catalogs automatically filtered |
+| **MariaDB (`mariadb`)** | `127.0.0.1:${MYSQL_PORT:-3306}` | User: `root`, Password: `${MYSQL_ROOT_PASSWORD:-sld}` |
+| **Redis (`redis`)** | `127.0.0.1:${REDIS_PORT:-6379}` | Key-value store (persistent volume `sld-redis`) |
+| **Mailpit Web UI (`mailpit`)** | [http://127.0.0.1:8025](http://127.0.0.1:8025) | Local email inbox (`axllent/mailpit:v1.31.2`) |
+| **Mailpit SMTP (`mailpit`)** | `127.0.0.1:${MAILPIT_SMTP_PORT:-1025}` | SMTP capture server |
+| **PostgreSQL (`postgres`, profile `postgres`)** | `127.0.0.1:${POSTGRES_PORT:-5432}` | User: `${POSTGRES_USER:-sld}`, DB: `${POSTGRES_DB:-app}` |
 
 ### Commands
 
 ```bash
-# Start default stack (Dashboard, MariaDB, phpMyAdmin, Redis, Mailpit)
+# Validate Compose configuration
+docker compose config -q
+
+# Start full default stack (app, mariadb, phpmyadmin, redis, mailpit)
 docker compose up --build -d
 
 # Start stack including PostgreSQL
 docker compose --profile postgres up --build -d
 
-# Check status of containers
+# Start dashboard only (skips bundled MariaDB/Redis if ports 3306/6379 are already taken)
+docker compose up --build -d --no-deps app
+
+# Check status & health of containers
 docker compose ps
 
 # View logs
-docker compose logs -f
+docker compose logs -f --tail=100
 
-# Stop containers
+# Open a shell inside the app container
+docker compose exec app sh
+
+# Stop containers safely (preserves all named volumes)
+docker compose stop
+
+# Stop & remove containers and network (preserves all named volumes)
 docker compose down
-
-# Stop and purge volumes
-docker compose down -v
 ```
+
+> **Persistence & Data Safety**: `docker compose stop` and `docker compose down` retain `sld-state`, `sld-mariadb`, `sld-postgres`, and `sld-redis` volumes. Avoid `docker compose down -v` unless you intentionally want to permanently erase all local databases and SLD state.
+>
+> **Security Note**: The `app` container mounts `/var/run/docker.sock` to discover and connect to local project database containers. Keep `SLD_BIND_HOST=127.0.0.1` and run this Compose stack only on trusted local development workstations, never as an internet-facing service.
 
 ## phpMyAdmin
 

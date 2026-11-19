@@ -15,3 +15,5 @@ providers:
 
 api:
   dashboard: false
+
+ping: {}
