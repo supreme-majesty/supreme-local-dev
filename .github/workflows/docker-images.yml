@@ -4,6 +4,13 @@ on:
   push:
     branches: ["main"]
     paths:
+      - "Dockerfile"
+      - "cmd/**"
+      - "pkg/**"
+      - "internal/**"
+      - "go.mod"
+      - "go.sum"
+      - "sld-dashboard/**"
       - "docker/**"
       - ".github/workflows/docker-images.yml"
     tags:
@@ -20,8 +27,114 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
+  changes:
+    name: Detect changed image scopes
+    runs-on: ubuntu-latest
+    outputs:
+      app: ${{ steps.filter.outputs.app }}
+      router: ${{ steps.filter.outputs.router }}
+      nginx: ${{ steps.filter.outputs.nginx }}
+      php: ${{ steps.filter.outputs.php }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Determine affected images
+        id: filter
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" || "${GITHUB_REF_TYPE}" == "tag" ]] || ! git rev-parse HEAD~1 >/dev/null 2>&1; then
+            echo "app=true" >> "$GITHUB_OUTPUT"
+            echo "router=true" >> "$GITHUB_OUTPUT"
+            echo "nginx=true" >> "$GITHUB_OUTPUT"
+            echo "php=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          CHANGED=$(git diff --name-only HEAD~1 HEAD)
+          match() { echo "$CHANGED" | grep -Eq "$1" && echo "true" || echo "false"; }
+
+          WORKFLOW_CHANGED=$(match '^\.github/workflows/docker-images\.yml$')
+          if [[ "$WORKFLOW_CHANGED" == "true" ]]; then
+            echo "app=true" >> "$GITHUB_OUTPUT"
+            echo "router=true" >> "$GITHUB_OUTPUT"
+            echo "nginx=true" >> "$GITHUB_OUTPUT"
+            echo "php=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "app=$(match '^(Dockerfile|go\.mod|go\.sum|cmd/|pkg/|internal/|sld-dashboard/)')" >> "$GITHUB_OUTPUT"
+          echo "router=$(match '^docker/router/')" >> "$GITHUB_OUTPUT"
+          echo "nginx=$(match '^docker/nginx/')" >> "$GITHUB_OUTPUT"
+          echo "php=$(match '^docker/php/')" >> "$GITHUB_OUTPUT"
+
+  build-app:
+    name: Build & Push sld
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image metadata
+        id: meta
+        run: |
+          OWNER="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "owner=${OWNER}" >> "$GITHUB_OUTPUT"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            VERSION="${GITHUB_REF_NAME}"
+            TAGS="${REGISTRY}/${OWNER}/sld:${VERSION}"$'\n'"${REGISTRY}/${OWNER}/sld:latest"
+          else
+            VERSION="${GITHUB_SHA::7}"
+            TAGS="${REGISTRY}/${OWNER}/sld:latest"$'\n'"${REGISTRY}/${OWNER}/sld:sha-${VERSION}"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          {
+            echo "tags<<EOF"
+            echo "${TAGS}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and push sld
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          sbom: true
+          provenance: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          tags: ${{ steps.meta.outputs.tags }}
+
+      - name: Scan sld image with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/sld:latest
+          format: "table"
+          ignore-unfixed: true
+          severity: "CRITICAL,HIGH"
+
   build-router:
     name: Build & Push sld-router
+    needs: changes
+    if: needs.changes.outputs.router == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -66,6 +179,8 @@ jobs:
 
   build-nginx:
     name: Build & Push sld-nginx
+    needs: changes
+    if: needs.changes.outputs.nginx == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -110,6 +225,8 @@ jobs:
 
   build-php:
     name: Build & Push sld-php (${{ matrix.php_version }})
+    needs: changes
+    if: needs.changes.outputs.php == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

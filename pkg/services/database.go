@@ -124,25 +124,42 @@ type DatabaseSummary struct {
 	Tables int    `json:"tables"`
 }
 
+// CatalogDatabase represents a database discovered across default or Docker database servers.
+type CatalogDatabase struct {
+	Name          string `json:"name"`
+	Tables        int    `json:"tables"`
+	SourceID      string `json:"source_id"`
+	SourceName    string `json:"source_name"`
+	SourceType    string `json:"source_type"` // "default" | "docker"
+	ContainerName string `json:"container_name,omitempty"`
+	Driver        string `json:"driver"` // "mysql" | "postgres"
+	Host          string `json:"host"`
+	Port          string `json:"port"`
+	Status        string `json:"status"` // "running" | "stopped"
+	IsActive      bool   `json:"is_active"`
+}
+
 // DatabaseService manages database connections via drivers
 type DatabaseService struct {
-	mu           sync.RWMutex
-	db           *sql.DB // Legacy, to be replaced by driver
-	Driver       DatabaseDriver
-	driverName   string
-	dsn          string
-	SnapDir      string
-	activeConfig ConnectionConfig
-	activeTarget string
+	mu            sync.RWMutex
+	db            *sql.DB // Legacy, to be replaced by driver
+	Driver        DatabaseDriver
+	driverName    string
+	dsn           string
+	SnapDir       string
+	activeConfig  ConnectionConfig
+	activeTarget  string
+	sourceDrivers map[string]DatabaseDriver
 }
 
 // NewDatabaseService creates a new database service
 func NewDatabaseService() *DatabaseService {
 	return &DatabaseService{
-		Driver:       NewMySQLDriver(),
-		driverName:   "mysql",
-		SnapDir:      filepath.Join(stateDir(), "snapshots"),
-		activeTarget: "default",
+		Driver:        NewMySQLDriver(),
+		driverName:    "mysql",
+		SnapDir:       filepath.Join(stateDir(), "snapshots"),
+		activeTarget:  "default",
+		sourceDrivers: make(map[string]DatabaseDriver),
 	}
 }
 
@@ -213,6 +230,13 @@ func (d *DatabaseService) SetTarget(targetName string, driverName string, config
 
 	d.mu.Lock()
 	oldDriver := d.Driver
+	var dupCached DatabaseDriver
+	if d.sourceDrivers != nil {
+		if existing, ok := d.sourceDrivers[targetName]; ok && existing != oldDriver {
+			dupCached = existing
+			delete(d.sourceDrivers, targetName)
+		}
+	}
 	d.Driver = nextDriver
 	d.driverName = driverName
 	d.activeConfig = config
@@ -221,6 +245,9 @@ func (d *DatabaseService) SetTarget(targetName string, driverName string, config
 
 	if oldDriver != nil {
 		_ = oldDriver.Close()
+	}
+	if dupCached != nil {
+		_ = dupCached.Close()
 	}
 	return nil
 }
@@ -252,13 +279,99 @@ func (d *DatabaseService) StatusCheck() error {
 	return d.ensureConnected()
 }
 
-// Close closes the database connection
+// Close closes the database connection and any cached per-source pools
 func (d *DatabaseService) Close() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.Driver != nil {
 		_ = d.Driver.Close()
 	}
+	for id, drv := range d.sourceDrivers {
+		if drv != nil {
+			_ = drv.Close()
+		}
+		delete(d.sourceDrivers, id)
+	}
+}
+
+// GetOrConnectSource returns a connected DatabaseDriver for the given sourceID,
+// reusing the active driver or a cached per-source pool to keep multi-container browsing fast.
+func (d *DatabaseService) GetOrConnectSource(sourceID, driverName string, cfg ConnectionConfig, altUser, altPass string) (DatabaseDriver, error) {
+	if driverName == "" {
+		driverName = "mysql"
+	}
+
+	d.mu.RLock()
+	activeID := d.activeTarget
+	if activeID == "" {
+		activeID = "default"
+	}
+	activeDrv := d.Driver
+	cachedDrv := d.sourceDrivers[sourceID]
+	d.mu.RUnlock()
+
+	if sourceID == activeID && activeDrv != nil && activeDrv.IsConnected() {
+		return activeDrv, nil
+	}
+	if cachedDrv != nil && cachedDrv.IsConnected() {
+		return cachedDrv, nil
+	}
+
+	var drv DatabaseDriver
+	if driverName == "postgres" {
+		drv = NewPostgresDriver()
+	} else {
+		drv = NewMySQLDriver()
+	}
+
+	if err := drv.Connect(cfg); err != nil {
+		if altUser != "" && altUser != cfg.User {
+			altCfg := cfg
+			altCfg.User = altUser
+			altCfg.Password = altPass
+			if altErr := drv.Connect(altCfg); altErr != nil {
+				return nil, err
+			}
+		} else {
+			return nil, err
+		}
+	}
+
+	d.mu.Lock()
+	if d.sourceDrivers == nil {
+		d.sourceDrivers = make(map[string]DatabaseDriver)
+	}
+	prev := d.sourceDrivers[sourceID]
+	d.sourceDrivers[sourceID] = drv
+	d.mu.Unlock()
+
+	if prev != nil && prev != drv {
+		_ = prev.Close()
+	}
+	return drv, nil
+}
+
+// ListDatabaseSummariesWithDriver returns user database summaries using the supplied driver.
+func ListDatabaseSummariesWithDriver(drv DatabaseDriver) ([]DatabaseSummary, error) {
+	names, err := drv.ListDatabases()
+	if err != nil {
+		return nil, err
+	}
+
+	counts := map[string]int{}
+	if counter, ok := drv.(interface {
+		TableCounts() (map[string]int, error)
+	}); ok {
+		if c, cErr := counter.TableCounts(); cErr == nil {
+			counts = c
+		}
+	}
+
+	out := make([]DatabaseSummary, 0, len(names))
+	for _, name := range names {
+		out = append(out, DatabaseSummary{Name: name, Tables: counts[name]})
+	}
+	return out, nil
 }
 
 // ensureConnected reconnects if needed

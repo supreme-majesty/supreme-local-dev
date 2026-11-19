@@ -90,6 +90,20 @@ export interface DatabaseInfo {
   tables: number;
 }
 
+export interface CatalogDatabase {
+  name: string;
+  tables: number;
+  source_id: string;
+  source_name: string;
+  source_type: "default" | "docker";
+  container_name?: string;
+  driver: "mysql" | "postgres";
+  host: string;
+  port: string;
+  status: string;
+  is_active: boolean;
+}
+
 export interface TableInfo {
   name: string;
   row_count: number;
@@ -296,6 +310,11 @@ class DaemonApi {
     return res || [];
   }
 
+  async getDatabaseCatalog(): Promise<CatalogDatabase[]> {
+    const res = await this.request<CatalogDatabase[]>("/db/catalog");
+    return res || [];
+  }
+
   async createDatabase(name: string): Promise<ActionResponse> {
     return this.request<ActionResponse>("/db/create", {
       method: "POST",
@@ -320,9 +339,11 @@ class DaemonApi {
     });
   }
 
-  async getTables(database: string): Promise<TableInfo[]> {
+  async getTables(database: string, sourceId?: string): Promise<TableInfo[]> {
+    const params = new URLSearchParams({ db: database });
+    if (sourceId) params.set("source", sourceId);
     const res = await this.request<TableInfo[]>(
-      `/db/tables?db=${encodeURIComponent(database)}`,
+      `/db/tables?${params.toString()}`,
     );
     return res || [];
   }

@@ -254,7 +254,13 @@ func (d *DockerDiscoveryService) DiscoverDatabaseContainers(ctx context.Context)
 		ownNetworks = d.currentContainerNetworks(ctx)
 	}
 
+	var (
+		mu sync.Mutex
+		wg sync.WaitGroup
+	)
+
 	for _, c := range containers {
+		c := c
 		name := containerName(c.Names)
 		composeProject := c.Labels["com.docker.compose.project"]
 		if isSLDInfra(name, composeProject) {
@@ -266,91 +272,100 @@ func (d *DockerDiscoveryService) DiscoverDatabaseContainers(ctx context.Context)
 			continue
 		}
 
-		inspect, err := d.cli.ContainerInspect(ctx, c.ID)
-		envMap := make(map[string]string)
-		if err == nil && inspect.Config != nil {
-			for _, e := range inspect.Config.Env {
-				parts := strings.SplitN(e, "=", 2)
-				if len(parts) == 2 {
-					envMap[parts[0]] = parts[1]
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			inspect, err := d.cli.ContainerInspect(ctx, c.ID)
+			envMap := make(map[string]string)
+			if err == nil && inspect.Config != nil {
+				for _, e := range inspect.Config.Env {
+					parts := strings.SplitN(e, "=", 2)
+					if len(parts) == 2 {
+						envMap[parts[0]] = parts[1]
+					}
 				}
 			}
-		}
 
-		driver := detectDatabaseDriver(svc, c.Image, name, envMap)
-		if driver == "" {
-			continue
-		}
-
-		user, password, dbname := resolveDatabaseCredentials(driver, envMap)
-		var altUser, altPassword string
-		if driver == "mysql" {
-			if u := firstNonEmpty(envMap["MYSQL_USER"], envMap["MARIADB_USER"]); u != "" && u != user {
-				altUser = u
-				altPassword = firstNonEmpty(envMap["MYSQL_PASSWORD"], envMap["MARIADB_PASSWORD"])
+			driver := detectDatabaseDriver(svc, c.Image, name, envMap)
+			if driver == "" {
+				return
 			}
-		}
 
-		sharedNet := false
-		containerIP := ""
-		var netNames []string
-		if err == nil && inspect.NetworkSettings != nil {
-			for netName, ep := range inspect.NetworkSettings.Networks {
-				netNames = append(netNames, netName)
-				if ep != nil && containerIP == "" && ep.IPAddress != "" {
-					containerIP = ep.IPAddress
-				}
-				if ownNetworks[netName] {
-					sharedNet = true
+			user, password, dbname := resolveDatabaseCredentials(driver, envMap)
+			var altUser, altPassword string
+			if driver == "mysql" {
+				if u := firstNonEmpty(envMap["MYSQL_USER"], envMap["MARIADB_USER"]); u != "" && u != user {
+					altUser = u
+					altPassword = firstNonEmpty(envMap["MYSQL_PASSWORD"], envMap["MARIADB_PASSWORD"])
 				}
 			}
-		}
 
-		internalPort := uint16(3306)
-		if driver == "postgres" {
-			internalPort = 5432
-		}
-		hasPublicPort := false
-		for _, p := range c.Ports {
-			if p.PrivatePort == internalPort && p.PublicPort > 0 {
-				hasPublicPort = true
-				break
+			sharedNet := false
+			containerIP := ""
+			var netNames []string
+			if err == nil && inspect.NetworkSettings != nil {
+				for netName, ep := range inspect.NetworkSettings.Networks {
+					netNames = append(netNames, netName)
+					if ep != nil && containerIP == "" && ep.IPAddress != "" {
+						containerIP = ep.IPAddress
+					}
+					if ownNetworks[netName] {
+						sharedNet = true
+					}
+				}
 			}
-		}
 
-		host, port := resolveDatabaseEndpoint(driver, name, isInsideDocker, sharedNet, c.Ports, containerIP)
+			internalPort := uint16(3306)
+			if driver == "postgres" {
+				internalPort = 5432
+			}
+			hasPublicPort := false
+			for _, p := range c.Ports {
+				if p.PrivatePort == internalPort && p.PublicPort > 0 {
+					hasPublicPort = true
+					break
+				}
+			}
 
-		displayName := name
-		if proj := c.Labels["com.supreme.sld.project"]; proj != "" {
-			displayName = fmt.Sprintf("%s (%s DB)", proj, strings.ToUpper(driver))
-		} else if composeProject != "" {
-			displayName = fmt.Sprintf("%s (%s)", composeProject, name)
-		}
+			host, port := resolveDatabaseEndpoint(driver, name, isInsideDocker, sharedNet, c.Ports, containerIP)
 
-		id := c.ID
-		if len(id) > 12 {
-			id = id[:12]
-		}
+			displayName := name
+			if proj := c.Labels["com.supreme.sld.project"]; proj != "" {
+				displayName = fmt.Sprintf("%s (%s DB)", proj, strings.ToUpper(driver))
+			} else if composeProject != "" {
+				displayName = fmt.Sprintf("%s (%s)", composeProject, name)
+			}
 
-		databases = append(databases, DiscoveredDatabase{
-			ID:            id,
-			Name:          displayName,
-			ContainerName: name,
-			Driver:        driver,
-			Host:          host,
-			Port:          port,
-			User:          user,
-			Password:      password,
-			AltUser:       altUser,
-			AltPassword:   altPassword,
-			Database:      dbname,
-			Status:        normalizeStatus(c.State),
-			Image:         c.Image,
-			Networks:      netNames,
-			SharedNetwork: sharedNet,
-			HasPublicPort: hasPublicPort,
-		})
+			id := c.ID
+			if len(id) > 12 {
+				id = id[:12]
+			}
+
+			mu.Lock()
+			databases = append(databases, DiscoveredDatabase{
+				ID:            id,
+				Name:          displayName,
+				ContainerName: name,
+				Driver:        driver,
+				Host:          host,
+				Port:          port,
+				User:          user,
+				Password:      password,
+				AltUser:       altUser,
+				AltPassword:   altPassword,
+				Database:      dbname,
+				Status:        normalizeStatus(c.State),
+				Image:         c.Image,
+				Networks:      netNames,
+				SharedNetwork: sharedNet,
+				HasPublicPort: hasPublicPort,
+			})
+			mu.Unlock()
+		}()
 	}
+
+	wg.Wait()
 
 	return databases, nil
 }

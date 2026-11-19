@@ -14,23 +14,34 @@ import {
   Edit2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useDatabases, useTables, useRenameDatabaseMutation } from "@/hooks/use-database";
+import {
+  useDatabases,
+  useDatabaseCatalog,
+  useTables,
+  useRenameDatabaseMutation,
+} from "@/hooks/use-database";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { ContextMenu } from "@/components/ui/ContextMenu";
-import { buildDatabaseTree, type TreeNode } from "./tree-utils";
+import {
+  buildDatabaseTree,
+  type TreeNode,
+  type TreeDatabaseInput,
+} from "./tree-utils";
 
 interface DatabaseTreeProps {
   selectedDb: string | null;
   selectedTable: string | null;
+  activeSourceId?: string;
   serverLabel?: string;
   connected?: boolean;
-  onSelectDb: (db: string) => void;
-  onSelectTable: (db: string, table: string) => void;
-  onCreateTable: (db: string) => void;
-  onCloneDatabase: (db: string) => void;
+  onSelectDb: (db: string, sourceId?: string) => void;
+  onSelectTable: (db: string, table: string, sourceId?: string) => void;
+  onCreateTable: (db: string, sourceId?: string) => void;
+  onCloneDatabase: (db: string, sourceId?: string) => void;
+  onRenameDatabase?: (db: string, sourceId?: string) => void;
   onCreateDatabase: () => void;
-  onDeleteDatabase: (db: string) => void;
+  onDeleteDatabase: (db: string, sourceId?: string) => void;
 }
 
 function TableNode({
@@ -77,33 +88,26 @@ const ITEMS_PER_PAGE = 50;
 
 function DatabaseParamsNode({
   dbName,
-  isSelected,  
+  sourceId,
+  isSelected,
   selectedTable,
   onSelectTable,
   onCreateTable,
-  filter,
 }: {
   dbName: string;
+  sourceId?: string;
   isSelected: boolean;
   selectedTable: string | null;
   onSelectTable: (table: string) => void;
   onCreateTable: () => void;
-  filter: string;
 }) {
   // This component handles the "Tables" listing for a specific database
   const [localFilter, setLocalFilter] = useState("");
   const [page, setPage] = useState(1);
 
-  // Combine global filter (from top search) and local filter
-  const effectiveFilter = localFilter || filter;
+  const effectiveFilter = localFilter;
 
-  // Since this component is only rendered when the parent node is expanded (or it's a root match),
-  // we assume we should fetch.
-  // Optimization: If we want to defer fetching until expanded, the Parent controls that.
-  // The Parent only renders this <DatabaseParamsNode> when it is expanded.
-  // So we can always fetch here.
-
-  const { data: tables = [], isLoading, isError, error } = useTables(dbName);
+  const { data: tables = [], isLoading, isError, error } = useTables(dbName, sourceId);
 
   const filteredTables = (tables || []).filter((t) =>
     t.name?.toLowerCase().includes(effectiveFilter.toLowerCase()),
@@ -285,6 +289,7 @@ function RecursiveTreeNode({
   level = 0,
   selectedDb,
   selectedTable,
+  activeSourceId,
   onSelectDb,
   onSelectTable,
   onCreateTable,
@@ -296,62 +301,66 @@ function RecursiveTreeNode({
   level?: number;
   selectedDb: string | null;
   selectedTable: string | null;
-  onSelectDb: (db: string) => void;
-  onSelectTable: (db: string, table: string) => void;
-  onCreateTable: (db: string) => void;
-  onCloneDatabase: (db: string) => void;
-  onContextMenu: (e: React.MouseEvent, dbName: string) => void;
+  activeSourceId?: string;
+  onSelectDb: (db: string, sourceId?: string) => void;
+  onSelectTable: (db: string, table: string, sourceId?: string) => void;
+  onCreateTable: (db: string, sourceId?: string) => void;
+  onCloneDatabase: (db: string, sourceId?: string) => void;
+  onContextMenu: (e: React.MouseEvent, dbName: string, sourceId?: string) => void;
   filter: string;
 }) {
   const [expanded, setExpanded] = useState(false);
 
-  // If the node corresponds to the currently selected DB, let's auto-expand the tree path?
-  // Only if we haven't manually toggled it? For now, let's keep it simple.
-
   const hasChildren = Object.keys(node.children).length > 0;
 
-  // If selectedDB starts with this node's fullName + '_', we should probably be expanded
-  const isSelectedPath = selectedDb === node.fullName;
-  const isParentOfSelected = selectedDb?.startsWith(node.fullName + "_");
-  const isMatchingFilter = !!filter && node.fullName.includes(filter);
+  const matchesSource =
+    !node.sourceId || !activeSourceId || node.sourceId === activeSourceId;
+  const isSelectedPath = node.isDatabase && selectedDb === node.fullName && matchesSource;
+  const isParentOfSelected =
+    !!selectedDb &&
+    ((!node.isDatabase && selectedDb === node.fullName) ||
+      selectedDb.startsWith(node.fullName + "_"));
 
-  // Auto-expand if we are in the path of the selected DB or filtering matches
-  // Use effect so user can collapse it manually afterwards
+  // Auto-expand grouped folders when filtering or when a child DB is selected
   useEffect(() => {
-    if (isParentOfSelected || isMatchingFilter) {
+    if (isParentOfSelected || (!!filter && !node.isDatabase && hasChildren)) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setExpanded(true);
     }
-  }, [isParentOfSelected, isMatchingFilter]);
+  }, [isParentOfSelected, filter, node.isDatabase, hasChildren]);
 
   const isExpanded = expanded;
 
-  // Toggle handler
   const toggle = (e: React.MouseEvent) => {
     e.stopPropagation();
     setExpanded(!expanded);
-    // If it is a real database, selecting it also
-    if (node.isDatabase && !expanded) {
-      onSelectDb(node.fullName);
-    }
   };
 
   const handleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (node.isDatabase) {
-      onSelectDb(node.fullName);
+      onSelectDb(node.fullName, node.sourceId);
 
-      // If already expanded and selected, toggle close
-      if (expanded && selectedDb === node.fullName) {
+      if (expanded && isSelectedPath) {
         setExpanded(false);
       } else if (!expanded) {
         setExpanded(true);
       }
     } else {
-      // Just a group folder, toggle it
       setExpanded(!expanded);
     }
   };
+
+  const tooltip = node.isDatabase
+    ? [
+        node.fullName,
+        node.sourceName,
+        node.driver ? node.driver.toUpperCase() : null,
+        node.tables !== undefined ? `${node.tables} tables` : null,
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : node.fullName;
 
   return (
     <div style={{ marginLeft: level > 0 ? "12px" : "0px" }}>
@@ -362,10 +371,11 @@ function RecursiveTreeNode({
             ? "bg-[var(--muted)] text-[var(--foreground)] font-medium"
             : "text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--muted)]/30",
         )}
+        title={tooltip}
         onClick={handleClick}
         onContextMenu={(e) => {
           if (node.isDatabase) {
-            onContextMenu(e, node.fullName);
+            onContextMenu(e, node.fullName, node.sourceId);
           }
         }}
       >
@@ -374,7 +384,6 @@ function RecursiveTreeNode({
           onClick={toggle}
           className="p-0.5 rounded hover:bg-[var(--muted)]/80 text-[var(--muted-foreground)]"
         >
-          {/* Always show chevron if functionality exists (children or tables) */}
           {(hasChildren || node.isDatabase) &&
             (isExpanded ? (
               <ChevronDown size={14} />
@@ -391,24 +400,39 @@ function RecursiveTreeNode({
           <DatabaseIcon
             size={14}
             className={cn(
-              "text-blue-400",
+              "shrink-0",
+              node.driver === "postgres" ? "text-indigo-400" : "text-blue-400",
               isSelectedPath && "fill-blue-400/20",
             )}
           />
         ) : (
-          <Folder size={14} className="text-yellow-500/80" />
+          <Folder size={14} className="text-yellow-500/80 shrink-0" />
         )}
 
         <span className="flex-1 truncate">{node.name}</span>
+
+        {/* Table count badge (hidden on hover to make room for clone action) */}
+        {node.isDatabase && node.tables !== undefined && (
+          <span className="text-[10px] font-mono text-[var(--muted-foreground)]/80 group-hover:hidden shrink-0">
+            {node.tables}
+          </span>
+        )}
+
+        {/* Group child count badge */}
+        {!node.isDatabase && hasChildren && (
+          <span className="text-[10px] font-mono text-[var(--muted-foreground)]/70 shrink-0">
+            {Object.keys(node.children).length}
+          </span>
+        )}
 
         {/* Clone Action */}
         {node.isDatabase && (
           <button
             onClick={(e) => {
               e.stopPropagation();
-              onCloneDatabase(node.fullName);
+              onCloneDatabase(node.fullName, node.sourceId);
             }}
-            className="p-1 text-[var(--muted-foreground)] hover:text-[var(--primary)] opacity-0 group-hover:opacity-100 transition-opacity"
+            className="hidden group-hover:inline-flex p-1 text-[var(--muted-foreground)] hover:text-[var(--primary)] transition-opacity"
             title="Clone Database"
           >
             <Copy size={12} />
@@ -418,30 +442,19 @@ function RecursiveTreeNode({
 
       {isExpanded && (
         <div>
-          {/* If this node represents a real database, show its tables */}
-          {node.isDatabase && (
-            <DatabaseParamsNode
-              dbName={node.fullName}
-              isSelected={isSelectedPath}
-              selectedTable={selectedTable}
-              onSelectTable={(t) => onSelectTable(node.fullName, t)}
-              onCreateTable={() => onCreateTable(node.fullName)}
-              filter={filter}
-            />
-          )}
-
-          {/* Render children groups/databases */}
+          {/* Render children groups/databases first so sibling prefix DBs are never buried under tables */}
           {hasChildren && (
             <div className="border-l border-[var(--border)] ml-2 pl-1">
               {Object.values(node.children)
-                .sort((a, b) => a.name.localeCompare(b.name)) // Sort children A-Z
+                .sort((a, b) => a.name.localeCompare(b.name))
                 .map((child) => (
                   <RecursiveTreeNode
-                    key={child.fullName}
+                    key={child.key}
                     node={child}
-                    level={0} // We handle indentation via border-l and padding above
+                    level={0}
                     selectedDb={selectedDb}
                     selectedTable={selectedTable}
+                    activeSourceId={activeSourceId}
                     onSelectDb={onSelectDb}
                     onSelectTable={onSelectTable}
                     onCreateTable={onCreateTable}
@@ -452,6 +465,18 @@ function RecursiveTreeNode({
                 ))}
             </div>
           )}
+
+          {/* If this node represents a real database, show its tables */}
+          {node.isDatabase && (
+            <DatabaseParamsNode
+              dbName={node.fullName}
+              sourceId={node.sourceId}
+              isSelected={isSelectedPath}
+              selectedTable={selectedTable}
+              onSelectTable={(t) => onSelectTable(node.fullName, t, node.sourceId)}
+              onCreateTable={() => onCreateTable(node.fullName, node.sourceId)}
+            />
+          )}
         </div>
       )}
     </div>
@@ -461,49 +486,104 @@ function RecursiveTreeNode({
 export function DatabaseTree({
   selectedDb,
   selectedTable,
+  activeSourceId,
   serverLabel,
   connected,
   onSelectDb,
   onSelectTable,
   onCreateTable,
   onCloneDatabase,
+  onRenameDatabase,
   onCreateDatabase,
   onDeleteDatabase,
 }: DatabaseTreeProps) {
-  const { data: databases = [], isLoading, isError, error, refetch } = useDatabases();
+  const {
+    data: catalog = [],
+    isLoading: catalogLoading,
+    isError: catalogError,
+    error: catalogErrObj,
+    refetch: refetchCatalog,
+  } = useDatabaseCatalog();
+  const {
+    data: activeDatabases = [],
+    isLoading: activeLoading,
+    isError: activeError,
+    error: activeErrObj,
+    refetch: refetchActive,
+  } = useDatabases();
   const renameMutation = useRenameDatabaseMutation();
   const [searchTerm, setSearchTerm] = useState("");
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
-    dbName: string | null; // null means background
+    dbName: string | null;
+    sourceId?: string;
   } | null>(null);
 
-  const searchFilter = searchTerm.toLowerCase();
+  const allDatabases: TreeDatabaseInput[] = useMemo(() => {
+    if (catalog.length > 0) {
+      return catalog;
+    }
+    if (catalogLoading) {
+      return [];
+    }
+    return activeDatabases.map((db) => ({
+      name: db.name,
+      tables: db.tables,
+      source_id: activeSourceId,
+      source_name: serverLabel,
+    }));
+  }, [catalog, catalogLoading, activeDatabases, activeSourceId, serverLabel]);
+
+  const isLoading = (catalogLoading && catalog.length === 0) || (catalogError && activeLoading);
+  const isError = catalog.length === 0 && activeDatabases.length === 0 && (catalogError || activeError);
+  const error = catalogErrObj || activeErrObj;
+
+  const searchFilter = searchTerm.trim().toLowerCase();
 
   const filteredDatabases = useMemo(() => {
-    if (!searchFilter) return databases;
-    return databases.filter((db) =>
-      db.name.toLowerCase().includes(searchFilter),
+    if (!searchFilter) return allDatabases;
+    return allDatabases.filter(
+      (db) =>
+        db.name.toLowerCase().includes(searchFilter) ||
+        (db.source_name || "").toLowerCase().includes(searchFilter),
     );
-  }, [databases, searchFilter]);
+  }, [allDatabases, searchFilter]);
 
   const tree = useMemo(
     () => buildDatabaseTree(filteredDatabases),
     [filteredDatabases],
   );
 
-  const handleContextMenu = (e: React.MouseEvent, dbName: string | null) => {
-    e.preventDefault();
-    setContextMenu({ x: e.clientX, y: e.clientY, dbName });
+  const handleRefresh = () => {
+    refetchCatalog();
+    refetchActive();
   };
 
-  const handleRename = (oldName: string) => {
+  const handleContextMenu = (
+    e: React.MouseEvent,
+    dbName: string | null,
+    sourceId?: string,
+  ) => {
+    e.preventDefault();
+    setContextMenu({ x: e.clientX, y: e.clientY, dbName, sourceId });
+  };
+
+  const handleRename = (oldName: string, sourceId?: string) => {
+    if (onRenameDatabase) {
+      onRenameDatabase(oldName, sourceId);
+      return;
+    }
     const newName = prompt("Enter new database name:", oldName);
     if (newName && newName !== oldName) {
       renameMutation.mutate({ oldName, newName });
     }
   };
+
+  const headerTitle =
+    allDatabases.length > 0
+      ? `Databases (${allDatabases.length})`
+      : serverLabel || "Databases";
 
   return (
     <div
@@ -515,16 +595,22 @@ export function DatabaseTree({
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 text-sm font-semibold min-w-0">
             <Server size={16} className="text-purple-400 shrink-0" />
-            <span className="truncate" title={serverLabel || "Localhost"}>
-              {serverLabel || "Localhost"}
+            <span className="truncate" title={serverLabel || headerTitle}>
+              {headerTitle}
             </span>
             {connected !== undefined && (
               <span
                 className={cn(
                   "h-2 w-2 rounded-full shrink-0",
-                  connected ? "bg-emerald-500" : "bg-red-500",
+                  connected || allDatabases.length > 0
+                    ? "bg-emerald-500"
+                    : "bg-red-500",
                 )}
-                title={connected ? "Connected" : "Disconnected"}
+                title={
+                  connected || allDatabases.length > 0
+                    ? "Connected"
+                    : "Disconnected"
+                }
               />
             )}
           </div>
@@ -542,8 +628,8 @@ export function DatabaseTree({
               variant="ghost"
               size="sm"
               className="h-6 w-6 p-0"
-              onClick={() => refetch()}
-              title="Refresh"
+              onClick={handleRefresh}
+              title="Refresh All Databases"
             >
               <RefreshCw size={12} />
             </Button>
@@ -555,7 +641,7 @@ export function DatabaseTree({
             className="absolute left-2 top-2.5 text-[var(--muted-foreground)]"
           />
           <Input
-            placeholder="Search..."
+            placeholder="Search databases or containers..."
             className="h-8 pl-8 bg-[var(--background)]"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
@@ -573,11 +659,12 @@ export function DatabaseTree({
 
         {tree.map((node) => (
           <RecursiveTreeNode
-            key={node.fullName}
+            key={node.key}
             node={node}
             level={0}
             selectedDb={selectedDb}
             selectedTable={selectedTable}
+            activeSourceId={activeSourceId}
             onSelectDb={onSelectDb}
             onSelectTable={onSelectTable}
             onCreateTable={onCreateTable}
@@ -610,28 +697,33 @@ export function DatabaseTree({
               ? [
                   {
                     label: "Open",
-                    onClick: () => onSelectDb(contextMenu.dbName!),
+                    onClick: () =>
+                      onSelectDb(contextMenu.dbName!, contextMenu.sourceId),
                   },
                   {
                     label: "New Table",
                     icon: <Plus size={14} />,
-                    onClick: () => onCreateTable(contextMenu.dbName!),
+                    onClick: () =>
+                      onCreateTable(contextMenu.dbName!, contextMenu.sourceId),
                   },
                   {
                     label: "Clone Database",
                     icon: <Copy size={14} />,
-                    onClick: () => onCloneDatabase(contextMenu.dbName!),
+                    onClick: () =>
+                      onCloneDatabase(contextMenu.dbName!, contextMenu.sourceId),
                   },
                   {
                     label: "Rename Database",
                     icon: <Edit2 size={14} />,
-                    onClick: () => handleRename(contextMenu.dbName!),
+                    onClick: () =>
+                      handleRename(contextMenu.dbName!, contextMenu.sourceId),
                   },
                   {
                     label: "Delete Database",
                     icon: <Trash2 size={14} />,
                     variant: "danger",
-                    onClick: () => onDeleteDatabase(contextMenu.dbName!),
+                    onClick: () =>
+                      onDeleteDatabase(contextMenu.dbName!, contextMenu.sourceId),
                   },
                 ]
               : [
@@ -643,7 +735,7 @@ export function DatabaseTree({
                   {
                     label: "Refresh List",
                     icon: <RefreshCw size={14} />,
-                    onClick: refetch,
+                    onClick: handleRefresh,
                   },
                 ]
           }

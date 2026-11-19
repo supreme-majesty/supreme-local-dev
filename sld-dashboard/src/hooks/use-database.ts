@@ -1,4 +1,9 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  useQuery,
+  useMutation,
+  useQueryClient,
+  keepPreviousData,
+} from "@tanstack/react-query";
 import { api } from "@/api/daemon";
 import { useAppStore } from "@/stores/useAppStore";
 
@@ -6,7 +11,9 @@ export const dbKeys = {
   all: ["db"] as const,
   status: () => [...dbKeys.all, "status"] as const,
   list: () => [...dbKeys.all, "list"] as const,
-  tables: (db: string) => [...dbKeys.all, "tables", db] as const,
+  catalog: () => [...dbKeys.all, "catalog"] as const,
+  tables: (db: string, sourceId?: string) =>
+    [...dbKeys.all, "tables", sourceId || "active", db] as const,
   columns: (db: string, table: string) =>
     [...dbKeys.all, "columns", db, table] as const,
   indexes: (db: string, table: string) =>
@@ -44,6 +51,16 @@ export function useDatabases() {
   });
 }
 
+export function useDatabaseCatalog() {
+  return useQuery({
+    queryKey: dbKeys.catalog(),
+    queryFn: () => api.getDatabaseCatalog(),
+    refetchInterval: 15000,
+    placeholderData: keepPreviousData,
+    retry: 1,
+  });
+}
+
 export function useDatabaseStatus() {
   return useQuery({
     queryKey: dbKeys.status(),
@@ -77,8 +94,8 @@ export function useSetDatabaseTargetMutation() {
       password?: string;
     }) => api.setDatabaseTarget(source),
     onSuccess: (data) => {
-      // Clear cached tables/columns/data from previous target before refetching
-      queryClient.removeQueries({ queryKey: [...dbKeys.all, "tables"] });
+      // Clear active-scoped tables/columns/data from previous target before refetching
+      queryClient.removeQueries({ queryKey: [...dbKeys.all, "tables", "active"] });
       queryClient.removeQueries({ queryKey: [...dbKeys.all, "columns"] });
       queryClient.removeQueries({ queryKey: [...dbKeys.all, "data"] });
       queryClient.invalidateQueries({ queryKey: dbKeys.all });
@@ -123,10 +140,10 @@ export function useSetDatabaseDriverMutation() {
   });
 }
 
-export function useTables(database: string | null) {
+export function useTables(database: string | null, sourceId?: string) {
   return useQuery({
-    queryKey: dbKeys.tables(database || ""),
-    queryFn: () => api.getTables(database!),
+    queryKey: dbKeys.tables(database || "", sourceId),
+    queryFn: () => api.getTables(database!, sourceId),
     enabled: !!database,
   });
 }
@@ -139,6 +156,7 @@ export function useCreateDatabaseMutation() {
     mutationFn: (name: string) => api.createDatabase(name),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: dbKeys.list() });
+      queryClient.invalidateQueries({ queryKey: dbKeys.catalog() });
       addToast({ type: "success", title: "Database created" });
     },
     onError: (err: Error) => {
@@ -159,6 +177,7 @@ export function useDeleteDatabaseMutation() {
     mutationFn: (name: string) => api.deleteDatabase(name),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: dbKeys.list() });
+      queryClient.invalidateQueries({ queryKey: dbKeys.catalog() });
       addToast({ type: "success", title: "Database deleted" });
     },
     onError: (err: Error) => {
@@ -180,6 +199,7 @@ export function useRenameDatabaseMutation() {
       api.renameDatabase(vars.oldName, vars.newName),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: dbKeys.list() });
+      queryClient.invalidateQueries({ queryKey: dbKeys.catalog() });
       addToast({ type: "success", title: "Database renamed" });
     },
     onError: (err: Error) => {
@@ -285,11 +305,13 @@ export function useCreateSnapshotMutation() {
 }
 
 export function useRestoreSnapshotMutation() {
+  const queryClient = useQueryClient();
   const addToast = useAppStore((s) => s.addToast);
 
   return useMutation({
     mutationFn: (filename: string) => api.restoreSnapshot(filename),
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: dbKeys.all });
       addToast({ type: "success", title: "Database restored" });
     },
     onError: (err: Error) => {
@@ -399,6 +421,7 @@ export function useCloneDatabaseMutation() {
       }),
     onSuccess: (_, vars) => {
       queryClient.invalidateQueries({ queryKey: dbKeys.list() });
+      queryClient.invalidateQueries({ queryKey: dbKeys.catalog() });
       addToast({ 
         type: "success", 
         title: "Database cloned", 

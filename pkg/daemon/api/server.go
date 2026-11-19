@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/supreme-majesty/supreme-local-dev/pkg/assets"
@@ -62,6 +65,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/db/status", s.handleDBStatus)
 	mux.HandleFunc("/api/db/driver", s.handleDBDriver)
 	mux.HandleFunc("/api/db/sources", s.handleDBSources)
+	mux.HandleFunc("/api/db/catalog", s.handleDBCatalog)
 	mux.HandleFunc("/api/db/target", s.handleDBTarget)
 	mux.HandleFunc("/api/db/databases", s.handleDBDatabases)
 	mux.HandleFunc("/api/db/create", s.handleDBCreate)
@@ -169,11 +173,19 @@ func (s *Server) Start() error {
 			defer f.Close()
 			stat, _ := f.Stat()
 			if !stat.IsDir() {
+				if strings.HasPrefix(path, "/assets/") {
+					w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+				} else {
+					w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+					w.Header().Set("Pragma", "no-cache")
+				}
 				fileServer.ServeHTTP(w, r)
 				return
 			}
 		}
 
+		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+		w.Header().Set("Pragma", "no-cache")
 		r.URL.Path = "/"
 		fileServer.ServeHTTP(w, r)
 	})
@@ -1046,6 +1058,20 @@ func (s *Server) handleDBSources(w http.ResponseWriter, r *http.Request) {
 					stopped = append(stopped, db)
 				}
 			}
+			isTestDB := func(db services.DiscoveredDatabase) bool {
+				low := strings.ToLower(db.ContainerName + " " + db.Database)
+				return strings.Contains(low, "_test") || strings.Contains(low, "-test") || strings.HasSuffix(low, "test")
+			}
+			sort.Slice(running, func(i, j int) bool {
+				ti, tj := isTestDB(running[i]), isTestDB(running[j])
+				if ti != tj {
+					return !ti
+				}
+				return strings.ToLower(running[i].Name) < strings.ToLower(running[j].Name)
+			})
+			sort.Slice(stopped, func(i, j int) bool {
+				return strings.ToLower(stopped[i].Name) < strings.ToLower(stopped[j].Name)
+			})
 			for _, db := range append(running, stopped...) {
 				sources = append(sources, map[string]interface{}{
 					"id":             db.ID,
@@ -1204,6 +1230,175 @@ func (s *Server) handleDBDatabases(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, summaries, 200)
 }
 
+// handleDBCatalog aggregates user databases across the default server and all running Docker DB containers
+// so the sidebar and overview can list every dockerized database together with grouped aliases.
+func (s *Server) handleDBCatalog(w http.ResponseWriter, r *http.Request) {
+	d, _ := daemon.GetClient()
+	activeTarget := d.DatabaseService.ActiveTarget()
+
+	var (
+		mu      sync.Mutex
+		wg      sync.WaitGroup
+		catalog = make([]services.CatalogDatabase, 0)
+	)
+
+	// Discover Docker DB containers first so we can query all running containers concurrently
+	var discovered []services.DiscoveredDatabase
+	if d.DockerDiscovery != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		dbs, err := d.DockerDiscovery.DiscoverDatabaseContainers(ctx)
+		cancel()
+		if err == nil {
+			discovered = dbs
+		}
+	}
+
+	// Track whether any running Docker DB already binds host 127.0.0.1:<defaultPort> to avoid duplicating "default"
+	defaultDriver := d.DatabaseService.DriverName()
+	defaultHost := services.MySQLHost()
+	defaultPort := services.MySQLPort()
+	defaultCfg := services.ConnectionConfig{}
+	if defaultDriver == "postgres" {
+		defaultHost = services.PostgresHost()
+		defaultPort = services.PostgresPort()
+	}
+
+	dockerOwnsDefaultPort := false
+	for _, db := range discovered {
+		if db.Status == "running" && db.Host == "127.0.0.1" && db.Port == defaultPort && defaultHost == "127.0.0.1" {
+			dockerOwnsDefaultPort = true
+			break
+		}
+	}
+
+	// 1. Default configured server (if reachable and not shadowed by a discovered host-port container)
+	if !dockerOwnsDefaultPort {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// Fast pre-check so an offline/missing default host doesn't stall catalog discovery for several seconds
+			if defaultHost != "" && defaultPort != "" {
+				conn, err := net.DialTimeout("tcp", net.JoinHostPort(defaultHost, defaultPort), 500*time.Millisecond)
+				if err != nil {
+					return
+				}
+				_ = conn.Close()
+			}
+			drv, err := d.DatabaseService.GetOrConnectSource("default", defaultDriver, defaultCfg, "", "")
+			if err != nil {
+				return
+			}
+			summaries, err := services.ListDatabaseSummariesWithDriver(drv)
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			for _, sum := range summaries {
+				catalog = append(catalog, services.CatalogDatabase{
+					Name:       sum.Name,
+					Tables:     sum.Tables,
+					SourceID:   "default",
+					SourceName: fmt.Sprintf("Default (%s)", strings.ToUpper(defaultDriver)),
+					SourceType: "default",
+					Driver:     defaultDriver,
+					Host:       defaultHost,
+					Port:       defaultPort,
+					Status:     "running",
+					IsActive:   activeTarget == "default",
+				})
+			}
+			mu.Unlock()
+		}()
+	}
+
+	// 2. All running Docker database containers queried concurrently
+	for _, db := range discovered {
+		if db.Status != "running" {
+			continue
+		}
+		target := db
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			host, port := target.Host, target.Port
+			if d.DockerDiscovery != nil {
+				netCtx, netCancel := context.WithTimeout(context.Background(), 3*time.Second)
+				resolvedHost, resolvedPort, _ := d.DockerDiscovery.EnsureNetworkAccess(netCtx, &target)
+				netCancel()
+				if resolvedHost != "" {
+					host = resolvedHost
+				}
+				if resolvedPort != "" {
+					port = resolvedPort
+				}
+			}
+
+			cfg := services.ConnectionConfig{
+				Host:     host,
+				Port:     port,
+				User:     target.User,
+				Password: target.Password,
+			}
+			drv, err := d.DatabaseService.GetOrConnectSource(target.ID, target.Driver, cfg, target.AltUser, target.AltPassword)
+			if err != nil {
+				// Fallback to the container's declared env database name if live query failed
+				if target.Database != "" && !services.IsSystemDatabase(target.Database) {
+					mu.Lock()
+					catalog = append(catalog, services.CatalogDatabase{
+						Name:          target.Database,
+						Tables:        0,
+						SourceID:      target.ID,
+						SourceName:    target.Name,
+						SourceType:    "docker",
+						ContainerName: target.ContainerName,
+						Driver:        target.Driver,
+						Host:          host,
+						Port:          port,
+						Status:        target.Status,
+						IsActive:      activeTarget == target.ID,
+					})
+					mu.Unlock()
+				}
+				return
+			}
+
+			summaries, err := services.ListDatabaseSummariesWithDriver(drv)
+			if err != nil {
+				return
+			}
+
+			mu.Lock()
+			for _, sum := range summaries {
+				catalog = append(catalog, services.CatalogDatabase{
+					Name:          sum.Name,
+					Tables:        sum.Tables,
+					SourceID:      target.ID,
+					SourceName:    target.Name,
+					SourceType:    "docker",
+					ContainerName: target.ContainerName,
+					Driver:        target.Driver,
+					Host:          host,
+					Port:          port,
+					Status:        target.Status,
+					IsActive:      activeTarget == target.ID,
+				})
+			}
+			mu.Unlock()
+		}()
+	}
+
+	wg.Wait()
+
+	sort.Slice(catalog, func(i, j int) bool {
+		if catalog[i].Name != catalog[j].Name {
+			return catalog[i].Name < catalog[j].Name
+		}
+		return catalog[i].SourceName < catalog[j].SourceName
+	})
+
+	jsonResponse(w, catalog, 200)
+}
+
 func (s *Server) handleDBTables(w http.ResponseWriter, r *http.Request) {
 	db := r.URL.Query().Get("db")
 	if db == "" {
@@ -1212,7 +1407,56 @@ func (s *Server) handleDBTables(w http.ResponseWriter, r *http.Request) {
 	}
 
 	d, _ := daemon.GetClient()
-	tables, err := d.DatabaseService.ListTables(db)
+	sourceID := r.URL.Query().Get("source")
+
+	var (
+		tables []services.TableInfo
+		err    error
+	)
+
+	if sourceID != "" && sourceID != d.DatabaseService.ActiveTarget() {
+		if sourceID == "default" {
+			drv, cErr := d.DatabaseService.GetOrConnectSource("default", d.DatabaseService.DriverName(), services.ConnectionConfig{}, "", "")
+			if cErr != nil {
+				err = cErr
+			} else {
+				tables, err = drv.ListTables(db)
+			}
+		} else if d.DockerDiscovery != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			found, fErr := d.DockerDiscovery.FindDatabase(ctx, sourceID)
+			cancel()
+			if fErr != nil {
+				err = fErr
+			} else {
+				netCtx, netCancel := context.WithTimeout(context.Background(), 3*time.Second)
+				host, port, _ := d.DockerDiscovery.EnsureNetworkAccess(netCtx, found)
+				netCancel()
+				if host == "" {
+					host = found.Host
+				}
+				if port == "" {
+					port = found.Port
+				}
+				drv, cErr := d.DatabaseService.GetOrConnectSource(found.ID, found.Driver, services.ConnectionConfig{
+					Host:     host,
+					Port:     port,
+					User:     found.User,
+					Password: found.Password,
+				}, found.AltUser, found.AltPassword)
+				if cErr != nil {
+					err = cErr
+				} else {
+					tables, err = drv.ListTables(db)
+				}
+			}
+		} else {
+			tables, err = d.DatabaseService.ListTables(db)
+		}
+	} else {
+		tables, err = d.DatabaseService.ListTables(db)
+	}
+
 	if err != nil {
 		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
 		return
