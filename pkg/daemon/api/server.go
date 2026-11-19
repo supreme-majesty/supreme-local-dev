@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/supreme-majesty/supreme-local-dev/pkg/assets"
 	"github.com/supreme-majesty/supreme-local-dev/pkg/daemon"
@@ -59,6 +61,8 @@ func (s *Server) Start() error {
 	// Database Manager
 	mux.HandleFunc("/api/db/status", s.handleDBStatus)
 	mux.HandleFunc("/api/db/driver", s.handleDBDriver)
+	mux.HandleFunc("/api/db/sources", s.handleDBSources)
+	mux.HandleFunc("/api/db/target", s.handleDBTarget)
 	mux.HandleFunc("/api/db/databases", s.handleDBDatabases)
 	mux.HandleFunc("/api/db/create", s.handleDBCreate)
 	mux.HandleFunc("/api/db/delete", s.handleDBDelete)
@@ -76,6 +80,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/db/transaction", s.handleDBTransaction)
 	mux.HandleFunc("/api/db/import/analyze", s.handleDBImportAnalyze)
 	mux.HandleFunc("/api/db/import/execute", s.handleDBImportExecute)
+	mux.HandleFunc("/api/db/import/smart", s.handleDBImportSmart)
 	mux.HandleFunc("/api/db/seed", s.handleDBSeed)
 	mux.HandleFunc("/api/db/stats", s.handleDBStats)
 	mux.HandleFunc("/api/db/explain", s.handleDBExplain)
@@ -99,7 +104,6 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/db/docs", s.handleDBDocs)
 	mux.HandleFunc("/api/db/snippets", s.handleDBSnippets)
 	mux.HandleFunc("/api/db/audit", s.handleDBAudit)
-	mux.HandleFunc("/api/db/import/smart", s.handleDBSmartImport)
 	mux.HandleFunc("/api/db/profiles", s.handleDBProfiles)
 	mux.HandleFunc("/api/db/webhooks", s.handleDBWebhooks)
 	mux.HandleFunc("/api/db/maintenance/schedule", s.handleDBMaintenanceSchedule)
@@ -966,28 +970,132 @@ func (s *Server) handleDBStatus(w http.ResponseWriter, r *http.Request) {
 	// Check connection status
 	err := d.DatabaseService.Connect()
 
-	var host, port, user string
-	if d.DatabaseService.DriverName() == "postgres" {
-		host = services.PostgresHost()
-		port = services.PostgresPort()
-		user = services.PostgresUser()
-	} else {
-		host = services.MySQLHost()
-		port = services.MySQLPort()
-		user = services.MySQLUser()
+	cfg := d.DatabaseService.ActiveConfig()
+	host := cfg.Host
+	port := cfg.Port
+	user := cfg.User
+
+	if host == "" {
+		if d.DatabaseService.DriverName() == "postgres" {
+			host = services.PostgresHost()
+			port = services.PostgresPort()
+			user = services.PostgresUser()
+		} else {
+			host = services.MySQLHost()
+			port = services.MySQLPort()
+			user = services.MySQLUser()
+		}
 	}
 
 	status := map[string]interface{}{
-		"connected": err == nil,
-		"host":      host,
-		"port":      port,
-		"user":      user,
-		"driver":    d.DatabaseService.DriverName(),
+		"connected":     err == nil,
+		"host":          host,
+		"port":          port,
+		"user":          user,
+		"driver":        d.DatabaseService.DriverName(),
+		"active_target": d.DatabaseService.ActiveTarget(),
 	}
 	if err != nil {
 		status["error"] = err.Error()
 	}
 	jsonResponse(w, status, 200)
+}
+
+func (s *Server) handleDBSources(w http.ResponseWriter, r *http.Request) {
+	d, _ := daemon.GetClient()
+
+	sources := []map[string]interface{}{}
+
+	// 1. Default configured database (host / compose)
+	defaultDriver := d.DatabaseService.DriverName()
+	var defaultHost, defaultPort, defaultUser string
+	if defaultDriver == "postgres" {
+		defaultHost = services.PostgresHost()
+		defaultPort = services.PostgresPort()
+		defaultUser = services.PostgresUser()
+	} else {
+		defaultHost = services.MySQLHost()
+		defaultPort = services.MySQLPort()
+		defaultUser = services.MySQLUser()
+	}
+
+	sources = append(sources, map[string]interface{}{
+		"id":        "default",
+		"name":      fmt.Sprintf("Default (%s)", strings.ToUpper(defaultDriver)),
+		"driver":    defaultDriver,
+		"host":      defaultHost,
+		"port":      defaultPort,
+		"user":      defaultUser,
+		"is_active": d.DatabaseService.ActiveTarget() == "default",
+		"type":      "default",
+	})
+
+	// 2. Discover Docker database containers
+	if d.DockerDiscovery != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		discovered, err := d.DockerDiscovery.DiscoverDatabaseContainers(ctx)
+		cancel()
+		if err == nil {
+			for _, db := range discovered {
+				sources = append(sources, map[string]interface{}{
+					"id":        db.ID,
+					"name":      db.Name,
+					"driver":    db.Driver,
+					"host":      db.Host,
+					"port":      db.Port,
+					"user":      db.User,
+					"database":  db.Database,
+					"status":    db.Status,
+					"image":     db.Image,
+					"is_active": d.DatabaseService.ActiveTarget() == db.ID,
+					"type":      "docker",
+				})
+			}
+		}
+	}
+
+	jsonResponse(w, sources, 200)
+}
+
+func (s *Server) handleDBTarget(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		jsonResponse(w, ErrorResponse{Error: "POST method required"}, 405)
+		return
+	}
+
+	var req struct {
+		ID       string `json:"id"`
+		Driver   string `json:"driver"`
+		Host     string `json:"host"`
+		Port     string `json:"port"`
+		User     string `json:"user"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
+		return
+	}
+
+	d, _ := daemon.GetClient()
+	if req.ID == "" || req.ID == "default" {
+		_ = d.DatabaseService.SetDriver(req.Driver)
+		jsonResponse(w, SuccessResponse{Success: true, Message: "Switched to default database"}, 200)
+		return
+	}
+
+	cfg := services.ConnectionConfig{
+		Host:     req.Host,
+		Port:     req.Port,
+		User:     req.User,
+		Password: req.Password,
+	}
+
+	if err := d.DatabaseService.SetTarget(req.ID, req.Driver, cfg); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+		return
+	}
+
+	jsonResponse(w, SuccessResponse{Success: true, Message: fmt.Sprintf("Connected to database target %s", req.ID)}, 200)
 }
 
 func (s *Server) handleDBDriver(w http.ResponseWriter, r *http.Request) {
@@ -1020,6 +1128,9 @@ func (s *Server) handleDBDatabases(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
 		return
+	}
+	if summaries == nil {
+		summaries = make([]services.DatabaseSummary, 0)
 	}
 	jsonResponse(w, summaries, 200)
 }
@@ -1484,6 +1595,86 @@ func (s *Server) handleDBImportExecute(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResponse(w, SuccessResponse{Success: true}, 200)
+}
+
+func (s *Server) handleDBImportSmart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		return
+	}
+
+	var req struct {
+		Database string                   `json:"database"`
+		Table    string                   `json:"table"`
+		Mapping  map[string]string        `json:"mapping"`
+		Data     []map[string]interface{} `json:"data"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
+		return
+	}
+
+	if req.Database == "" || req.Table == "" {
+		jsonResponse(w, ErrorResponse{Error: "database and table are required"}, 400)
+		return
+	}
+
+	if len(req.Data) == 0 {
+		jsonResponse(w, ErrorResponse{Error: "no data to import"}, 400)
+		return
+	}
+
+	// Build target columns from mapping
+	var targetCols []string
+	for _, target := range req.Mapping {
+		if target != "" {
+			targetCols = append(targetCols, target)
+		}
+	}
+
+	if len(targetCols) == 0 {
+		jsonResponse(w, ErrorResponse{Error: "no column mappings provided"}, 400)
+		return
+	}
+
+	d, _ := daemon.GetClient()
+
+	// Convert inline data to batch rows
+	var batch [][]interface{}
+	for _, item := range req.Data {
+		row := make([]interface{}, len(targetCols))
+		for i, target := range targetCols {
+			// Find source key for this target
+			var sourceKey string
+			for s, t := range req.Mapping {
+				if t == target {
+					sourceKey = s
+					break
+				}
+			}
+			row[i] = item[sourceKey]
+		}
+		batch = append(batch, row)
+
+		// Batch insert every 1000 rows
+		if len(batch) >= 1000 {
+			if err := d.DatabaseService.BatchInsert(req.Database, req.Table, targetCols, batch, ""); err != nil {
+				jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+				return
+			}
+			batch = [][]interface{}{}
+		}
+	}
+
+	// Final batch
+	if len(batch) > 0 {
+		if err := d.DatabaseService.BatchInsert(req.Database, req.Table, targetCols, batch, ""); err != nil {
+			jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
+			return
+		}
+	}
+
+	jsonResponse(w, SuccessResponse{Success: true, Message: fmt.Sprintf("Imported %d rows", len(req.Data))}, 200)
 }
 
 func (s *Server) handleDBSeed(w http.ResponseWriter, r *http.Request) {
@@ -2351,25 +2542,6 @@ func (s *Server) handleDBAudit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, logs, 200)
-}
-
-func (s *Server) handleDBSmartImport(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Database string                   `json:"database"`
-		Table    string                   `json:"table"`
-		Mapping  map[string]string        `json:"mapping"`
-		Data     []map[string]interface{} `json:"data"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
-		return
-	}
-	d, _ := daemon.GetClient()
-	if err := d.DatabaseService.ImportData(req.Database, req.Table, req.Mapping, req.Data); err != nil {
-		jsonResponse(w, ErrorResponse{Error: err.Error()}, 500)
-		return
-	}
-	jsonResponse(w, map[string]string{"status": "success"}, 200)
 }
 
 func (s *Server) handleDBProfiles(w http.ResponseWriter, r *http.Request) {

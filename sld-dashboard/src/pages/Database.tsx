@@ -28,6 +28,7 @@ import {
   Clock,
   Copy,
   X,
+  Boxes,
 } from "lucide-react";
 
 import { formatBytes, formatDate } from "@/lib/utils";
@@ -68,6 +69,8 @@ import {
   useDeleteDatabaseMutation,
   useDatabaseStatus,
   useSetDatabaseDriverMutation,
+  useDatabaseSources,
+  useSetDatabaseTargetMutation,
 } from "@/hooks/use-database";
 import { api, type TableData, type QueryResult } from "@/api/daemon";
 
@@ -195,6 +198,9 @@ export default function Database() {
   const { data: databases } = useDatabases();
   const { data: dbStatus } = useDatabaseStatus();
   const setDriverMutation = useSetDatabaseDriverMutation();
+  const { data: rawSources } = useDatabaseSources();
+  const sources = useMemo(() => rawSources || [], [rawSources]);
+  const setTargetMutation = useSetDatabaseTargetMutation();
   const { data: tableSchema } = useTableColumns(selectedDB, selectedTable);
   const { data: snapshots } = useSnapshots();
 
@@ -1029,14 +1035,14 @@ $mysqli->close();
         <div className="h-14 border-b border-[var(--border)] bg-[var(--card)] flex items-center px-4 justify-between shrink-0">
           <div className="flex items-center gap-2 text-sm">
             <div
-              className="flex items-center gap-1 text-[var(--muted-foreground)] hover:text-[var(--foreground)] cursor-pointer"
+              className="flex items-center gap-1.5 text-[var(--muted-foreground)] hover:text-[var(--foreground)] cursor-pointer"
               onClick={() => {
                 setSelectedDB(null);
                 setSelectedTable(null);
               }}
             >
               <Server size={16} />
-              <span>127.0.0.1</span>
+              <span>{dbStatus?.host ? `${dbStatus.host}:${dbStatus.port || (dbDriver === 'postgres' ? '5432' : '3306')}` : "127.0.0.1"}</span>
             </div>
             {selectedDB && (
               <>
@@ -1068,6 +1074,41 @@ $mysqli->close();
           </div>
 
           <div className="flex gap-2 items-center">
+            {/* Target Selector (Default / Docker DB Containers) */}
+            {sources.length > 0 && (
+              <div className="flex items-center gap-1.5 bg-[var(--card)] border border-[var(--border)] rounded-md px-2.5 py-1 text-xs shadow-xs">
+                <Boxes size={14} className="text-[var(--primary)] shrink-0" />
+                <span className="text-[var(--muted-foreground)] font-medium text-[10px] uppercase tracking-wider">Target:</span>
+                <select
+                  value={sources.find((s) => s.is_active)?.id || "default"}
+                  onChange={(e) => {
+                    const targetId = e.target.value;
+                    const selectedSource = sources.find((s) => s.id === targetId);
+                    if (selectedSource) {
+                      setSelectedDB(null);
+                      setSelectedTable(null);
+                      setTargetMutation.mutate({
+                        id: selectedSource.id,
+                        driver: selectedSource.driver,
+                        host: selectedSource.host,
+                        port: selectedSource.port,
+                        user: selectedSource.user,
+                        password: selectedSource.password,
+                      });
+                    }
+                  }}
+                  className="bg-transparent text-[var(--foreground)] text-xs font-medium focus:outline-none cursor-pointer"
+                >
+                  {sources.map((src) => (
+                    <option key={src.id} value={src.id} className="bg-[var(--card)] text-[var(--foreground)]">
+                      {src.type === "docker" ? "🐳 " : "⚙️ "}
+                      {src.name} ({src.driver.toUpperCase()}{src.port ? ` :${src.port}` : ""})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             {/* Driver Selector */}
             <select
               value={dbDriver}

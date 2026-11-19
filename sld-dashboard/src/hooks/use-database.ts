@@ -50,6 +50,49 @@ export function useDatabaseStatus() {
   });
 }
 
+export function useDatabaseSources() {
+  return useQuery({
+    queryKey: ["db", "sources"],
+    queryFn: async () => {
+      const res = await api.getDatabaseSources();
+      return res || [];
+    },
+    refetchInterval: 10000,
+  });
+}
+
+export function useSetDatabaseTargetMutation() {
+  const queryClient = useQueryClient();
+  const addToast = useAppStore((s) => s.addToast);
+
+  return useMutation({
+    mutationFn: (source: {
+      id: string;
+      driver: string;
+      host: string;
+      port: string;
+      user?: string;
+      password?: string;
+    }) => api.setDatabaseTarget(source),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: dbKeys.all });
+      queryClient.invalidateQueries({ queryKey: ["db", "sources"] });
+      addToast({
+        type: "success",
+        title: "Target Database Connected",
+        description: data.message || "Connected successfully",
+      });
+    },
+    onError: (err: Error) => {
+      addToast({
+        type: "error",
+        title: "Connection Failed",
+        description: err.message,
+      });
+    },
+  });
+}
+
 export function useSetDatabaseDriverMutation() {
   const queryClient = useQueryClient();
   const addToast = useAppStore((s) => s.addToast);

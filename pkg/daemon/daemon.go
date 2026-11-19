@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"runtime"
 
@@ -40,6 +42,7 @@ type Daemon struct {
 	ArtisanService  *services.ArtisanService
 	HealerService   *services.HealerService
 	QueryWatcher    *services.QueryWatcher
+	DockerDiscovery *services.DockerDiscoveryService
 }
 
 var instance *Daemon
@@ -120,6 +123,7 @@ func Initialize() (*Daemon, error) {
 		EnvManager:      services.NewEnvManager(),
 		ArtisanService:  services.NewArtisanService(eventBus),
 		HealerService:   services.NewHealerService(eventBus),
+		DockerDiscovery: services.NewDockerDiscoveryService(),
 	}
 
 	// Start Healer
@@ -944,6 +948,40 @@ func (d *Daemon) GetSites() ([]Site, error) {
 			Tags:       tags,
 			Category:   category,
 		})
+	}
+
+	// 3. Add Docker Container Sites
+	if d.DockerDiscovery != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		dockerProjects, err := d.DockerDiscovery.DiscoverProjectContainers(ctx, tld)
+		cancel()
+		if err == nil && len(dockerProjects) > 0 {
+			existingNames := make(map[string]bool)
+			for _, s := range sites {
+				existingNames[s.Name] = true
+				existingNames[s.Domain] = true
+			}
+
+			for _, dp := range dockerProjects {
+				if existingNames[dp.Name] || existingNames[dp.Domain] {
+					continue
+				}
+				phpVer := dp.PHPVersion
+				if phpVer == "" {
+					phpVer = d.State.Data.PHPVersion
+				}
+				sites = append(sites, Site{
+					Name:       dp.Name,
+					Path:       dp.Path,
+					Domain:     dp.Domain,
+					PHPVersion: phpVer,
+					Secure:     dp.Secure || d.State.Data.Secure,
+					Type:       "docker",
+					Tags:       dp.Tags,
+					Category:   "Docker",
+				})
+			}
+		}
 	}
 
 	return sites, nil

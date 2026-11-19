@@ -125,19 +125,22 @@ type DatabaseSummary struct {
 
 // DatabaseService manages database connections via drivers
 type DatabaseService struct {
-	db         *sql.DB // Legacy, to be replaced by driver
-	Driver     DatabaseDriver
-	driverName string
-	dsn        string
-	SnapDir    string
+	db           *sql.DB // Legacy, to be replaced by driver
+	Driver       DatabaseDriver
+	driverName   string
+	dsn          string
+	SnapDir      string
+	activeConfig ConnectionConfig
+	activeTarget string
 }
 
 // NewDatabaseService creates a new database service
 func NewDatabaseService() *DatabaseService {
 	return &DatabaseService{
-		Driver:     NewMySQLDriver(),
-		driverName: "mysql",
-		SnapDir:    filepath.Join(stateDir(), "snapshots"),
+		Driver:       NewMySQLDriver(),
+		driverName:   "mysql",
+		SnapDir:      filepath.Join(stateDir(), "snapshots"),
+		activeTarget: "default",
 	}
 }
 
@@ -163,6 +166,9 @@ func (d *DatabaseService) SetDriver(driverName string) error {
 	}
 
 	d.driverName = driverName
+	d.activeConfig = ConnectionConfig{}
+	d.activeTarget = "default"
+
 	if driverName == "postgres" {
 		d.Driver = NewPostgresDriver()
 	} else {
@@ -171,10 +177,45 @@ func (d *DatabaseService) SetDriver(driverName string) error {
 	return d.Connect()
 }
 
-// Connect establishes a connection
+// SetTarget connects to a specific database container or host target
+func (d *DatabaseService) SetTarget(targetName string, driverName string, config ConnectionConfig) error {
+	if driverName == "" {
+		driverName = "mysql"
+	}
+	if driverName != "mysql" && driverName != "postgres" {
+		return fmt.Errorf("unsupported database driver %q", driverName)
+	}
+
+	if d.Driver != nil {
+		d.Driver.Close()
+	}
+
+	d.driverName = driverName
+	d.activeConfig = config
+	d.activeTarget = targetName
+
+	if driverName == "postgres" {
+		d.Driver = NewPostgresDriver()
+	} else {
+		d.Driver = NewMySQLDriver()
+	}
+	return d.Driver.Connect(d.activeConfig)
+}
+
+func (d *DatabaseService) ActiveTarget() string {
+	if d.activeTarget == "" {
+		return "default"
+	}
+	return d.activeTarget
+}
+
+func (d *DatabaseService) ActiveConfig() ConnectionConfig {
+	return d.activeConfig
+}
+
+// Connect establishes a connection using activeConfig (or default auto-discovery if empty)
 func (d *DatabaseService) Connect() error {
-	// Pass empty config to trigger auto-discovery in driver
-	return d.Driver.Connect(ConnectionConfig{})
+	return d.Driver.Connect(d.activeConfig)
 }
 
 // Close closes the database connection

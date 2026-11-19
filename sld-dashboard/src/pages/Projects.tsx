@@ -11,6 +11,7 @@ import {
   Copy,
   Loader2,
   Tag,
+  Boxes,
 } from "lucide-react";
 import { type Project } from "@/api/daemon";
 import {
@@ -46,7 +47,7 @@ export default function Projects() {
   const tunnels = rawTunnels || [];
 
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<"all" | "parked" | "linked">("all");
+  const [filter, setFilter] = useState<"all" | "parked" | "linked" | "docker">("all");
   const [projectToRemove, setProjectToRemove] = useState<Project | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isEditorModalOpen, setIsEditorModalOpen] = useState(false);
@@ -91,8 +92,8 @@ export default function Projects() {
     if (projectToRemove.type === "linked") {
       unlinkMutation.mutate(projectToRemove.name);
     } else {
-      // For parked projects, we now "ignore" them instead of unparking the parent
-      ignoreMutation.mutate(projectToRemove.path);
+      // For parked or docker projects, we "ignore" them
+      ignoreMutation.mutate(projectToRemove.path || projectToRemove.name);
     }
 
     setProjectToRemove(null);
@@ -139,7 +140,7 @@ export default function Projects() {
           />
         </div>
         <div className="flex bg-[var(--card)] rounded-lg p-1 border border-[var(--border)]">
-          {(["all", "parked", "linked"] as const).map((f) => (
+          {(["all", "parked", "linked", "docker"] as const).map((f) => (
             <button
               key={f}
               onClick={() => setFilter(f)}
@@ -163,14 +164,14 @@ export default function Projects() {
             No projects found
           </p>
           <p className="text-sm text-[var(--muted-foreground)]/80">
-            Park a folder or link a project to get started
+            Park a folder, link a project, or start a Docker container to get started
           </p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
           {filteredProjects.map((project) => (
             <div
-              key={project.path}
+              key={project.path || project.name}
               className="group relative bg-[var(--card)] rounded-xl p-5 border border-[var(--border)] hover:border-[var(--primary)]/50 transition-all hover:shadow-[0_4px_20px_-10px_rgba(0,0,0,0.3)] hover:-translate-y-1"
             >
               <div className="flex items-start justify-between mb-4">
@@ -179,14 +180,25 @@ export default function Projects() {
                     className={`p-2.5 rounded-lg ${
                       project.type === "parked"
                         ? "bg-blue-500/10 text-blue-500"
+                        : project.type === "docker"
+                        ? "bg-cyan-500/10 text-cyan-500"
                         : "bg-purple-500/10 text-purple-500"
                     }`}
                   >
-                    <FolderGit2 size={20} />
+                    {project.type === "docker" ? (
+                      <Boxes size={20} />
+                    ) : (
+                      <FolderGit2 size={20} />
+                    )}
                   </div>
                   <div>
-                    <h3 className="font-semibold text-lg leading-none mb-1.5">
+                    <h3 className="font-semibold text-lg leading-none mb-1.5 flex items-center gap-2">
                       {project.name}
+                      {project.type === "docker" && (
+                        <span className="text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-500 border border-cyan-500/20">
+                          Docker
+                        </span>
+                      )}
                     </h3>
                     <span className="text-xs px-2 py-0.5 rounded-full bg-[var(--muted)] text-[var(--muted-foreground)] font-medium">
                       {project.type}
@@ -205,13 +217,13 @@ export default function Projects() {
               <div className="space-y-3 mb-5">
                 <div className="flex items-center text-sm text-[var(--muted-foreground)] bg-[var(--background)]/50 p-2 rounded-md truncate">
                   <code className="text-xs font-mono truncate select-all">
-                    {project.path}
+                    {project.path || `${project.name} (Docker container)`}
                   </code>
                 </div>
                 <div className="flex items-center justify-between text-sm">
                   <div className="flex items-center gap-2 text-[var(--muted-foreground)]">
                     <span className="font-mono text-xs bg-[var(--muted)] px-1.5 py-0.5 rounded text-[var(--foreground)]">
-                      PHP {project.phpVersion}
+                      {project.phpVersion ? `PHP ${project.phpVersion}` : "Container"}
                     </span>
                   </div>
                   <div className="flex items-center gap-1.5">

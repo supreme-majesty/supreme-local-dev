@@ -35,10 +35,25 @@ export interface Project {
   domain: string;
   phpVersion?: string;
   secure: boolean;
-  type: "parked" | "linked";
+  type: "parked" | "linked" | "docker";
   creating?: boolean; // true if project is still being created in background
   tags?: string[];
   category?: string;
+}
+
+export interface DatabaseSource {
+  id: string;
+  name: string;
+  driver: "mysql" | "postgres";
+  host: string;
+  port: string;
+  user?: string;
+  password?: string;
+  database?: string;
+  status?: string;
+  image?: string;
+  is_active: boolean;
+  type: "default" | "docker";
 }
 
 export interface HealthCheck {
@@ -252,8 +267,28 @@ class DaemonApi {
     });
   }
 
+  async getDatabaseSources(): Promise<DatabaseSource[]> {
+    const res = await this.request<DatabaseSource[]>("/db/sources");
+    return res || [];
+  }
+
+  async setDatabaseTarget(source: {
+    id: string;
+    driver: string;
+    host: string;
+    port: string;
+    user?: string;
+    password?: string;
+  }): Promise<ActionResponse> {
+    return this.request<ActionResponse>("/db/target", {
+      method: "POST",
+      body: JSON.stringify(source),
+    });
+  }
+
   async getDatabases(): Promise<DatabaseInfo[]> {
-    return this.request<DatabaseInfo[]>("/db/databases");
+    const res = await this.request<DatabaseInfo[]>("/db/databases");
+    return res || [];
   }
 
   async createDatabase(name: string): Promise<ActionResponse> {
