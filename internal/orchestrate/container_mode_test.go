@@ -4,7 +4,9 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/supreme-majesty/supreme-local-dev/internal/config"
@@ -111,14 +113,13 @@ func TestBuildDesiredContainers_ContainerModeTranslatesProjectMounts(t *testing.
 	spec := &ProjectSpec{
 		Identity: id,
 		Config: &config.Config{
-			Version: 1,
+			Version: 2,
 			Name:    "shop",
-			Runtime: config.RuntimeConfig{PHP: "8.3", WebRoot: "public"},
+			Apps:    withVite(phpApps("8.3"), "", "npm run dev"),
 			Domain:  config.DomainConfig{Name: "shop.localhost"},
 			Services: config.ServicesConfig{
 				Database: config.DatabaseConfig{Type: "mysql", Version: "8.0", ExposePort: 3307},
 			},
-			Node: config.NodeConfig{DevServer: config.DevServerConfig{Enabled: true, Command: "npm run dev", Port: 5173, ExposePort: 5173}},
 		},
 		ConfigHash:  "h",
 		ProjectRoot: projectRoot,
@@ -163,7 +164,7 @@ func TestBuildDesiredContainers_RejectsProjectOutsideMounts(t *testing.T) {
 
 	spec := &ProjectSpec{
 		Identity:    &project.Identity{ID: "x-12345678", Slug: "x"},
-		Config:      &config.Config{Version: 1, Name: "x", Runtime: config.RuntimeConfig{PHP: "8.3", WebRoot: "public"}, Domain: config.DomainConfig{Name: "x.localhost"}},
+		Config:      &config.Config{Version: 2, Name: "x", Apps: phpApps("8.3"), Domain: config.DomainConfig{Name: "x.localhost"}},
 		ProjectRoot: outside,
 	}
 	if _, err := orch.buildDesiredContainers(spec); err == nil {
@@ -186,7 +187,7 @@ func TestStartAndDestroyProject_ManageProjectCertificate(t *testing.T) {
 		Config: &config.Config{
 			Version:  1,
 			Name:     "shop",
-			Runtime:  config.RuntimeConfig{PHP: "8.3", WebRoot: "public"},
+			Apps:     phpApps("8.3"),
 			Domain:   config.DomainConfig{Name: "shop.localhost", TLS: true},
 			Services: config.ServicesConfig{Mailpit: config.MailpitConfig{Enabled: true}},
 		},
@@ -228,5 +229,95 @@ func TestProjectOwner_ContainerModeUsesWorkspaceOwner(t *testing.T) {
 	}
 	if wantUID, _, ok := hostenv.OwnerOf(projectRoot); ok && wantUID != "0" && uid != wantUID {
 		t.Errorf("uid = %s, want workspace owner %s", uid, wantUID)
+	}
+}
+
+// phpApps is the app list of a typical PHP project (what a version 1 config upgrades to).
+func phpApps(version string) config.Apps {
+	return config.Apps{{Name: "web", Runtime: config.RuntimePHP, Version: version, WebRoot: "public"}}
+}
+
+// withVite adds a Node dev server app like a version 1 `node.dev_server`.
+func withVite(apps config.Apps, nodeVersion, command string) config.Apps {
+	return append(apps, config.App{
+		Name: "vite", Runtime: config.RuntimeNode, Version: nodeVersion,
+		Command: command, Port: 5173, ExposePort: 5173,
+	})
+}
+
+// TestMigratedConfigProducesIdenticalContainers guards the upgrade path: a
+// version 1 file and its `config migrate` output must yield the same container
+// specs, so migrating never renames containers or changes images/volumes.
+func TestMigratedConfigProducesIdenticalContainers(t *testing.T) {
+	v1 := []byte(`version: 1
+name: shop
+runtime:
+  php: "8.3"
+  web_root: public
+domain:
+  name: shop.test
+  tls: true
+services:
+  database: {type: postgres}
+  redis: {enabled: true}
+  mailpit: {enabled: true}
+node:
+  version: "20"
+  dev_server: {enabled: true, command: "npm run dev -- --host"}
+xdebug: {enabled: true}
+environment:
+  APP_ENV: local
+`)
+	v2, err := config.MigrateV1(v1)
+	if err != nil {
+		t.Fatalf("MigrateV1: %v", err)
+	}
+
+	build := func(data []byte) []*reconcile.DesiredContainer {
+		cfg, err := config.LoadFromBytes(data, "shop")
+		if err != nil {
+			t.Fatalf("LoadFromBytes: %v\n%s", err, data)
+		}
+		root := t.TempDir()
+		orch := NewOrchestrator(newMockEngine())
+		orch.SetEnv(hostenv.Host(t.TempDir()))
+		containers, err := orch.buildDesiredContainers(&ProjectSpec{
+			Identity:    &project.Identity{ID: "shop-1234abcd", Slug: "shop", Hash: "1234abcd", CanonicalPath: "/p/shop"},
+			Config:      cfg,
+			ConfigHash:  "same", // the file hash differs by design; compare everything else
+			ProjectRoot: root,
+		})
+		if err != nil {
+			t.Fatalf("buildDesiredContainers: %v", err)
+		}
+		// Project root (temp dir) and generated DB password differ per call.
+		for _, c := range containers {
+			for i := range c.Mounts {
+				c.Mounts[i].Source = "<root>"
+			}
+			for k := range c.Environment {
+				if strings.Contains(k, "PASSWORD") {
+					c.Environment[k] = "<secret>"
+				}
+			}
+		}
+		return containers
+	}
+
+	before, after := build(v1), build(v2)
+	if len(before) != len(after) {
+		t.Fatalf("container count changed: %d -> %d", len(before), len(after))
+	}
+	for i := range before {
+		if !reflect.DeepEqual(before[i], after[i]) {
+			t.Errorf("container %s differs after migration:\nv1: %+v\nv2: %+v", before[i].Name, before[i], after[i])
+		}
+	}
+	names := make([]string, len(before))
+	for i, c := range before {
+		names[i] = c.Service
+	}
+	if got := strings.Join(names, ","); got != "db,redis,mailpit,php,nginx,node" {
+		t.Errorf("service order = %s", got)
 	}
 }

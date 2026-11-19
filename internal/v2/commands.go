@@ -218,6 +218,17 @@ certificate on 'sld v2 start'.`,
 			return ConfigShow(projectRoot)
 		},
 	})
+	configCmd.AddCommand(&cobra.Command{
+		Use:   "migrate [path]",
+		Short: "Rewrite a version 1 .sld/config.yaml as version 2 (keeps a .bak copy)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			projectRoot, err := resolveProjectRoot(args)
+			if err != nil {
+				return err
+			}
+			return ConfigMigrate(projectRoot)
+		},
+	})
 	v2Cmd.AddCommand(configCmd)
 
 	// --- sld v2 doctor ---

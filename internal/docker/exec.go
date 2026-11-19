@@ -14,15 +14,15 @@ import (
 
 // ExecOptions describes a command attached to the caller's stdio.
 type ExecOptions struct {
-	Cmd        []string
-	Env        []string // KEY=value
-	WorkingDir string
-	User       string
-	TTY        bool          // allocate a pseudo-terminal (stdout/stderr are not demultiplexed)
-	Stdin      io.Reader     // nil = no stdin
-	Stdout     io.Writer     // required
-	Stderr     io.Writer     // used when TTY is false; defaults to Stdout
-	ConsoleSize *[2]uint     // optional initial terminal size {height, width}
+	Cmd         []string
+	Env         []string // KEY=value
+	WorkingDir  string
+	User        string
+	TTY         bool      // allocate a pseudo-terminal (stdout/stderr are not demultiplexed)
+	Stdin       io.Reader // nil = no stdin
+	Stdout      io.Writer // required
+	Stderr      io.Writer // used when TTY is false; defaults to Stdout
+	ConsoleSize *[2]uint  // optional initial terminal size {height, width}
 }
 
 // Executor runs commands in containers through the Docker Engine API, so SLD

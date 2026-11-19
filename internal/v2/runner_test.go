@@ -145,8 +145,8 @@ services:
 	if cfg.Name != "my-test-app" {
 		t.Errorf("expected name my-test-app, got %s", cfg.Name)
 	}
-	if cfg.Runtime.PHP != "8.3" {
-		t.Errorf("expected PHP 8.3, got %s", cfg.Runtime.PHP)
+	if web, ok := cfg.App("web"); !ok || web.Version != "8.3" || cfg.SourceVersion != 1 {
+		t.Errorf("expected version 1 file upgraded to a php 8.3 web app, got %s (source v%d)", cfg.Describe(), cfg.SourceVersion)
 	}
 	if !cfg.Domain.TLS {
 		t.Errorf("expected TLS true")

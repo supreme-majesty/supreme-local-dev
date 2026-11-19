@@ -340,6 +340,14 @@ func (o *Orchestrator) buildDesiredContainers(spec *ProjectSpec) ([]*reconcile.D
 	var containers []*reconcile.DesiredContainer
 	cfg := spec.Config
 
+	phpApp, nodeApp, err := engineApps(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Services.Database.Shared != "" {
+		return nil, fmt.Errorf("services.database.shared: shared database servers are not available in this SLD version yet; use 'type' for a dedicated database container")
+	}
+
 	// --- Database Container ---
 	if cfg.Services.Database.Type != "" {
 		dbDesired, err := o.buildDatabase(spec)
@@ -368,22 +376,22 @@ func (o *Orchestrator) buildDesiredContainers(spec *ProjectSpec) ([]*reconcile.D
 	}
 
 	// --- PHP Container ---
-	phpDesired, err := o.buildPHP(spec)
+	phpDesired, err := o.buildPHP(spec, phpApp)
 	if err != nil {
 		return nil, err
 	}
 	containers = append(containers, phpDesired)
 
 	// --- Nginx Container ---
-	nginxDesired, err := o.buildNginx(spec)
+	nginxDesired, err := o.buildNginx(spec, phpApp)
 	if err != nil {
 		return nil, err
 	}
 	containers = append(containers, nginxDesired)
 
 	// --- Node Dev Server Container ---
-	if cfg.Node.DevServer.Enabled {
-		nodeDesired, err := o.buildNode(spec)
+	if nodeApp != nil {
+		nodeDesired, err := o.buildNode(spec, nodeApp)
 		if err != nil {
 			return nil, err
 		}
@@ -393,12 +401,45 @@ func (o *Orchestrator) buildDesiredContainers(spec *ProjectSpec) ([]*reconcile.D
 	return containers, nil
 }
 
+// engineApps maps a project's apps onto the container layout this engine can
+// run: one PHP app (PHP-FPM + nginx) plus at most one Node dev server. Other
+// runtimes are valid configuration but need the runtime drivers (Phase 15 M3).
+// CheckEngineSupport reports whether this engine can start cfg (see engineApps).
+func CheckEngineSupport(cfg *config.Config) error {
+	if _, _, err := engineApps(cfg); err != nil {
+		return err
+	}
+	if cfg.Services.Database.Shared != "" {
+		return fmt.Errorf("shared database servers are not available in this SLD version yet")
+	}
+	return nil
+}
+
+func engineApps(cfg *config.Config) (php, node *config.App, err error) {
+	for i := range cfg.Apps {
+		app := &cfg.Apps[i]
+		switch {
+		case app.Runtime == config.RuntimePHP && php == nil:
+			php = app
+		case app.Runtime == config.RuntimeNode && node == nil:
+			node = app
+		default:
+			return nil, nil, fmt.Errorf("app %q (runtime %s) cannot run in this SLD version yet: "+
+				"the engine currently supports one php app plus one node dev server", app.Name, app.Runtime)
+		}
+	}
+	if php == nil {
+		return nil, nil, fmt.Errorf("this SLD version needs a php app to start a project (other runtimes are coming with runtime drivers)")
+	}
+	return php, node, nil
+}
+
 // buildPHP creates the PHP-FPM container spec.
-func (o *Orchestrator) buildPHP(spec *ProjectSpec) (*reconcile.DesiredContainer, error) {
+func (o *Orchestrator) buildPHP(spec *ProjectSpec, app *config.App) (*reconcile.DesiredContainer, error) {
 	id := spec.Identity
 	cfg := spec.Config
 
-	phpImage := fmt.Sprintf("%s/sld-php:%s", ImageRegistry, cfg.Runtime.PHP)
+	phpImage := fmt.Sprintf("%s/sld-php:%s", ImageRegistry, app.Version)
 
 	labels, err := docker.BuildContainerLabels(docker.LabelParams{
 		ProjectID:     id.ID,
@@ -422,7 +463,7 @@ func (o *Orchestrator) buildPHP(spec *ProjectSpec) (*reconcile.DesiredContainer,
 	}
 
 	// Xdebug
-	if cfg.Xdebug.Enabled {
+	if app.Xdebug {
 		env["XDEBUG_MODE"] = "debug"
 	} else {
 		env["XDEBUG_MODE"] = "off"
@@ -482,7 +523,7 @@ func (o *Orchestrator) buildPHP(spec *ProjectSpec) (*reconcile.DesiredContainer,
 }
 
 // buildNginx creates the Nginx sidecar container spec.
-func (o *Orchestrator) buildNginx(spec *ProjectSpec) (*reconcile.DesiredContainer, error) {
+func (o *Orchestrator) buildNginx(spec *ProjectSpec, app *config.App) (*reconcile.DesiredContainer, error) {
 	id := spec.Identity
 	cfg := spec.Config
 
@@ -504,25 +545,32 @@ func (o *Orchestrator) buildNginx(spec *ProjectSpec) (*reconcile.DesiredContaine
 	}
 
 	// Traefik routing labels for dynamic discovery
-	domain := cfg.Domain.Name
+	domain := app.Domain
+	if domain == "" {
+		domain = cfg.Domain.Name
+	}
 	if domain == "" {
 		domain = fmt.Sprintf("%s.%s", id.Slug, config.DefaultTLD())
+	}
+	rule := hostRule(domain)
+	if app == cfg.PrimaryApp() {
+		rule = hostRule(append([]string{domain}, cfg.Domain.Aliases...)...)
 	}
 
 	labels["traefik.enable"] = "true"
 	labels["traefik.docker.network"] = GlobalNetwork
-	labels["traefik.http.routers."+id.ID+".rule"] = fmt.Sprintf("Host(`%s`)", domain)
+	labels["traefik.http.routers."+id.ID+".rule"] = rule
 	labels["traefik.http.routers."+id.ID+".entrypoints"] = "web"
 	labels["traefik.http.services."+id.ID+".loadbalancer.server.port"] = "80"
 
 	if cfg.Domain.TLS {
-		labels["traefik.http.routers."+id.ID+"-secure.rule"] = fmt.Sprintf("Host(`%s`)", domain)
+		labels["traefik.http.routers."+id.ID+"-secure.rule"] = rule
 		labels["traefik.http.routers."+id.ID+"-secure.entrypoints"] = "websecure"
 		labels["traefik.http.routers."+id.ID+"-secure.tls"] = "true"
 	}
 
 	env := map[string]string{
-		"WEB_ROOT": cfg.Runtime.WebRoot,
+		"WEB_ROOT": app.WebRoot,
 		"PHP_HOST": id.PHPContainerName(),
 	}
 
@@ -653,13 +701,12 @@ func (o *Orchestrator) buildMailpit(spec *ProjectSpec) (*reconcile.DesiredContai
 }
 
 // buildNode creates a managed Node dev server container spec.
-func (o *Orchestrator) buildNode(spec *ProjectSpec) (*reconcile.DesiredContainer, error) {
+func (o *Orchestrator) buildNode(spec *ProjectSpec, app *config.App) (*reconcile.DesiredContainer, error) {
 	id := spec.Identity
-	nodeCfg := spec.Config.Node
 
-	nodeVersion := nodeCfg.Version
+	nodeVersion := app.Version
 	if nodeVersion == "" {
-		nodeVersion = "22"
+		nodeVersion = config.DefaultVersions[config.RuntimeNode]
 	}
 	nodeImage := fmt.Sprintf("node:%s-bookworm-slim", nodeVersion)
 
@@ -674,8 +721,8 @@ func (o *Orchestrator) buildNode(spec *ProjectSpec) (*reconcile.DesiredContainer
 	}
 
 	var ports []string
-	if nodeCfg.DevServer.ExposePort > 0 {
-		ports = []string{o.env.PublishPort(nodeCfg.DevServer.ExposePort, strconv.Itoa(nodeCfg.DevServer.Port))}
+	if app.ExposePort > 0 {
+		ports = []string{o.env.PublishPort(app.ExposePort, strconv.Itoa(app.Port))}
 	}
 
 	appMount, err := o.env.MountFor(spec.ProjectRoot, "/app", false)
@@ -683,7 +730,7 @@ func (o *Orchestrator) buildNode(spec *ProjectSpec) (*reconcile.DesiredContainer
 		return nil, err
 	}
 
-	nodeCmd := strings.TrimSpace(nodeCfg.DevServer.Command)
+	nodeCmd := strings.TrimSpace(app.Command)
 	if nodeCmd == "" {
 		nodeCmd = "npm run dev"
 	}
@@ -915,11 +962,18 @@ func (o *Orchestrator) ProjectOwner(projectRoot string) (string, string) {
 
 // ProjectTLSHosts lists the host names a project's certificate must cover.
 func ProjectTLSHosts(cfg *config.Config) []string {
-	hosts := []string{cfg.Domain.Name}
-	if cfg.Services.Mailpit.Enabled {
-		hosts = append(hosts, "mail."+cfg.Domain.Name)
+	return cfg.Hostnames()
+}
+
+// hostRule builds a Traefik rule matching any of hosts.
+func hostRule(hosts ...string) string {
+	parts := make([]string, 0, len(hosts))
+	for _, h := range hosts {
+		if h != "" {
+			parts = append(parts, fmt.Sprintf("Host(`%s`)", h))
+		}
 	}
-	return hosts
+	return strings.Join(parts, " || ")
 }
 
 // specHash fingerprints the parts of a container spec that require recreation.

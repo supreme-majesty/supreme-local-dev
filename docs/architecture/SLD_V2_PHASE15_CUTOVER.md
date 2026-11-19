@@ -252,7 +252,17 @@ Original scope:
 - `.localhost` default TLD, loopback router ports, UID from the workspace owner (C3, C7, C9).
 - SDK exec replaces `runDockerCLI` (C5).
 
-### M2 — Config v2 schema *(2–3 days)*
+### M2 — Config v2 schema *(2–3 days)* — implemented 2026-11-19
+
+What landed:
+- **`version: 2`** with an ordered `apps:` map and nine runtimes (`php`, `static`, `node`, `python`, `ruby`, `go`, `image`, `dockerfile`, `proxy`). There are per-runtime defaults and field rules, `domain.aliases`, `services.database.shared`/`name`, and `tools.node`.
+- **Error reporting:** unknown keys are rejected with their line number (typo protection), and validation reports every problem at once.
+- **Version 1 upgrade:** version 1 files are upgraded in memory (`runtime.php` → `apps.web`, `node.dev_server` → `apps.vite`, `node.version` → `tools.node`). `sld v2 config migrate` rewrites the file and keeps `config.v1.yaml.bak`, and `init-project` now writes version 2.
+- **Guard test:** a version 1 file and its migrated version 2 file produce identical container specs.
+
+Engine note: until M3, `start` runs one `php` app plus one `node` dev server, as before. Other runtimes and shared databases validate, but `config validate` warns that they cannot be started yet, and `start` explains why.
+
+Original scope:
 - `App` type, per-runtime validation, v1 upgrader, `config migrate`, golden tests.
 
 ### M3 — Runtime drivers *(4–6 days)*

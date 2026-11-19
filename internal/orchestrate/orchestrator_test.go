@@ -202,12 +202,9 @@ func TestBuildDesiredContainers_MinimalConfig(t *testing.T) {
 	}
 
 	cfg := &config.Config{
-		Version: 1,
+		Version: 2,
 		Name:    "my-app",
-		Runtime: config.RuntimeConfig{
-			PHP:     "8.3",
-			WebRoot: "public",
-		},
+		Apps:    phpApps("8.3"),
 		Domain: config.DomainConfig{
 			Name: "my-app.test",
 		},
@@ -258,12 +255,9 @@ func TestBuildDesiredContainers_FullStack(t *testing.T) {
 	}
 
 	cfg := &config.Config{
-		Version: 1,
+		Version: 2,
 		Name:    "laravel-app",
-		Runtime: config.RuntimeConfig{
-			PHP:     "8.4",
-			WebRoot: "public",
-		},
+		Apps:    phpApps("8.4"),
 		Domain: config.DomainConfig{
 			Name: "laravel-app.test",
 		},
@@ -352,23 +346,14 @@ func TestBuildDesiredContainers_DependencyOrderAndSpecs(t *testing.T) {
 		CanonicalPath: tmpDir,
 	}
 	cfg := &config.Config{
-		Version: 1,
+		Version: 2,
 		Name:    "full",
-		Runtime: config.RuntimeConfig{PHP: "8.3", WebRoot: "public"},
+		Apps:    withVite(phpApps("8.3"), "22", "npm run dev -- --host"),
 		Domain:  config.DomainConfig{Name: "full.test", TLS: true},
 		Services: config.ServicesConfig{
 			Database: config.DatabaseConfig{Type: "postgres", Version: "16"},
 			Redis:    config.RedisConfig{Enabled: true, Version: "7-alpine"},
 			Mailpit:  config.MailpitConfig{Enabled: true},
-		},
-		Node: config.NodeConfig{
-			Version: "22",
-			DevServer: config.DevServerConfig{
-				Enabled:    true,
-				Command:    "npm run dev -- --host",
-				Port:       5173,
-				ExposePort: 5173,
-			},
 		},
 	}
 
@@ -498,9 +483,9 @@ func TestDestroyProject(t *testing.T) {
 	spec := &ProjectSpec{
 		Identity: identity,
 		Config: &config.Config{
-			Version: 1,
+			Version: 2,
 			Name:    "demo",
-			Runtime: config.RuntimeConfig{PHP: "8.3", WebRoot: "public"},
+			Apps:    phpApps("8.3"),
 			Domain:  config.DomainConfig{Name: "demo.test"},
 			Services: config.ServicesConfig{
 				Database: config.DatabaseConfig{Type: "mysql", Version: "8.0"},

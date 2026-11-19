@@ -137,7 +137,7 @@ func TestNormalizeHostPath(t *testing.T) {
 		"/run/desktop/mnt/host/c/Users/Dev/shop":   "c:/Users/Dev/shop",
 		"/host_mnt/d/work/api":                     "d:/work/api",
 		"/run/desktop/mnt/host/wsl/Ubuntu/home/me": "/run/desktop/mnt/host/wsl/Ubuntu/home/me",
-		"":                                         "",
+		"": "",
 	}
 	for in, want := range tests {
 		if got := NormalizeHostPath(in); got != want {

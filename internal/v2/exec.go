@@ -210,8 +210,8 @@ func execInNode(projectRoot string, command []string) error {
 	}
 
 	nodeVersion := "22"
-	if cfg, _, err := loadProjectConfig(projectRoot); err == nil && cfg.Node.Version != "" {
-		nodeVersion = cfg.Node.Version
+	if cfg, _, err := loadProjectConfig(projectRoot); err == nil {
+		nodeVersion = cfg.NodeVersion()
 	}
 
 	appMount, err := runner.env().MountFor(projectRoot, "/app", false)

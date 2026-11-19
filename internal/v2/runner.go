@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -141,7 +142,7 @@ func (r *Runner) Start(ctx context.Context, projectRoot string) error {
 		return err
 	}
 
-	fmt.Printf("[SLD] Project: %s | PHP %s | Domain: %s\n", cfg.Name, cfg.Runtime.PHP, cfg.Domain.Name)
+	fmt.Printf("[SLD] Project: %s | Apps: %s | Domain: %s\n", cfg.Name, cfg.Describe(), cfg.Domain.Name)
 
 	// 3. Compute identity
 	identity, err := r.identity(projectRoot)
@@ -516,7 +517,57 @@ func ConfigValidate(projectRoot string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("[SLD] ✅ Configuration is valid (%s — PHP %s, domain %s)\n", cfg.Name, cfg.Runtime.PHP, cfg.Domain.Name)
+	fmt.Printf("[SLD] ✅ Configuration is valid (%s — %s, domain %s)\n", cfg.Name, cfg.Describe(), cfg.Domain.Name)
+	if cfg.SourceVersion == 1 {
+		fmt.Println("[SLD] ℹ️  This is a version 1 file; run 'sld v2 config migrate' to rewrite it as version 2.")
+	}
+	if err := orchestrate.CheckEngineSupport(cfg); err != nil {
+		fmt.Printf("[SLD] ⚠️  Valid, but cannot be started yet: %v\n", err)
+	}
+	return nil
+}
+
+// ConfigMigrate rewrites a version 1 .sld/config.yaml as version 2, keeping
+// the original as .sld/config.v1.yaml.bak. Container names, images and volumes
+// do not change; containers are recreated once because the file changed.
+func ConfigMigrate(projectRoot string) error {
+	sldDir := filepath.Join(projectRoot, ".sld")
+	configPath := filepath.Join(sldDir, "config.yaml")
+	backupPath := filepath.Join(sldDir, "config.v1.yaml.bak")
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return fmt.Errorf("failed to read %s: %w", configPath, err)
+	}
+	// Refuse to migrate a file that does not load: the user should see the real error first.
+	if _, err := config.LoadFromBytes(data, filepath.Base(projectRoot)); err != nil {
+		return fmt.Errorf("invalid .sld/config.yaml: %w", err)
+	}
+
+	migrated, err := config.MigrateV1(data)
+	if errors.Is(err, config.ErrAlreadyCurrent) {
+		fmt.Println("[SLD] ✅ .sld/config.yaml is already version 2.")
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if _, err := config.LoadFromBytes(migrated, filepath.Base(projectRoot)); err != nil {
+		return fmt.Errorf("migrated configuration does not validate (please report this): %w", err)
+	}
+
+	if _, err := os.Stat(backupPath); err == nil {
+		return fmt.Errorf("backup %s already exists; move it away and run migrate again", backupPath)
+	}
+	if err := os.WriteFile(backupPath, data, 0o644); err != nil {
+		return fmt.Errorf("failed to write backup: %w", err)
+	}
+	if err := os.WriteFile(configPath, migrated, 0o644); err != nil {
+		return fmt.Errorf("failed to write migrated config (original kept at %s): %w", backupPath, err)
+	}
+
+	fmt.Printf("[SLD] ✅ Migrated .sld/config.yaml to version 2 (original saved as %s)\n", backupPath)
+	fmt.Println("[SLD] Containers will be recreated once on the next 'sld v2 start'; data volumes are kept.")
 	return nil
 }
 
@@ -526,11 +577,14 @@ func ConfigShow(projectRoot string) error {
 	if err != nil {
 		return err
 	}
-	out, err := yaml.Marshal(cfg)
-	if err != nil {
+	var out strings.Builder
+	enc := yaml.NewEncoder(&out)
+	enc.SetIndent(2)
+	if err := enc.Encode(cfg); err != nil {
 		return fmt.Errorf("failed to serialize resolved config: %w", err)
 	}
-	fmt.Print(string(out))
+	_ = enc.Close()
+	fmt.Print(out.String())
 	return nil
 }
 
@@ -1100,9 +1154,18 @@ func loadProjectConfig(projectRoot string) (*config.Config, []byte, error) {
 }
 
 func printServicesSummary(cfg *config.Config) {
-	services := []string{
-		fmt.Sprintf("PHP %s", cfg.Runtime.PHP),
-		"Nginx",
+	var services []string
+	for _, app := range cfg.Apps {
+		switch app.Runtime {
+		case config.RuntimePHP:
+			services = append(services, fmt.Sprintf("PHP %s + Nginx (%s)", app.Version, app.Name))
+		default:
+			label := app.Runtime
+			if app.Version != "" {
+				label += " " + app.Version
+			}
+			services = append(services, fmt.Sprintf("%s (%s)", label, app.Name))
+		}
 	}
 
 	if cfg.Services.Database.Type != "" {
@@ -1117,9 +1180,6 @@ func printServicesSummary(cfg *config.Config) {
 	}
 	if cfg.Services.Mailpit.Enabled {
 		services = append(services, "Mailpit")
-	}
-	if cfg.Node.DevServer.Enabled {
-		services = append(services, fmt.Sprintf("Node %s (dev server)", cfg.Node.Version))
 	}
 
 	fmt.Printf("[SLD] Services: %s\n", strings.Join(services, " • "))
