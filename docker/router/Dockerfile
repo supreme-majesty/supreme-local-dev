@@ -1,4 +1,4 @@
-FROM traefik:v3.1
+FROM traefik:v3.6
 
 COPY traefik.yml /etc/traefik/traefik.yml
 RUN mkdir -p /etc/traefik/dynamic

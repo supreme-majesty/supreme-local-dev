@@ -127,3 +127,56 @@ func TestProjectIdentity_ResourceNaming(t *testing.T) {
 		t.Errorf("unexpected RedisVolumeName: %s", id.RedisVolumeName())
 	}
 }
+
+func TestNormalizeHostPath(t *testing.T) {
+	tests := map[string]string{
+		"/home/dev/Projects/shop/":                 "/home/dev/Projects/shop",
+		"/home/dev/../dev/shop":                    "/home/dev/shop",
+		`C:\Users\Dev\Code\shop`:                   "c:/Users/Dev/Code/shop",
+		"C:/Users/Dev/Code/shop":                   "c:/Users/Dev/Code/shop",
+		"/run/desktop/mnt/host/c/Users/Dev/shop":   "c:/Users/Dev/shop",
+		"/host_mnt/d/work/api":                     "d:/work/api",
+		"/run/desktop/mnt/host/wsl/Ubuntu/home/me": "/run/desktop/mnt/host/wsl/Ubuntu/home/me",
+		"":                                         "",
+	}
+	for in, want := range tests {
+		if got := NormalizeHostPath(in); got != want {
+			t.Errorf("NormalizeHostPath(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestComputeIdentityFromHostPath_MatchesAcrossDockerDesktopForms(t *testing.T) {
+	a, err := ComputeIdentityFromHostPath(`C:\Users\Dev\shop`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := ComputeIdentityFromHostPath("/run/desktop/mnt/host/c/Users/Dev/shop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.ID != b.ID || a.Slug != "shop" {
+		t.Errorf("IDs differ or bad slug: %s vs %s", a.ID, b.ID)
+	}
+	if _, err := ComputeIdentityFromHostPath("  "); err == nil {
+		t.Error("expected error for empty path")
+	}
+}
+
+func TestComputeIdentityFromHostPath_MatchesComputeIdentity(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "my-app")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	local, err := ComputeIdentity(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fromHost, err := ComputeIdentityFromHostPath(local.CanonicalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if local.ID != fromHost.ID {
+		t.Errorf("ComputeIdentity %s != ComputeIdentityFromHostPath %s", local.ID, fromHost.ID)
+	}
+}

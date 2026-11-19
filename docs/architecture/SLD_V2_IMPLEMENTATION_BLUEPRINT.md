@@ -28,7 +28,7 @@ Host OS
 Docker Engine
 ├── Global Infrastructure (Created by `sld init` / managed by SLD)
 │   ├── Network: `sld-global` (bridge)
-│   └── Container: `sld-router` (Traefik v3.1, binds host ports 80 & 443)
+│   └── Container: `sld-router` (Traefik v3.6, binds host ports 80 & 443)
 │
 ├── Project Infrastructure: App 1 (`api-3f7b49a1`)
 │   ├── Network: `sld-api-3f7b49a1-net` (bridge, isolated)
@@ -411,7 +411,7 @@ Traefik terminates incoming HTTP/HTTPS and passes the HTTP request to Nginx. Ngi
 ## 10. Traefik
 
 ### Gateway Configuration (`sld-router`)
-- **Image**: `ghcr.io/supreme-majesty/sld-router:2` (based on `traefik:v3.1`).
+- **Image**: `ghcr.io/supreme-majesty/sld-router:2` (based on `traefik:v3.6`).
 - **Static Config (`/etc/traefik/traefik.yml`)**:
   ```yaml
   entryPoints:

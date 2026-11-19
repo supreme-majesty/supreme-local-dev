@@ -3,13 +3,16 @@ package v2
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
+	"os/signal"
 	"runtime"
 	"strings"
 
+	"github.com/moby/term"
 	"github.com/spf13/cobra"
 	"github.com/supreme-majesty/supreme-local-dev/internal/docker"
-	"github.com/supreme-majesty/supreme-local-dev/internal/project"
+	"github.com/supreme-majesty/supreme-local-dev/internal/reconcile"
 )
 
 // RegisterExecCommands adds exec, shell, and passthrough commands to the V2 subcommand.
@@ -39,7 +42,7 @@ or specify a service name directly (php, nginx, db, redis, mailpit, node).`,
 			if svc != docker.ServicePHP {
 				shellBin = []string{"sh"}
 			}
-			return execInService(projectRoot, svc, shellBin, true)
+			return execInService(projectRoot, svc, shellBin)
 		},
 	}
 	shellCmd.Flags().StringVarP(&shellService, "service", "s", docker.ServicePHP, "Target service container (php, nginx, db, redis, mailpit, node)")
@@ -74,7 +77,7 @@ or specify a service name directly (php, nginx, db, redis, mailpit, node).`,
 			if err != nil {
 				return err
 			}
-			return execInService(cwd, svc, cmdArgs, false)
+			return execInService(cwd, svc, cmdArgs)
 		},
 	}
 	v2Cmd.AddCommand(execCmd)
@@ -89,7 +92,7 @@ or specify a service name directly (php, nginx, db, redis, mailpit, node).`,
 			if err != nil {
 				return err
 			}
-			return execInService(cwd, docker.ServicePHP, append([]string{"php"}, args...), false)
+			return execInService(cwd, docker.ServicePHP, append([]string{"php"}, args...))
 		},
 	})
 
@@ -103,7 +106,7 @@ or specify a service name directly (php, nginx, db, redis, mailpit, node).`,
 			if err != nil {
 				return err
 			}
-			return execInService(cwd, docker.ServicePHP, append([]string{"composer"}, args...), false)
+			return execInService(cwd, docker.ServicePHP, append([]string{"composer"}, args...))
 		},
 	})
 
@@ -117,7 +120,7 @@ or specify a service name directly (php, nginx, db, redis, mailpit, node).`,
 			if err != nil {
 				return err
 			}
-			return execInService(cwd, docker.ServicePHP, append([]string{"php", "artisan"}, args...), false)
+			return execInService(cwd, docker.ServicePHP, append([]string{"php", "artisan"}, args...))
 		},
 	})
 
@@ -145,22 +148,24 @@ func isKnownService(s string) bool {
 	}
 }
 
-// execInService executes a command inside the specified project service container.
-func execInService(projectRoot, service string, command []string, interactive bool) error {
+// execInService executes a command inside the specified project service
+// container through the Docker API and exits with the command's exit code.
+func execInService(projectRoot, service string, command []string) error {
 	if service == "" {
 		service = docker.ServicePHP
 	}
 
-	identity, err := project.ComputeIdentity(projectRoot)
+	runner, err := lazyRunner()
 	if err != nil {
-		return fmt.Errorf("failed to compute project identity: %w", err)
+		return err
 	}
-
-	engine, err := docker.NewDockerEngine()
-	if err != nil {
-		return fmt.Errorf("failed to connect to Docker: %w", err)
-	}
+	engine := runner.orch.Engine()
 	defer engine.Close()
+
+	identity, err := runner.identity(projectRoot)
+	if err != nil {
+		return err
+	}
 
 	containers, err := engine.ListProjectContainers(context.Background(), identity.ID)
 	if err != nil {
@@ -174,72 +179,124 @@ func execInService(projectRoot, service string, command []string, interactive bo
 			break
 		}
 	}
-
 	if targetName == "" {
 		return fmt.Errorf("service container %q is not running for project %s.\n  Run 'sld v2 start' first", service, identity.Slug)
 	}
 
-	// Use docker exec via the Docker CLI for full TTY support.
-	execArgs := []string{"exec"}
-	if interactive {
-		execArgs = append(execArgs, "-it")
+	executor, ok := engine.(docker.Executor)
+	if !ok {
+		return fmt.Errorf("docker engine does not support exec")
 	}
-	execArgs = append(execArgs, targetName)
-	execArgs = append(execArgs, command...)
 
-	fmt.Printf("[SLD] Executing in %s: %s\n", targetName, formatCommand(command))
-
-	return runDockerCLI(execArgs...)
+	fmt.Fprintf(os.Stderr, "[SLD] Executing in %s: %s\n", targetName, formatCommand(command))
+	code, err := runAttached(command, func(ctx context.Context, opts docker.ExecOptions) (int, error) {
+		return executor.Exec(ctx, targetName, opts)
+	})
+	return exitWith(code, err)
 }
 
 // execInNode runs a command in an ephemeral Node container mounted to the project.
 func execInNode(projectRoot string, command []string) error {
-	identity, err := project.ComputeIdentity(projectRoot)
+	runner, err := lazyRunner()
 	if err != nil {
-		return fmt.Errorf("failed to compute project identity: %w", err)
+		return err
+	}
+	engine := runner.orch.Engine()
+	defer engine.Close()
+
+	identity, err := runner.identity(projectRoot)
+	if err != nil {
+		return err
 	}
 
 	nodeVersion := "22"
-	cfg, _, err := loadProjectConfig(projectRoot)
-	if err == nil && cfg.Node.Version != "" {
+	if cfg, _, err := loadProjectConfig(projectRoot); err == nil && cfg.Node.Version != "" {
 		nodeVersion = cfg.Node.Version
 	}
 
-	nodeImage := fmt.Sprintf("node:%s-bookworm-slim", nodeVersion)
-	networkName := identity.NetworkName()
+	appMount, err := runner.env().MountFor(projectRoot, "/app", false)
+	if err != nil {
+		return err
+	}
 
-	execArgs := []string{"run", "--rm", "-it"}
-	// Preserve host UID/GID on Linux so node_modules/build outputs are not root-owned
+	desired := &reconcile.DesiredContainer{
+		Image:      fmt.Sprintf("node:%s-bookworm-slim", nodeVersion),
+		WorkingDir: "/app",
+		Mounts:     []reconcile.Mount{appMount},
+		// An arbitrary UID may have no home directory in the image.
+		Environment: map[string]string{"HOME": "/tmp", "npm_config_cache": "/tmp/.npm"},
+	}
+	// Preserve the developer's UID/GID on Linux so node_modules and build
+	// output are not root-owned (Docker Desktop maps ownership itself).
 	if runtime.GOOS == "linux" {
-		execArgs = append(execArgs, "-u", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()))
+		uid, gid := runner.orch.ProjectOwner(projectRoot)
+		desired.User = uid + ":" + gid
 	}
-	// Attach to project network when running
-	if engine, err := docker.NewDockerEngine(); err == nil {
-		containers, listErr := engine.ListProjectContainers(context.Background(), identity.ID)
-		_ = engine.Close()
-		if listErr == nil && len(containers) > 0 {
-			execArgs = append(execArgs, "--network", networkName)
-		}
+	// Join the project network when the project is running (e.g. to reach its DB).
+	if containers, err := engine.ListProjectContainers(context.Background(), identity.ID); err == nil && len(containers) > 0 {
+		desired.Networks = []string{identity.NetworkName()}
 	}
-	execArgs = append(execArgs,
-		"-v", fmt.Sprintf("%s:/app", projectRoot),
-		"-w", "/app",
-		nodeImage,
-	)
-	execArgs = append(execArgs, command...)
 
-	fmt.Printf("[SLD] Running Node %s: %s\n", nodeVersion, formatCommand(command))
+	executor, ok := engine.(docker.Executor)
+	if !ok {
+		return fmt.Errorf("docker engine does not support exec")
+	}
 
-	return runDockerCLI(execArgs...)
+	fmt.Fprintf(os.Stderr, "[SLD] Running Node %s: %s\n", nodeVersion, formatCommand(command))
+	code, err := runAttached(command, func(ctx context.Context, opts docker.ExecOptions) (int, error) {
+		return executor.RunEphemeral(ctx, desired, opts)
+	})
+	return exitWith(code, err)
 }
 
-// runDockerCLI shells out to the docker CLI binary for TTY-attached exec.
-func runDockerCLI(args ...string) error {
-	cmd := newCommand("docker", args...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+// runAttached wires the current process's stdio to a container command. A TTY
+// is allocated when stdin and stdout are both terminals; piped stdin
+// (e.g. `sld v2 exec mysql < dump.sql`) is forwarded without a TTY.
+func runAttached(command []string, run func(context.Context, docker.ExecOptions) (int, error)) (int, error) {
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancel()
+
+	inFd, inIsTerm := term.GetFdInfo(os.Stdin)
+	outFd, outIsTerm := term.GetFdInfo(os.Stdout)
+	tty := inIsTerm && outIsTerm
+
+	opts := docker.ExecOptions{
+		Cmd:    command,
+		TTY:    tty,
+		Stdout: os.Stdout,
+		Stderr: os.Stderr,
+	}
+
+	switch {
+	case tty:
+		if ws, err := term.GetWinsize(outFd); err == nil && ws.Height > 0 && ws.Width > 0 {
+			opts.ConsoleSize = &[2]uint{uint(ws.Height), uint(ws.Width)}
+		}
+		state, err := term.SetRawTerminal(inFd)
+		if err != nil {
+			return -1, fmt.Errorf("failed to configure terminal: %w", err)
+		}
+		defer term.RestoreTerminal(inFd, state)
+		opts.Stdin = os.Stdin
+		// In raw mode Ctrl-C is sent to the container, not to us.
+		signal.Reset(os.Interrupt)
+	case !inIsTerm:
+		opts.Stdin = io.Reader(os.Stdin)
+	}
+
+	return run(ctx, opts)
+}
+
+// exitWith turns a container command result into the CLI's own result: a
+// non-zero exit code terminates SLD with the same code, like `docker exec`.
+func exitWith(code int, err error) error {
+	if err != nil {
+		return err
+	}
+	if code != 0 {
+		os.Exit(code)
+	}
+	return nil
 }
 
 // formatCommand formats a command slice for display.

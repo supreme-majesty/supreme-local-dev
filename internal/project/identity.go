@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -76,14 +77,56 @@ func Slugify(name string) string {
 	return trimmed
 }
 
-// ComputeIdentity calculates the deterministic Identity from an input path.
+// ComputeIdentity calculates the deterministic Identity from a path on the
+// filesystem this process can see.
 func ComputeIdentity(path string) (*Identity, error) {
 	canonical, err := CanonicalizePath(path)
 	if err != nil {
 		return nil, err
 	}
+	return identityFromCanonical(canonical), nil
+}
 
-	baseName := filepath.Base(canonical)
+// ComputeIdentityFromHostPath calculates the Identity from a path as the Docker
+// host reports it (e.g. a bind-mount source seen while SLD runs in a container).
+// The path is normalised as text only; it does not need to exist locally. For a
+// Linux or macOS host this yields the same ID as ComputeIdentity run on the host.
+func ComputeIdentityFromHostPath(hostPath string) (*Identity, error) {
+	canonical := NormalizeHostPath(hostPath)
+	if canonical == "" {
+		return nil, fmt.Errorf("path cannot be empty")
+	}
+	return identityFromCanonical(canonical), nil
+}
+
+// NormalizeHostPath canonicalises a host path string without touching the
+// local filesystem: forward slashes, cleaned, lower-case Windows drive letter,
+// and Docker Desktop VM mount prefixes mapped back to their Windows drive
+// ("/run/desktop/mnt/host/c/Users/x" -> "c:/Users/x").
+func NormalizeHostPath(hostPath string) string {
+	p := strings.TrimSpace(strings.ReplaceAll(hostPath, `\`, "/"))
+	if p == "" {
+		return ""
+	}
+	for _, prefix := range []string{"/run/desktop/mnt/host/", "/host_mnt/", "/mnt/host/"} {
+		if rest, ok := strings.CutPrefix(p, prefix); ok && len(rest) >= 1 && isDriveLetter(rest[0]) && (len(rest) == 1 || rest[1] == '/') {
+			p = rest[:1] + ":/" + strings.TrimPrefix(rest[1:], "/")
+			break
+		}
+	}
+	if len(p) >= 2 && p[1] == ':' && isDriveLetter(p[0]) {
+		drive := strings.ToLower(p[:1])
+		return drive + ":" + path.Clean("/"+p[2:])
+	}
+	return path.Clean(p)
+}
+
+func isDriveLetter(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
+}
+
+func identityFromCanonical(canonical string) *Identity {
+	baseName := path.Base(canonical)
 	// Handle root directories or empty basenames
 	if baseName == "" || baseName == "." || baseName == "/" || (len(baseName) >= 2 && baseName[1] == ':') {
 		baseName = "project"
@@ -103,7 +146,7 @@ func ComputeIdentity(path string) (*Identity, error) {
 		Slug:          slug,
 		Hash:          hash8,
 		CanonicalPath: canonical,
-	}, nil
+	}
 }
 
 // Resource Naming Helpers

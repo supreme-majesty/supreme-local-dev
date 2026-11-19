@@ -10,6 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/supreme-majesty/supreme-local-dev/internal/config"
+	"github.com/supreme-majesty/supreme-local-dev/internal/project"
 )
 
 // InitProject auto-detects the project framework and generates .sld/config.yaml.
@@ -32,7 +33,7 @@ func InitProject(projectRoot string) error {
 			WebRoot: "public",
 		},
 		Domain: config.DomainConfig{
-			Name: fmt.Sprintf("%s.test", projectName),
+			Name: fmt.Sprintf("%s.%s", project.Slugify(projectName), config.DefaultTLD()),
 		},
 	}
 

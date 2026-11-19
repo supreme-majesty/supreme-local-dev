@@ -222,7 +222,31 @@ An ordered list of detectors, each returning apps plus suggested services. PHP (
 - ✅ Binaries untracked (`sld`, `sld-bin`, `sld-linux`, `sld-mac`, `sld-win.exe`, `main`, `debug-env`); already covered by `.gitignore`.
 - Optional: untrack `.idea/` (also in `.gitignore`). Remove `cmd/debug-env` if unused.
 
-### M1 — Container-mode foundations *(3–4 days)*
+### M1 — Container-mode foundations *(3–4 days)* — implemented 2026-11-19
+
+What landed:
+- `internal/hostenv`: detects container mode by self-inspection, translates bind mounts to host paths and volume paths to volume subpaths, gives stable project IDs from host paths, publishes ports on `SLD_BIND_HOST` (default `127.0.0.1`), and finds the workspace owner UID.
+- `internal/tls`: SLD's own CA under `<data>/ca` (mkcert's CA is imported on the host when present). Each project gets a certificate for its exact host names, because browsers reject `*.localhost`/`*.test` wildcards. The router mounts only `<data>/certs` and `<data>/traefik`.
+- `.localhost` default TLD (`SLD_TLD` overrides it), and no hosts-file edits for `.localhost` or from inside a container.
+- The router binds to loopback and carries a spec hash, so existing routers are recreated with the new bindings.
+- `shell`/`exec`/`php`/`composer`/`artisan`/`npm` and SQL import go through the Docker SDK (`internal/docker/exec.go`), so no `docker` CLI is needed.
+
+- The router's host ports can be changed with `SLD_HTTP_PORT`/`SLD_HTTPS_PORT` (default 80/443), and printed URLs include non-default ports.
+- The router image moved from `traefik:v3.1` to `traefik:v3.6`. Traefik 3.1's Docker provider cannot talk to Docker Engine 29, so no project was routed on current Docker.
+
+Verified end to end on Docker Desktop 29.8 (Windows), with SLD running in a container and a workspace bind-mounted from a Windows path:
+- `init` and `start` succeeded.
+- `https://shop.localhost` returned PHP output through Traefik → nginx → PHP-FPM, and the certificate verified against SLD's CA.
+- A wrong host name was rejected.
+- Piped stdin, exit codes and the ephemeral Node container worked.
+- `destroy` removed the project certificate.
+
+Follow-ups:
+- Terminal resize while a shell is open (only the initial size is sent).
+- Publish the rebuilt `sld-router:2` image. Existing installs keep the broken v3.1 router until it is updated.
+- A `doctor` check that the Docker Engine is ≥ 26, which volume subpaths require.
+
+Original scope:
 - `internal/pathmap` with self-inspection, multiple workspace roots, Windows/Docker Desktop source formats, and unit tests using recorded `ContainerInspect` fixtures (C1).
 - Move certs, CA and Traefik dynamic config to the `sld-data` volume. Add the built-in CA plus a cert issuer, and keep mkcert only as an import path (C2, C4).
 - `.localhost` default TLD, loopback router ports, UID from the workspace owner (C3, C7, C9).

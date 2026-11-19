@@ -23,6 +23,23 @@ type HealthcheckConfig struct {
 	Retries     int
 }
 
+// Mount types supported by Mount.
+const (
+	MountTypeBind   = "bind"
+	MountTypeVolume = "volume"
+)
+
+// Mount is a structured filesystem mount. Unlike the Volumes bind strings it
+// can express a named-volume subpath, which lets SLD share a sub-directory of
+// its own data volume with sibling containers when SLD itself runs in Docker.
+type Mount struct {
+	Type     string // MountTypeBind or MountTypeVolume
+	Source   string // host path (bind) or volume name (volume)
+	Target   string // path inside the container
+	ReadOnly bool
+	Subpath  string // volume only: sub-directory of the volume to mount (Docker Engine >= 26)
+}
+
 // DesiredContainer defines the required configuration of a container.
 type DesiredContainer struct {
 	Name        string
@@ -31,10 +48,12 @@ type DesiredContainer struct {
 	ConfigHash  string
 	Cmd         []string
 	WorkingDir  string
+	User        string
 	Environment map[string]string
 	Ports       []string
 	Networks    []string
-	Volumes     []string
+	Volumes     []string // "source:target[:mode]" bind / named-volume strings
+	Mounts      []Mount  // structured mounts (host-path translated, volume subpaths)
 	ExtraHosts  []string
 	Labels      map[string]string
 	Healthcheck *HealthcheckConfig

@@ -7,15 +7,24 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/supreme-majesty/supreme-local-dev/internal/docker"
+	"github.com/supreme-majesty/supreme-local-dev/internal/hostenv"
 )
 
-// lazyRunner creates a Runner on demand, connecting to Docker Engine.
+// lazyRunner creates a Runner on demand, connecting to Docker Engine and
+// detecting whether SLD itself runs on the host or inside a container.
 func lazyRunner() (*Runner, error) {
 	engine, err := docker.NewDockerEngine()
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to Docker: %w\n  Is Docker Desktop running?", err)
 	}
-	return NewRunner(engine), nil
+	env, err := hostenv.Detect(context.Background(), engine)
+	if err != nil {
+		_ = engine.Close()
+		return nil, fmt.Errorf("SLD is running in a container but cannot inspect itself: %w\n  Mount the Docker socket: -v /var/run/docker.sock:/var/run/docker.sock", err)
+	}
+	runner := NewRunner(engine)
+	runner.SetEnv(env)
+	return runner, nil
 }
 
 // RegisterCommands adds V2 Docker-backed subcommands to the root cobra command.
@@ -34,8 +43,8 @@ func RegisterCommands(rootCmd *cobra.Command) {
 		Long: `Performs first-time SLD V2 setup:
   1. Validates Docker Engine connectivity
   2. Checks host port 80/443 availability
-  3. Creates the sld-global bridge network and wildcard certificates
-  4. Starts the Traefik router container for *.test domain routing`,
+  3. Creates the sld-global bridge network and SLD's local CA
+  4. Starts the Traefik router container for *.localhost domain routing`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			runner, err := lazyRunner()
 			if err != nil {
@@ -165,21 +174,22 @@ containers for the project in dependency order with health verification.`,
 	})
 
 	// --- sld v2 secure ---
-	var secureTLD string
-	secureCmd := &cobra.Command{
+	v2Cmd.AddCommand(&cobra.Command{
 		Use:   "secure",
-		Short: "Generate wildcard TLS certificates via mkcert and reload the router",
+		Short: "Create SLD's local CA and router certificate, reload the router, and show how to trust the CA",
+		Long: `Ensures SLD's local certificate authority exists (reusing mkcert's CA when SLD
+runs on a host with mkcert installed), refreshes the router's default certificate,
+and recreates the router. Projects with 'domain.tls: true' get their own
+certificate on 'sld v2 start'.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			runner, err := lazyRunner()
 			if err != nil {
 				// Allow certificate generation even if Docker isn't running yet
 				runner = &Runner{}
 			}
-			return runner.Secure(context.Background(), secureTLD)
+			return runner.Secure(context.Background())
 		},
-	}
-	secureCmd.Flags().StringVar(&secureTLD, "tld", "test", "Top-level domain for wildcard certificate")
-	v2Cmd.AddCommand(secureCmd)
+	})
 
 	// --- sld v2 config ---
 	configCmd := &cobra.Command{

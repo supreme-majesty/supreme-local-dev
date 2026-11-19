@@ -8,10 +8,31 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/supreme-majesty/supreme-local-dev/internal/project"
 	"gopkg.in/yaml.v3"
 )
 
 var SupportedPHPVersions = []string{"8.1", "8.2", "8.3", "8.4"}
+
+// FallbackTLD is the default top-level domain for project domains. Browsers
+// resolve *.localhost to loopback without any DNS or hosts-file setup.
+const FallbackTLD = "localhost"
+
+// DefaultTLD returns the TLD used for project domains that do not set one
+// explicitly: SLD_TLD when set, otherwise "localhost".
+func DefaultTLD() string {
+	if tld := strings.Trim(strings.ToLower(strings.TrimSpace(os.Getenv("SLD_TLD"))), "."); tld != "" {
+		return tld
+	}
+	return FallbackTLD
+}
+
+// IsAutoResolvingDomain reports whether domain resolves to loopback without
+// hosts-file or DNS configuration (RFC 6761 "localhost" names).
+func IsAutoResolvingDomain(domain string) bool {
+	d := strings.TrimSuffix(strings.ToLower(domain), ".")
+	return d == "localhost" || strings.HasSuffix(d, ".localhost")
+}
 
 // LoadFromBytes parses and validates raw YAML configuration bytes.
 func LoadFromBytes(data []byte, defaultName string) (*Config, error) {
@@ -60,7 +81,7 @@ func ApplyDefaults(cfg *Config, defaultName string) {
 	}
 
 	if cfg.Domain.Name == "" {
-		cfg.Domain.Name = fmt.Sprintf("%s.test", cfg.Name)
+		cfg.Domain.Name = fmt.Sprintf("%s.%s", project.Slugify(cfg.Name), DefaultTLD())
 	}
 
 	if cfg.Services.Database.Type != "" && cfg.Services.Database.Version == "" {

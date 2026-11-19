@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	"github.com/supreme-majesty/supreme-local-dev/internal/config"
 	"github.com/supreme-majesty/supreme-local-dev/internal/dns"
 	docker "github.com/supreme-majesty/supreme-local-dev/internal/docker"
+	"github.com/supreme-majesty/supreme-local-dev/internal/hostenv"
 	"github.com/supreme-majesty/supreme-local-dev/internal/orchestrate"
 	"github.com/supreme-majesty/supreme-local-dev/internal/project"
 	"github.com/supreme-majesty/supreme-local-dev/internal/reconcile"
@@ -33,11 +35,41 @@ type Runner struct {
 	orch *orchestrate.Orchestrator
 }
 
-// NewRunner creates a Runner from a Docker engine client.
+// NewRunner creates a Runner from a Docker engine client. It assumes SLD runs
+// on the host; use SetEnv to switch to container-mode path translation.
 func NewRunner(engine docker.EngineClient) *Runner {
 	return &Runner{
 		orch: orchestrate.NewOrchestrator(engine),
 	}
+}
+
+// SetEnv sets the runtime environment (host or container) used by the runner.
+func (r *Runner) SetEnv(env *hostenv.Env) {
+	r.orch.SetEnv(env)
+}
+
+// env returns the runtime environment, defaulting to host mode.
+func (r *Runner) env() *hostenv.Env {
+	if r.orch == nil {
+		return hostenv.Host("")
+	}
+	return r.orch.Env()
+}
+
+// identity computes the project identity for a project directory, using the
+// host path when SLD runs in a container so IDs are stable across mounts.
+func (r *Runner) identity(projectRoot string) (*project.Identity, error) {
+	id, err := r.env().ProjectIdentity(projectRoot)
+	if err != nil {
+		return nil, fmt.Errorf("failed to compute project identity: %w", err)
+	}
+	return id, nil
+}
+
+// manageHostsFile reports whether SLD should edit the hosts file for domain:
+// never from inside a container, and never for *.localhost names.
+func (r *Runner) manageHostsFile(domain string) bool {
+	return domain != "" && !r.env().InContainer() && !config.IsAutoResolvingDomain(domain)
 }
 
 // Init performs first-time global setup:
@@ -55,11 +87,14 @@ func (r *Runner) Init(ctx context.Context) error {
 	}
 	fmt.Println("[SLD] ✅ Docker Engine is running.")
 
-	// 2. Check host ports 80/443 if sld-router isn't already running
-	if !r.isRouterRunning(ctx) {
-		for _, port := range []int{80, 443} {
+	// 2. Check the router's host ports if sld-router isn't already running.
+	// From inside a container the host's ports cannot be probed; Docker
+	// reports a conflict when the router is created instead.
+	env := r.env()
+	if !env.InContainer() && !r.isRouterRunning(ctx) {
+		for _, port := range []int{env.HTTPPort(), env.HTTPSPort()} {
 			if !isLocalPortAvailable(port) {
-				fmt.Printf("[SLD] ⚠️  Host port %d appears to be in use (another web server or V1 Nginx may be running).\n", port)
+				fmt.Printf("[SLD] ⚠️  Host port %d appears to be in use (set SLD_HTTP_PORT / SLD_HTTPS_PORT to use other ports).\n", port)
 			}
 		}
 	}
@@ -71,10 +106,16 @@ func (r *Runner) Init(ctx context.Context) error {
 	}
 	fmt.Println("[SLD] ✅ Global router is running on sld-global network.")
 
-	// 4. Platform DNS resolver setup (non-fatal if elevation is required)
-	if err := dns.EnsureResolver(dns.DefaultTLD); err != nil {
-		fmt.Printf("[SLD] ⚠️  DNS resolver setup skipped: %v\n", err)
+	// 4. Platform DNS resolver setup — only needed for TLDs browsers do not
+	// resolve on their own, and impossible from inside a container.
+	tld := config.DefaultTLD()
+	if r.manageHostsFile("sld." + tld) {
+		if err := dns.EnsureResolver(tld); err != nil {
+			fmt.Printf("[SLD] ⚠️  DNS resolver setup skipped: %v\n", err)
+		}
 	}
+
+	r.printTrustHint()
 
 	fmt.Println()
 	fmt.Println("[SLD] Initialization complete. SLD is ready. 🚀")
@@ -103,17 +144,21 @@ func (r *Runner) Start(ctx context.Context, projectRoot string) error {
 	fmt.Printf("[SLD] Project: %s | PHP %s | Domain: %s\n", cfg.Name, cfg.Runtime.PHP, cfg.Domain.Name)
 
 	// 3. Compute identity
-	identity, err := project.ComputeIdentity(projectRoot)
+	identity, err := r.identity(projectRoot)
 	if err != nil {
 		return fmt.Errorf("failed to compute project identity: %w", err)
 	}
 
-	// 4. Build spec
+	// 4. Build spec (absolute root: it is translated into container mounts)
+	absRoot, err := filepath.Abs(projectRoot)
+	if err != nil {
+		return fmt.Errorf("failed to resolve project path: %w", err)
+	}
 	spec := &orchestrate.ProjectSpec{
 		Identity:    identity,
 		Config:      cfg,
 		ConfigHash:  config.ComputeConfigHash(configData),
-		ProjectRoot: projectRoot,
+		ProjectRoot: absRoot,
 	}
 
 	// 5. Services summary
@@ -135,20 +180,17 @@ func (r *Runner) Start(ctx context.Context, projectRoot string) error {
 	fmt.Println()
 	fmt.Printf("[SLD] ✅ Project is running! (%.1fs)\n", elapsed.Seconds())
 
-	protocol := "http"
-	if cfg.Domain.TLS {
-		protocol = "https"
-	}
-	fmt.Printf("🚀 Access your site at: %s://%s\n", protocol, cfg.Domain.Name)
+	env := r.env()
+	fmt.Printf("🚀 Access your site at: %s\n", env.SiteURL(cfg.Domain.Name, cfg.Domain.TLS))
 	if cfg.Services.Mailpit.Enabled {
-		fmt.Printf("📬 Mailpit inbox at:    http://mail.%s\n", cfg.Domain.Name)
+		fmt.Printf("📬 Mailpit inbox at:    %s\n", env.SiteURL("mail."+cfg.Domain.Name, false))
 	}
 
 	return nil
 }
 
 func (r *Runner) ensureProjectDomainDNS(domain string) {
-	if domain == "" {
+	if !r.manageHostsFile(domain) {
 		return
 	}
 	added, err := dns.EnsureDomain(domain)
@@ -165,7 +207,7 @@ func (r *Runner) ensureProjectDomainDNS(domain string) {
 func (r *Runner) Stop(ctx context.Context, projectRoot string) error {
 	fmt.Printf("[SLD] Stopping project at %s...\n", projectRoot)
 
-	identity, err := project.ComputeIdentity(projectRoot)
+	identity, err := r.identity(projectRoot)
 	if err != nil {
 		return fmt.Errorf("failed to compute project identity: %w", err)
 	}
@@ -192,7 +234,7 @@ func (r *Runner) Stop(ctx context.Context, projectRoot string) error {
 
 // Destroy tears down project containers, project network, and optionally persistent volumes.
 func (r *Runner) Destroy(ctx context.Context, projectRoot string, removeVolumes, skipConfirm bool) error {
-	identity, err := project.ComputeIdentity(projectRoot)
+	identity, err := r.identity(projectRoot)
 	if err != nil {
 		return fmt.Errorf("failed to compute project identity: %w", err)
 	}
@@ -214,7 +256,7 @@ func (r *Runner) Destroy(ctx context.Context, projectRoot string, removeVolumes,
 	}
 
 	// Best-effort cleanup of SLD-managed hosts entry
-	if cfg, _, err := loadProjectConfig(projectRoot); err == nil && cfg.Domain.Name != "" {
+	if cfg, _, err := loadProjectConfig(projectRoot); err == nil && r.manageHostsFile(cfg.Domain.Name) {
 		_ = dns.RemoveHostsEntry(cfg.Domain.Name)
 		if cfg.Services.Mailpit.Enabled {
 			_ = dns.RemoveHostsEntry("mail." + cfg.Domain.Name)
@@ -243,7 +285,7 @@ func (r *Runner) Status(ctx context.Context, projectRoot string, allProjects, as
 		return r.statusAll(ctx, asJSON)
 	}
 
-	identity, err := project.ComputeIdentity(projectRoot)
+	identity, err := r.identity(projectRoot)
 	if err != nil {
 		return fmt.Errorf("failed to compute project identity: %w", err)
 	}
@@ -345,7 +387,7 @@ func (r *Runner) statusAll(ctx context.Context, asJSON bool) error {
 
 // Inspect outputs detailed JSON metadata for the current project and its Docker containers.
 func (r *Runner) Inspect(ctx context.Context, projectRoot string) error {
-	identity, err := project.ComputeIdentity(projectRoot)
+	identity, err := r.identity(projectRoot)
 	if err != nil {
 		return fmt.Errorf("failed to compute project identity: %w", err)
 	}
@@ -403,36 +445,69 @@ func (r *Runner) Inspect(ctx context.Context, projectRoot string) error {
 	return printJSON(payload)
 }
 
-// Secure generates/refreshes local wildcard TLS certificates and reloads the global router.
-func (r *Runner) Secure(ctx context.Context, tld string) error {
-	if tld == "" {
-		tld = tls.DefaultTLD
-	}
-	fmt.Printf("[SLD] Configuring local TLS wildcard certificate for *.%s...\n", tld)
-
-	certMgr, err := tls.NewCertManager("")
+// Secure ensures SLD's local CA and the router's default certificate exist,
+// recreates the router, and explains how to trust the CA.
+func (r *Runner) Secure(ctx context.Context) error {
+	env := r.env()
+	certMgr, err := tls.NewManager(env.DataDir())
 	if err != nil {
 		return fmt.Errorf("failed to initialize certificate manager: %w", err)
 	}
-
-	if err := certMgr.EnsureWildcardCert(tld); err != nil {
-		return fmt.Errorf("failed to generate wildcard certificate: %w", err)
+	if !env.InContainer() {
+		if imported, err := certMgr.ImportMkcertCA(); err != nil {
+			return err
+		} else if imported {
+			fmt.Println("[SLD] Using mkcert's local CA for SLD certificates.")
+		}
 	}
-	fmt.Printf("[SLD] ✅ Certificate ready: %s\n", certMgr.CertPath())
-	fmt.Printf("[SLD] ✅ Traefik TLS config: %s\n", certMgr.TraefikConfigPath())
+	if err := certMgr.EnsureDefault(); err != nil {
+		return fmt.Errorf("failed to prepare certificates: %w", err)
+	}
+	fmt.Printf("[SLD] ✅ Local CA ready: %s\n", certMgr.CACertPath())
 
 	if r.orch != nil && r.orch.Engine() != nil {
 		if err := r.orch.Engine().Ping(ctx); err == nil {
-			fmt.Println("[SLD] Reloading sld-router to apply TLS certificates...")
+			fmt.Println("[SLD] Reloading sld-router...")
 			if err := r.orch.RecreateRouter(ctx); err != nil {
 				return fmt.Errorf("failed to reload router: %w", err)
 			}
-			fmt.Println("[SLD] ✅ Global router updated with TLS configuration.")
+			fmt.Println("[SLD] ✅ Router updated.")
 		}
 	}
 
+	r.printTrustHint()
 	fmt.Println("[SLD] Set 'domain.tls: true' in .sld/config.yaml and run 'sld v2 start' to serve HTTPS.")
 	return nil
+}
+
+// printTrustHint tells the user how to trust SLD's CA in their browsers.
+func (r *Runner) printTrustHint() {
+	env := r.env()
+	certMgr, err := tls.NewManager(env.DataDir())
+	if err != nil || !certMgr.HasCA() {
+		return
+	}
+	caPath := certMgr.CACertPath()
+	fmt.Println()
+	fmt.Println("[SLD] HTTPS: trust SLD's local CA once so browsers accept project certificates.")
+	if env.InContainer() {
+		name := env.ContainerID()
+		if len(name) > 12 {
+			name = name[:12]
+		}
+		if name == "" {
+			name = "<sld-container>"
+		}
+		fmt.Printf("  1. Copy it out:  docker cp %s:%s sld-ca.crt\n", name, caPath)
+		caPath = "sld-ca.crt"
+	} else {
+		fmt.Printf("  CA certificate:  %s\n", caPath)
+	}
+	fmt.Printf("  • macOS:   sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain %s\n", caPath)
+	fmt.Printf("  • Windows: certutil -addstore -f ROOT %s   (admin PowerShell)\n", caPath)
+	fmt.Printf("  • Linux:   sudo cp %s /usr/local/share/ca-certificates/sld-ca.crt && sudo update-ca-certificates\n", caPath)
+	fmt.Println("  • Firefox: Settings → Certificates → Import (Firefox keeps its own trust store)")
+	fmt.Println("  Plain http:// works without this step.")
 }
 
 // ConfigValidate parses and validates .sld/config.yaml for the project.
@@ -501,61 +576,80 @@ func (r *Runner) Doctor(ctx context.Context) error {
 		}
 	}
 
-	// 3. Host Ports 80 / 443
-	fmt.Print("Host Ports 80/443:   ")
-	if routerRunning {
+	// 3. Router host ports
+	httpPort, httpsPort := r.env().HTTPPort(), r.env().HTTPSPort()
+	label := fmt.Sprintf("Host Ports %d/%d:", httpPort, httpsPort)
+	fmt.Printf("%-21s", label+" ")
+	switch {
+	case routerRunning:
 		fmt.Println("✅ Bound by sld-router")
-	} else {
-		p80 := isLocalPortAvailable(80)
-		p443 := isLocalPortAvailable(443)
-		if p80 && p443 {
+	case r.env().InContainer():
+		fmt.Println("ℹ️  Cannot probe host ports from a container; Docker reports conflicts on 'sld v2 init'")
+	default:
+		var busy []string
+		for _, p := range []int{httpPort, httpsPort} {
+			if !isLocalPortAvailable(p) {
+				busy = append(busy, strconv.Itoa(p))
+			}
+		}
+		if len(busy) == 0 {
 			fmt.Println("✅ Available")
 		} else {
-			var busy []string
-			if !p80 {
-				busy = append(busy, "80")
-			}
-			if !p443 {
-				busy = append(busy, "443")
-			}
-			fmt.Printf("⚠️  Port(s) %s in use by another process (stop host Nginx/Apache or V1 daemon)\n", strings.Join(busy, ", "))
+			fmt.Printf("⚠️  Port(s) %s in use by another process (stop it, or set SLD_HTTP_PORT / SLD_HTTPS_PORT)\n", strings.Join(busy, ", "))
 		}
 	}
 
-	// 4. TLS Wildcard Certificates
-	fmt.Print("TLS Certificates:    ")
-	certMgr, err := tls.NewCertManager("")
+	// 4. Local CA and certificates
+	fmt.Print("TLS (local CA):      ")
+	env := r.env()
+	certMgr, err := tls.NewManager(env.DataDir())
 	if err != nil {
 		fmt.Printf("❌ %v\n", err)
+	} else if certMgr.HasCA() {
+		fmt.Printf("✅ Ready (%s) — trust it once for HTTPS\n", certMgr.CACertPath())
 	} else {
-		_, mkcertErr := exec.LookPath("mkcert")
-		if _, err := os.Stat(certMgr.CertPath()); err == nil {
-			if mkcertErr == nil {
-				fmt.Println("✅ Wildcard certificate ready (*.test, mkcert available)")
-			} else {
-				fmt.Println("✅ Wildcard certificate ready (self-signed; install mkcert for browser trust)")
-			}
-		} else {
-			fmt.Println("⚠️  Certificate not yet generated (run 'sld v2 secure' or 'sld v2 init')")
-		}
+		fmt.Println("⚠️  Not generated yet (run 'sld v2 init' or 'sld v2 secure')")
 	}
 
 	// 5. DNS Resolution
-	fmt.Print("DNS (*.test):        ")
-	resolved, _ := dns.CheckResolution("sld.test")
-	if resolved {
-		fmt.Println("✅ Resolving to 127.0.0.1")
-	} else {
-		hasHosts, _ := dns.HasHostsEntry("sld.test")
-		if hasHosts {
-			fmt.Println("✅ Hosts entry configured")
+	tld := config.DefaultTLD()
+	fmt.Printf("DNS (*.%s):%s", tld, strings.Repeat(" ", max(1, 13-len(tld))))
+	switch {
+	case config.IsAutoResolvingDomain("sld." + tld):
+		fmt.Println("✅ Resolved by browsers automatically (no hosts file needed)")
+	case env.InContainer():
+		fmt.Printf("ℹ️  Add host entries for *.%s on your machine (SLD cannot edit the host's hosts file from a container)\n", tld)
+	default:
+		resolved, _ := dns.CheckResolution("sld." + tld)
+		hasHosts, _ := dns.HasHostsEntry("sld." + tld)
+		if resolved || hasHosts {
+			fmt.Println("✅ Resolving to loopback")
 		} else {
-			fmt.Printf("⚠️  *.test not resolving to loopback (hosts file: %s)\n", dns.HostsFilePath())
+			fmt.Printf("⚠️  *.%s not resolving to loopback (hosts file: %s)\n", tld, dns.HostsFilePath())
 		}
 	}
 
-	// 6. WSL2 environment note
-	if dns.IsWSL2() {
+	// 6. Runtime environment and mounts
+	fmt.Print("SLD Runtime:         ")
+	if env.InContainer() {
+		fmt.Printf("🐳 Container (data: %s, ports bind %s)\n", env.DataDir(), env.BindHost())
+		for _, m := range env.Mounts() {
+			switch m.Type {
+			case "bind":
+				fmt.Printf("  • %-22s ← host %s\n", m.Destination, m.Source)
+			case "volume":
+				fmt.Printf("  • %-22s ← volume %s\n", m.Destination, m.Name)
+			}
+		}
+		if _, err := env.MountFor(env.DataDir(), "/check", true); err != nil {
+			fmt.Printf("  ❌ Data directory %s is not on a volume; the router cannot read certificates.\n", env.DataDir())
+		}
+	} else {
+		fmt.Printf("Host (data: %s, ports bind %s)\n", env.DataDir(), env.BindHost())
+	}
+
+	// 7. WSL2 environment note
+	if dns.IsWSL2() && !env.InContainer() {
 		fmt.Println("WSL2 Environment:    ℹ️  Detected WSL2 — ensure Windows host ports 80/443 forward to WSL2 (mirrored networking recommended)")
 	}
 
@@ -564,7 +658,7 @@ func (r *Runner) Doctor(ctx context.Context) error {
 
 // Logs streams container logs for a project service.
 func (r *Runner) Logs(ctx context.Context, projectRoot, service string, follow bool, tail string) error {
-	identity, err := project.ComputeIdentity(projectRoot)
+	identity, err := r.identity(projectRoot)
 	if err != nil {
 		return fmt.Errorf("failed to compute project identity: %w", err)
 	}
@@ -634,17 +728,12 @@ func (r *Runner) Open(ctx context.Context, projectRoot string) error {
 		return err
 	}
 
-	domain := cfg.Domain.Name
-	if domain == "" {
-		domain = fmt.Sprintf("%s.test", cfg.Name)
+	url := r.env().SiteURL(cfg.Domain.Name, cfg.Domain.TLS)
+	if r.env().InContainer() {
+		// No host browser is reachable from inside the SLD container.
+		fmt.Printf("[SLD] Open %s in your browser.\n", url)
+		return nil
 	}
-
-	protocol := "http"
-	if cfg.Domain.TLS {
-		protocol = "https"
-	}
-
-	url := fmt.Sprintf("%s://%s", protocol, domain)
 	fmt.Printf("[SLD] Opening %s in default browser...\n", url)
 
 	return openBrowserURL(url)
@@ -837,8 +926,8 @@ func (r *Runner) LegacyMigrate(ctx context.Context, projectRoot string, execute 
 		fmt.Println("\n[SLD] Step 3: Starting V2 containers and importing SQL backup...")
 		if err := r.Start(ctx, projectRoot); err != nil {
 			fmt.Printf("  ⚠️  Could not auto-start V2 stack for import (%v). Import manually after 'sld v2 start'.\n", err)
-		} else if identity, idErr := project.ComputeIdentity(projectRoot); idErr == nil {
-			if err := importSQLDumpIntoContainer(projectRoot, identity, cfg, dumpFile); err != nil {
+		} else if identity, idErr := r.identity(projectRoot); idErr == nil {
+			if err := r.importSQLDump(ctx, projectRoot, identity, cfg, dumpFile); err != nil {
 				fmt.Printf("  ⚠️  Automatic SQL import failed: %v\n", err)
 			} else {
 				fmt.Println("  ✅ Imported V1 database into isolated Docker volume.")
@@ -851,7 +940,14 @@ func (r *Runner) LegacyMigrate(ctx context.Context, projectRoot string, execute 
 	return nil
 }
 
-func importSQLDumpIntoContainer(projectRoot string, identity *project.Identity, cfg *config.Config, dumpFile string) error {
+// importSQLDump streams a SQL dump into the project's database container via
+// the Docker API (no host docker CLI required).
+func (r *Runner) importSQLDump(ctx context.Context, projectRoot string, identity *project.Identity, cfg *config.Config, dumpFile string) error {
+	executor, ok := r.orch.Engine().(docker.Executor)
+	if !ok {
+		return fmt.Errorf("docker engine does not support exec")
+	}
+
 	f, err := os.Open(dumpFile)
 	if err != nil {
 		return err
@@ -863,20 +959,25 @@ func importSQLDumpIntoContainer(projectRoot string, identity *project.Identity, 
 		return err
 	}
 
-	dbContainer := identity.DBContainerName()
-	var args []string
+	opts := docker.ExecOptions{Stdin: f, Stdout: os.Stdout, Stderr: os.Stderr}
 	switch strings.ToLower(cfg.Services.Database.Type) {
 	case "postgres", "postgresql":
-		args = []string{"exec", "-i", "-e", "PGPASSWORD=" + dbPass, dbContainer, "psql", "-U", cfg.Name, cfg.Name}
+		opts.Cmd = []string{"psql", "-U", cfg.Name, cfg.Name}
+		opts.Env = []string{"PGPASSWORD=" + dbPass}
 	default:
-		args = []string{"exec", "-i", dbContainer, "mysql", "-u", "root", "-p" + dbPass, cfg.Name}
+		// MYSQL_PWD keeps the password out of the process list.
+		opts.Cmd = []string{"mysql", "-u", "root", cfg.Name}
+		opts.Env = []string{"MYSQL_PWD=" + dbPass}
 	}
 
-	cmd := newCommand("docker", args...)
-	cmd.Stdin = f
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	code, err := executor.Exec(ctx, identity.DBContainerName(), opts)
+	if err != nil {
+		return err
+	}
+	if code != 0 {
+		return fmt.Errorf("database import exited with code %d", code)
+	}
+	return nil
 }
 
 // LegacyRemove archives V1 state and prints/executes cleanup steps for the V1 daemon.

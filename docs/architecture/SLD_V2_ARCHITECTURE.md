@@ -38,7 +38,7 @@ graph TD
 
     subgraph Docker Engine
         subgraph sld-global Network
-            Router[sld-router: Traefik v3.1]
+            Router[sld-router: Traefik v3.6]
         end
         
         subgraph Project: App A (sld-app-a-3f7b49a1-net)
@@ -116,7 +116,7 @@ com.supreme.sld.resource-type=<container|network|volume>
 
 ## 5. Router Architecture (Traefik)
 
-- **Selected Router:** Traefik v3.1 (`ghcr.io/supreme-majesty/sld-router:2`).
+- **Selected Router:** Traefik v3.6 (`ghcr.io/supreme-majesty/sld-router:2`).
 - **Dynamic Configuration:** Traefik discovers project Nginx containers dynamically via Docker provider labels on the `sld-global` network.
 - **Docker Socket Security:** Traefik mounts `/var/run/docker.sock:ro` (read-only). Project containers NEVER mount the Docker socket.
 - **HTTPS Termination:** Traefik uses a dynamic file provider pointing to `~/.sld/certs/` for wildcard TLS termination.

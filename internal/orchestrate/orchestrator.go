@@ -2,10 +2,11 @@ package orchestrate
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/supreme-majesty/supreme-local-dev/internal/config"
 	"github.com/supreme-majesty/supreme-local-dev/internal/docker"
+	"github.com/supreme-majesty/supreme-local-dev/internal/hostenv"
 	"github.com/supreme-majesty/supreme-local-dev/internal/project"
 	"github.com/supreme-majesty/supreme-local-dev/internal/reconcile"
 	"github.com/supreme-majesty/supreme-local-dev/internal/secret"
@@ -36,14 +38,18 @@ const (
 // Orchestrator manages the lifecycle of Docker containers for SLD projects.
 type Orchestrator struct {
 	engine             docker.EngineClient
+	env                *hostenv.Env
 	healthTimeout      time.Duration
 	healthPollInterval time.Duration
 }
 
 // NewOrchestrator creates an Orchestrator backed by the given Docker engine.
+// It assumes SLD runs on the host; call SetEnv with the result of
+// hostenv.Detect when SLD may be running inside a container.
 func NewOrchestrator(engine docker.EngineClient) *Orchestrator {
 	return &Orchestrator{
 		engine:             engine,
+		env:                hostenv.Host(""),
 		healthTimeout:      30 * time.Second,
 		healthPollInterval: 500 * time.Millisecond,
 	}
@@ -52,6 +58,24 @@ func NewOrchestrator(engine docker.EngineClient) *Orchestrator {
 // Engine returns the underlying Docker engine client.
 func (o *Orchestrator) Engine() docker.EngineClient {
 	return o.engine
+}
+
+// Env returns the runtime environment used for path translation.
+func (o *Orchestrator) Env() *hostenv.Env {
+	return o.env
+}
+
+// SetEnv replaces the runtime environment (nil restores host mode).
+func (o *Orchestrator) SetEnv(env *hostenv.Env) {
+	if env == nil {
+		env = hostenv.Host("")
+	}
+	o.env = env
+}
+
+// CertManager returns the TLS manager for SLD's data directory.
+func (o *Orchestrator) CertManager() (*tls.Manager, error) {
+	return tls.NewManager(o.env.DataDir())
 }
 
 // ProjectSpec bundles the resolved identity, config, and root path for a project.
@@ -76,18 +100,38 @@ func (o *Orchestrator) EnsureGlobalInfra(ctx context.Context) error {
 		return fmt.Errorf("failed to ensure global network: %w", err)
 	}
 
-	// 2. Ensure TLS wildcard certificates exist for local *.test routing
-	routerVolumes := []string{
-		"/var/run/docker.sock:/var/run/docker.sock:ro",
-	}
-	certMgr, err := tls.NewCertManager("")
-	if err == nil {
-		if err := certMgr.EnsureWildcardCert("test"); err == nil {
-			routerVolumes = append(routerVolumes,
-				fmt.Sprintf("%s:/etc/traefik/dynamic/tls.yml:ro", filepath.ToSlash(certMgr.TraefikConfigPath())),
-				fmt.Sprintf("%s:/etc/traefik/certs:ro", filepath.ToSlash(certMgr.CertDir())),
-			)
+	// When SLD runs in a container, join sld-global so it can reach the router
+	// and project services by container name.
+	if o.env.InContainer() && o.env.ContainerID() != "" {
+		if err := o.engine.ConnectNetwork(ctx, GlobalNetwork, o.env.ContainerID()); err != nil {
+			return fmt.Errorf("failed to attach SLD container to %s: %w", GlobalNetwork, err)
 		}
+	}
+
+	// 2. Ensure the local CA, the router's default certificate and TLS config.
+	certMgr, err := o.CertManager()
+	if err != nil {
+		return err
+	}
+	if !o.env.InContainer() {
+		// On the host, reuse mkcert's CA if present: browsers usually trust it already.
+		if imported, err := certMgr.ImportMkcertCA(); err != nil {
+			return err
+		} else if imported {
+			fmt.Println("[SLD TLS] Using mkcert's local CA for SLD certificates.")
+		}
+	}
+	if err := certMgr.EnsureDefault(); err != nil {
+		return fmt.Errorf("failed to prepare TLS certificates: %w", err)
+	}
+
+	certMount, err := o.env.MountFor(certMgr.CertDir(), "/etc/traefik/certs", true)
+	if err != nil {
+		return fmt.Errorf("router cannot access SLD certificates (mount SLD's data directory as a volume): %w", err)
+	}
+	dynMount, err := o.env.MountFor(certMgr.TraefikDir(), "/etc/traefik/dynamic", true)
+	if err != nil {
+		return fmt.Errorf("router cannot access SLD Traefik config (mount SLD's data directory as a volume): %w", err)
 	}
 
 	// 3. Ensure router container is running
@@ -103,12 +147,18 @@ func (o *Orchestrator) EnsureGlobalInfra(ctx context.Context) error {
 			docker.LabelResourceType: docker.ResourceTypeContainer,
 		},
 		Ports: []string{
-			"80:80",
-			"443:443",
+			o.env.PublishPort(o.env.HTTPPort(), "80"),
+			o.env.PublishPort(o.env.HTTPSPort(), "443"),
 		},
 		Networks: []string{GlobalNetwork},
-		Volumes:  routerVolumes,
+		// The Docker socket path is resolved on the Docker host, which is what Traefik needs.
+		Volumes: []string{"/var/run/docker.sock:/var/run/docker.sock:ro"},
+		Mounts:  []reconcile.Mount{certMount, dynMount},
 	}
+	// The router has no project config file, so hash its spec: a changed bind
+	// address or mount (e.g. after upgrading SLD) recreates the router.
+	desired.ConfigHash = specHash(desired)
+	desired.Labels[docker.LabelConfigHash] = desired.ConfigHash
 
 	// Check if router already exists
 	containers, err := o.engine.ListAllContainers(ctx)
@@ -170,6 +220,17 @@ func (o *Orchestrator) StartProject(ctx context.Context, spec *ProjectSpec) erro
 	}
 	_ = projectNetID
 
+	// 1b. Per-project TLS certificate (browsers reject *.localhost / *.test wildcards).
+	if spec.Config.Domain.TLS {
+		certMgr, err := o.CertManager()
+		if err != nil {
+			return err
+		}
+		if _, err := certMgr.EnsureCert(id.ID, ProjectTLSHosts(spec.Config)); err != nil {
+			return fmt.Errorf("failed to issue TLS certificate: %w", err)
+		}
+	}
+
 	// 2. Build desired container specs (ordered by dependency: DB/Redis/Mailpit -> PHP -> Nginx -> Node)
 	desired, err := o.buildDesiredContainers(spec)
 	if err != nil {
@@ -218,6 +279,12 @@ func (o *Orchestrator) DestroyProject(ctx context.Context, identity *project.Ide
 
 	if err := o.engine.RemoveNetwork(ctx, identity.NetworkName()); err != nil {
 		return fmt.Errorf("failed to remove project network %s: %w", identity.NetworkName(), err)
+	}
+
+	if certMgr, err := o.CertManager(); err == nil {
+		if err := certMgr.RemoveCert(identity.ID); err != nil {
+			return fmt.Errorf("failed to remove project certificate: %w", err)
+		}
 	}
 
 	if removeVolumes {
@@ -343,9 +410,15 @@ func (o *Orchestrator) buildPHP(spec *ProjectSpec) (*reconcile.DesiredContainer,
 		return nil, err
 	}
 
+	appMount, err := o.env.MountFor(spec.ProjectRoot, "/app", false)
+	if err != nil {
+		return nil, err
+	}
+
+	uid, gid := o.ProjectOwner(spec.ProjectRoot)
 	env := map[string]string{
-		"WWWUSER":  resolveHostUID(),
-		"WWWGROUP": resolveHostGID(),
+		"WWWUSER":  uid,
+		"WWWGROUP": gid,
 	}
 
 	// Xdebug
@@ -404,9 +477,7 @@ func (o *Orchestrator) buildPHP(spec *ProjectSpec) (*reconcile.DesiredContainer,
 		Environment: env,
 		Networks:    []string{id.NetworkName()},
 		ExtraHosts:  []string{"host.docker.internal:host-gateway"},
-		Volumes: []string{
-			fmt.Sprintf("%s:/app", spec.ProjectRoot),
-		},
+		Mounts:      []reconcile.Mount{appMount},
 	}, nil
 }
 
@@ -427,10 +498,15 @@ func (o *Orchestrator) buildNginx(spec *ProjectSpec) (*reconcile.DesiredContaine
 		return nil, err
 	}
 
+	appMount, err := o.env.MountFor(spec.ProjectRoot, "/app", true)
+	if err != nil {
+		return nil, err
+	}
+
 	// Traefik routing labels for dynamic discovery
 	domain := cfg.Domain.Name
 	if domain == "" {
-		domain = fmt.Sprintf("%s.test", cfg.Name)
+		domain = fmt.Sprintf("%s.%s", id.Slug, config.DefaultTLD())
 	}
 
 	labels["traefik.enable"] = "true"
@@ -458,9 +534,7 @@ func (o *Orchestrator) buildNginx(spec *ProjectSpec) (*reconcile.DesiredContaine
 		Labels:      labels,
 		Environment: env,
 		Networks:    []string{id.NetworkName(), GlobalNetwork},
-		Volumes: []string{
-			fmt.Sprintf("%s:/app:ro", spec.ProjectRoot),
-		},
+		Mounts:      []reconcile.Mount{appMount},
 	}, nil
 }
 
@@ -486,10 +560,7 @@ func (o *Orchestrator) buildDatabase(spec *ProjectSpec) (*reconcile.DesiredConta
 
 	var ports []string
 	if dbCfg.ExposePort > 0 {
-		containerPort := resolveDBPort(dbCfg.Type)
-		ports = []string{
-			fmt.Sprintf("%d:%s", dbCfg.ExposePort, containerPort),
-		}
+		ports = []string{o.env.PublishPort(dbCfg.ExposePort, resolveDBPort(dbCfg.Type))}
 	}
 
 	return &reconcile.DesiredContainer{
@@ -604,9 +675,12 @@ func (o *Orchestrator) buildNode(spec *ProjectSpec) (*reconcile.DesiredContainer
 
 	var ports []string
 	if nodeCfg.DevServer.ExposePort > 0 {
-		ports = []string{
-			fmt.Sprintf("%d:%d", nodeCfg.DevServer.ExposePort, nodeCfg.DevServer.Port),
-		}
+		ports = []string{o.env.PublishPort(nodeCfg.DevServer.ExposePort, strconv.Itoa(nodeCfg.DevServer.Port))}
+	}
+
+	appMount, err := o.env.MountFor(spec.ProjectRoot, "/app", false)
+	if err != nil {
+		return nil, err
 	}
 
 	nodeCmd := strings.TrimSpace(nodeCfg.DevServer.Command)
@@ -629,9 +703,7 @@ func (o *Orchestrator) buildNode(spec *ProjectSpec) (*reconcile.DesiredContainer
 		Environment: env,
 		Ports:       ports,
 		Networks:    []string{id.NetworkName()},
-		Volumes: []string{
-			fmt.Sprintf("%s:/app", spec.ProjectRoot),
-		},
+		Mounts:      []reconcile.Mount{appMount},
 	}, nil
 }
 
@@ -822,18 +894,39 @@ func resolveDBHealthcheck(dbType string) *reconcile.HealthcheckConfig {
 
 // --- Helpers ---
 
-func resolveHostUID() string {
-	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
-		return "1000" // Default for Docker Desktop VM
+// fallbackUID is used when the real owner is unknown or root (Docker Desktop VMs).
+const fallbackUID = "1000"
+
+// ProjectOwner returns the UID/GID that project containers should run as so
+// files they create belong to the developer. Inside a container SLD's own UID
+// is meaningless, so it uses the owner of the mounted project directory.
+func (o *Orchestrator) ProjectOwner(projectRoot string) (string, string) {
+	if o.env.InContainer() {
+		if uid, gid, ok := hostenv.OwnerOf(projectRoot); ok && uid != "0" {
+			return uid, gid
+		}
+		return fallbackUID, fallbackUID
 	}
-	return strconv.Itoa(os.Getuid())
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		return fallbackUID, fallbackUID // Docker Desktop VM default
+	}
+	return strconv.Itoa(os.Getuid()), strconv.Itoa(os.Getgid())
 }
 
-func resolveHostGID() string {
-	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
-		return "1000"
+// ProjectTLSHosts lists the host names a project's certificate must cover.
+func ProjectTLSHosts(cfg *config.Config) []string {
+	hosts := []string{cfg.Domain.Name}
+	if cfg.Services.Mailpit.Enabled {
+		hosts = append(hosts, "mail."+cfg.Domain.Name)
 	}
-	return strconv.Itoa(os.Getgid())
+	return hosts
+}
+
+// specHash fingerprints the parts of a container spec that require recreation.
+func specHash(d *reconcile.DesiredContainer) string {
+	h := sha256.New()
+	fmt.Fprintf(h, "%s|%q|%q|%q|%+v", d.Image, d.Ports, d.Networks, d.Volumes, d.Mounts)
+	return hex.EncodeToString(h.Sum(nil))[:16]
 }
 
 func resolveDBConnection(dbType string) string {

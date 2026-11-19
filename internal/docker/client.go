@@ -10,6 +10,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
@@ -257,8 +258,11 @@ func (e *DockerEngine) CreateContainer(ctx context.Context, desired *reconcile.D
 		}
 	}
 
+	containerConfig.User = desired.User
+
 	hostConfig := &container.HostConfig{
 		Binds:        desired.Volumes,
+		Mounts:       toDockerMounts(desired.Mounts),
 		PortBindings: portBindings,
 		ExtraHosts:   desired.ExtraHosts,
 		RestartPolicy: container.RestartPolicy{
@@ -359,4 +363,30 @@ func (e *DockerEngine) PullImage(ctx context.Context, imageName string) error {
 // Close closes the underlying Docker client connection.
 func (e *DockerEngine) Close() error {
 	return e.cli.Close()
+}
+
+// toDockerMounts converts SLD structured mounts into Docker SDK mounts.
+func toDockerMounts(mounts []reconcile.Mount) []mount.Mount {
+	if len(mounts) == 0 {
+		return nil
+	}
+	out := make([]mount.Mount, 0, len(mounts))
+	for _, m := range mounts {
+		dm := mount.Mount{
+			Source:   m.Source,
+			Target:   m.Target,
+			ReadOnly: m.ReadOnly,
+		}
+		switch m.Type {
+		case reconcile.MountTypeVolume:
+			dm.Type = mount.TypeVolume
+			if m.Subpath != "" {
+				dm.VolumeOptions = &mount.VolumeOptions{Subpath: m.Subpath}
+			}
+		default:
+			dm.Type = mount.TypeBind
+		}
+		out = append(out, dm)
+	}
+	return out
 }

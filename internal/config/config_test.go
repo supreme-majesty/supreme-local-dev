@@ -88,8 +88,8 @@ runtime:
 	if cfg.Runtime.WebRoot != "public" {
 		t.Errorf("expected default web_root 'public', got %s", cfg.Runtime.WebRoot)
 	}
-	if cfg.Domain.Name != "my-service.test" {
-		t.Errorf("expected default domain 'my-service.test', got %s", cfg.Domain.Name)
+	if cfg.Domain.Name != "my-service.localhost" {
+		t.Errorf("expected default domain 'my-service.localhost', got %s", cfg.Domain.Name)
 	}
 	if cfg.Domain.TLS {
 		t.Errorf("expected default TLS false")
