@@ -206,3 +206,20 @@ func TestCopyTreeSkipsDependencies(t *testing.T) {
 }
 
 func ioNopCloser(s string) io.ReadCloser { return io.NopCloser(strings.NewReader(s)) }
+
+func TestShareRefusesStoppedProject(t *testing.T) {
+	ws := t.TempDir()
+	writeTree(t, ws, map[string]string{
+		"blog/.git/HEAD":        "x",
+		"blog/index.html":       "x",
+		"blog/.sld/config.yaml": "version: 2\napps:\n  web: {runtime: static}\n",
+	})
+	call := classicServer(t, ws, nil)
+	rec := call("POST", "/api/share/start", `{"site":"blog"}`)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "not running") {
+		t.Fatalf("share of a stopped project: %d %s", rec.Code, rec.Body)
+	}
+	if rec = call("POST", "/api/share/start", `{"site":"nope"}`); rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown project: %d %s", rec.Code, rec.Body)
+	}
+}

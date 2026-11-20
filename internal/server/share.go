@@ -20,6 +20,7 @@ import (
 
 	"github.com/supreme-majesty/supreme-local-dev/internal/orchestrate"
 	"github.com/supreme-majesty/supreme-local-dev/internal/reconcile"
+	v2 "github.com/supreme-majesty/supreme-local-dev/internal/v2"
 )
 
 const (
@@ -44,20 +45,22 @@ type tunnelView struct {
 
 var shareNameRe = regexp.MustCompile(`[^a-z0-9-]+`)
 
-// shareDomain resolves a site name (or domain) to the domain to share.
-func (s *Server) shareDomain(site string) (string, bool) {
+// shareTarget resolves a site name, domain or project id to the project and
+// the domain to share (the project's primary app unless a domain is given).
+func (s *Server) shareTarget(site string) (v2.ScanResult, string, bool) {
 	results, err := s.scan(false)
 	if err != nil {
-		return "", false
+		return v2.ScanResult{}, "", false
 	}
 	for _, res := range results {
+		id, _ := s.opts.Env.ProjectIdentity(res.Root)
 		for _, app := range res.AppList {
-			if res.Name == site || app.Domain == site {
-				return app.Domain, true
+			if res.Name == site || app.Domain == site || (id != nil && id.ID == site) {
+				return res, app.Domain, true
 			}
 		}
 	}
-	return "", false
+	return v2.ScanResult{}, "", false
 }
 
 func (s *Server) shareContainers(ctx context.Context) ([]*reconcile.ActualContainer, error) {
@@ -84,12 +87,18 @@ func decodeSite(r *http.Request) string {
 
 func (s *Server) handleShareStart(w http.ResponseWriter, r *http.Request) {
 	site := decodeSite(r)
-	domain, ok := s.shareDomain(site)
+	project, domain, ok := s.shareTarget(site)
 	if !ok {
 		writeError(w, http.StatusNotFound, "no project named "+site)
 		return
 	}
 	ctx := r.Context()
+	// A tunnel to a stopped project only ever answers 404, publicly.
+	if v := s.view(ctx, project); v.Status != "running" && v.Status != "partial" {
+		writeError(w, http.StatusConflict, project.Name+" is not running; start it before sharing it")
+		return
+	}
+	site = project.Name // tunnels are labelled with the project name, whatever was passed
 	existing, err := s.shareContainers(ctx)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
