@@ -920,9 +920,25 @@ func ProjectTLSHosts(cfg *config.Config) []string {
 }
 
 // specHash fingerprints the parts of a container spec that require recreation.
+//
+// Everything that defines the container counts: command, environment, user
+// and labels too, so editing an app's env or command, its domain or HTTPS
+// (router labels) in .sld/config.yaml takes effect on the next start instead
+// of being ignored by an existing container. fmt prints maps in sorted key
+// order, so the hash is stable.
 func specHash(d *reconcile.DesiredContainer) string {
+	labels := make(map[string]string, len(d.Labels))
+	for k, v := range d.Labels {
+		if k != docker.LabelConfigHash {
+			labels[k] = v
+		}
+	}
 	h := sha256.New()
 	fmt.Fprintf(h, "%s|%q|%q|%q|%+v", d.Image, d.Ports, d.Networks, d.Volumes, d.Mounts)
+	fmt.Fprintf(h, "|%q|%q|%q|%q|%q|%q", d.Cmd, d.WorkingDir, d.User, d.Environment, d.ExtraHosts, labels)
+	if d.Healthcheck != nil {
+		fmt.Fprintf(h, "|%+v", *d.Healthcheck)
+	}
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }
 

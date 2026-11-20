@@ -10,6 +10,7 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/supreme-majesty/supreme-local-dev/internal/config"
+	"github.com/supreme-majesty/supreme-local-dev/internal/docker"
 	"github.com/supreme-majesty/supreme-local-dev/internal/project"
 	"github.com/supreme-majesty/supreme-local-dev/internal/reconcile"
 )
@@ -521,5 +522,47 @@ func TestDestroyProject(t *testing.T) {
 	}
 	if len(engine.removedVolumes) < 2 {
 		t.Errorf("expected DB and Redis volumes to be removed, got %v", engine.removedVolumes)
+	}
+}
+
+func TestSpecHashCoversWhatDefinesAContainer(t *testing.T) {
+	base := func() *reconcile.DesiredContainer {
+		return &reconcile.DesiredContainer{
+			Image:       "nginx:1",
+			Cmd:         []string{"npm", "run", "dev"},
+			Environment: map[string]string{"A": "1", "B": "2"},
+			Labels: map[string]string{
+				"traefik.http.routers.x.rule": "Host(`x.localhost`)",
+				docker.LabelConfigHash:        "old",
+			},
+		}
+	}
+	h := specHash(base())
+
+	// Stable: map order and the hash label itself do not matter.
+	same := base()
+	same.Environment = map[string]string{"B": "2", "A": "1"}
+	same.Labels[docker.LabelConfigHash] = "something else"
+	if specHash(same) != h {
+		t.Fatal("hash depends on map order or on the hash label")
+	}
+
+	changes := map[string]func(*reconcile.DesiredContainer){
+		"env":     func(d *reconcile.DesiredContainer) { d.Environment["A"] = "9" },
+		"command": func(d *reconcile.DesiredContainer) { d.Cmd = []string{"npm", "start"} },
+		"user":    func(d *reconcile.DesiredContainer) { d.User = "1000:1000" },
+		"https route": func(d *reconcile.DesiredContainer) {
+			d.Labels["traefik.http.routers.x-secure.tls"] = "true"
+		},
+		"healthcheck": func(d *reconcile.DesiredContainer) {
+			d.Healthcheck = &reconcile.HealthcheckConfig{Test: []string{"CMD", "true"}}
+		},
+	}
+	for name, change := range changes {
+		d := base()
+		change(d)
+		if specHash(d) == h {
+			t.Errorf("changing the %s does not change the hash", name)
+		}
 	}
 }
