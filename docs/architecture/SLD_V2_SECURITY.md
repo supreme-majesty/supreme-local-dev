@@ -1,5 +1,7 @@
 # SLD V2 Security Model & Boundaries
 
+> **See also** [ADR 0010](../adr/0010-control-plane-authentication.md) for the control plane's authentication (token, session cookie, Host allow-list, CSRF), added when SLD started running as a container with a dashboard.
+
 This document defines the security architecture, trust boundaries, privilege separation, and credential handling for Supreme Local Dev (SLD) V2.
 
 ---

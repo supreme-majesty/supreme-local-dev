@@ -1,7 +1,7 @@
 # ADR 0001: Docker Engine as Execution Runtime
 
 ## Status
-Accepted
+Accepted. Amended by [ADR 0008](0008-containerised-control-plane.md): SLD itself now also runs as a container (the control plane), still without changing the host.
 
 ## Context
 SLD V1 implemented local development by directly installing software packages (`nginx`, `php-fpm`, `mariadb-server`, `dnsmasq`) onto the host operating system using package managers (`apt`, `brew`, `winget`). This caused dependency hell across projects needing different PHP versions, polluted the host system, and broke easily across host OS upgrades.

@@ -1,5 +1,7 @@
 # SLD V2 Current State Audit
 
+> **Historical.** This audit describes the V1 code as it was before V2 (2026). That code was deleted in Phase 15 M9; see [`SLD_V2_ARCHITECTURE.md`](../architecture/SLD_V2_ARCHITECTURE.md) for the current system.
+
 ## Executive Summary
 
 The Supreme Local Dev (SLD) repository currently implements a **V1 architecture** that is highly coupled to the host operating system. It operates as an elevated background daemon that mutates host state—specifically installing dependencies via OS package managers (`apt-get`, `brew`), directly modifying system DNS (`/etc/hosts`, `dnsmasq`), and dynamically generating host Nginx configuration files to proxy to host UNIX sockets (`php-fpm`). 

@@ -1,7 +1,7 @@
 # ADR 0002: Daemonless Architecture
 
 ## Status
-Accepted
+Accepted. Amended by [ADR 0008](0008-containerised-control-plane.md): SLD itself now also runs as a container (the control plane), still without changing the host.
 
 ## Context
 SLD V1 required a background daemon running on port 2025 as a systemd unit (`sld-daemon.service`) with elevated privileges (`root`/`sudo`). The daemon maintained a global state file (`/var/lib/sld/state.json`) and hosted an unauthenticated REST API that allowed any local process to execute commands with root privileges.

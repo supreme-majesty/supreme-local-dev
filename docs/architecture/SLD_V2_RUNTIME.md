@@ -1,5 +1,7 @@
 # SLD V2 Runtime & Execution Contracts
 
+> **See also** [ADR 0007](../adr/0007-multi-runtime-drivers.md): besides PHP, projects can use node, python, ruby, go, static, image, dockerfile, proxy and compose runtimes. The PHP contracts below still apply.
+
 This document specifies the container runtime contracts, FastCGI integration, explicit health-check verification, Node execution modes, and permission handling for SLD V2.
 
 ---

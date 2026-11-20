@@ -25,8 +25,10 @@ docker logs sld        # copy the admin token printed on first start
 
 Open **http://localhost:2025**, paste the token, and you will see every project found in `~/Projects`.
 
-- **Windows (PowerShell):** use your folder path, e.g. `-v "C:\Users\me\Projects:/workspace"`.
+- **Windows (PowerShell):** use your folder path, e.g. `-v "C:\Users\me\Projects:/workspace"`. For speed, keep projects in the WSL filesystem (`\\wsl$\Ubuntu\home\me\Projects`) and run the command from WSL; projects on `C:\` work but file access is slower.
+- **macOS:** the projects folder must be shared with Docker Desktop (*Settings → Resources → File sharing*; your home folder is shared by default). VirtioFS (the default file-sharing mode) is the fastest.
 - **Linux:** SLD runs as a non-root user and needs the Docker socket's group: replace `--group-add 0` with `--group-add $(stat -c %g /var/run/docker.sock)`.
+- **Several project folders:** mount each one and list them: `-v ~/work:/workspace/work -v ~/oss:/workspace/oss`, or set `SLD_WORKSPACES=/a,/b`.
 
 > **The admin token is shown once.** Only its hash is stored. Lost it? Restart SLD with `serve --reset-token` to print a new one.
 
@@ -58,8 +60,13 @@ If another project already uses 3306 or 6379, set `MYSQL_PORT` / `REDIS_PORT` in
   - **Start / Stop / Restart** run in the background; their output streams into a console.
   - **Logs** follows any container of the project.
   - **Remove** deletes containers but keeps data unless you explicitly choose to delete the data volumes.
-- **Setup** — Docker and router status, ports, workspace, and the HTTPS certificate download.
-- **Database**, **Dashboard**, **Domains**, **Logs**, **Settings** and the other pages work as before.
+- **Setup** — Docker and router status, ports, workspace, the HTTPS certificate download, and automation (set up new projects, restart what was running, autostart).
+- **Dashboard**, **Sites**, **Domains** — overview, metrics and every site with its URL; tag and categorise sites. *Remove* hides a project (it writes `.sldignore` in its folder).
+- **Services** — SLD's own containers (router, the bundled databases and mail, plugins) with start / stop / restart. **Doctor** checks Docker, the router, workspaces, HTTPS and domains.
+- **Plugins** — shared Redis, Mailpit and PostgreSQL containers, reachable from every project.
+- **Share** — a public `trycloudflare.com` URL for a project, through a Cloudflare quick tunnel.
+- **New project** — Laravel, WordPress, React, Vue, Next.js, Node, static or a Git clone, created in your workspace (the tools run in containers). **Ghost Mode** clones a project, and optionally its database, to experiment.
+- **Database**, **Logs**, **X-Ray**, **Settings** — database manager, log viewer, request inspector and preferences.
 
 ### Domains and ports
 
@@ -111,6 +118,12 @@ Runtimes: `php`, `static`, `node`, `python`, `ruby`, `go`, `image`, `dockerfile`
 
 Add a `.sldignore` file to a folder to keep SLD from treating it as a project.
 
+### Databases
+
+- **Per project:** `services.database: { type: mysql | mariadb | postgres }` gives the project its own database container. Credentials are generated into `.sld/secrets.json` (keep it out of git) and passed to the app as `DB_HOST`, `DB_DATABASE`, `DATABASE_URL`, … The data lives in a Docker volume that survives stop, restart and remove; only *Remove* with *Also delete data volumes* ticked (`sld destroy --volumes`) deletes it.
+- **Shared:** the compose setup includes MariaDB (and PostgreSQL with `--profile postgres`). The PostgreSQL plugin adds one more shared server. Point a project at one in its own `.env` and manage it from **Database**.
+- **Compose projects** keep their own database services and volumes.
+
 ## Command line (without the dashboard)
 
 The same engine is available as the `sld` CLI for people who don't run the image. From a project folder:
@@ -136,9 +149,10 @@ The SLD container controls Docker through its socket, which is equivalent to roo
 ## Development
 
 ```bash
-go test ./internal/...            # engine tests
+go test ./...                      # engine, server and services tests
 go build -o sld ./cmd/sld          # CLI / server
 cd sld-dashboard && npm ci && npm run dev   # dashboard on :5173 (proxies /api to :2025)
+make e2e SLD_IMAGE=sld:local       # end-to-end test of an image (own router and network; safe next to a running SLD)
 ```
 
 Architecture and decisions: [`docs/architecture`](docs/architecture) and [`docs/adr`](docs/adr); the V2 plan is [`docs/architecture/SLD_V2_PHASE15_CUTOVER.md`](docs/architecture/SLD_V2_PHASE15_CUTOVER.md).

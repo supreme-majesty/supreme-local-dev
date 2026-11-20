@@ -495,7 +495,15 @@ Original scope:
 - Move surviving `pkg/services` code (DB drivers, SQL import, healer, env manager, tunnel, discovery) under `internal/`.
 - `internal/legacy` remains only in the final host-binary build tag.
 
-### M10 — Docs *(1–2 days, alongside M7–M9)*
+### M10 — Docs *(1–2 days, alongside M7–M9)* — implemented 2026-11-20
+
+What landed:
+- **README:** per-OS notes (Windows/WSL filesystem, macOS file sharing, Linux socket group, several workspaces), databases (per project vs shared), the dashboard pages as they are after M9, `make e2e`.
+- **ADRs:** 0007 multi-runtime drivers, 0008 containerised control plane (0001 and 0002 marked as amended), 0009 path mapping and workspace mounts, 0010 control plane authentication.
+- **Architecture:** `SLD_V2_ARCHITECTURE.md` rewritten for the current system. The audit, the implementation blueprint and the distribution doc are marked historical; the DNS, security and runtime docs point to what changed.
+- `dockerization_progress.md` closed.
+
+Original scope:
 - README rewritten: "Run one container" quick start; per-OS notes (Linux socket group, Docker Desktop file sharing, Windows: keep projects in the WSL filesystem for speed); trusting the CA; shared vs project databases.
 - ADRs: 0007 multi-runtime drivers, 0008 containerised control plane (amends 0001/0002), 0009 path mapping and workspace mounts, 0010 auth.
 - Update `SLD_V2_ARCHITECTURE.md`, mark the audit as historical, close `dockerization_progress.md`.
@@ -525,10 +533,12 @@ Estimate: about 5–7 weeks for one person. M5 (control plane) and M3 (drivers) 
 
 ## 9. Definition of done
 
-- [ ] `docker run … ghcr.io/supreme-majesty/sld:2` on a clean Linux, macOS and Windows machine opens a working dashboard, with nothing else installed.
-- [ ] A Laravel, Next.js, Django, Rails, Go, static and Dockerfile project each start from the dashboard and are reachable at `<name>.localhost`.
-- [ ] Project and shared databases can be created, browsed, queried, imported, snapshotted and cloned from the dashboard.
-- [ ] Every API route requires auth; the router and API bind to loopback by default.
-- [ ] Upgraded v1-config PHP projects start with zero container recreation.
-- [ ] No `pkg/adapters`, systemd units or host-mutation code in the image build; no binaries in `git ls-files`.
-- [ ] README, ADRs 0007–0010 merged.
+Status 2026-11-20 (after M10). Nothing is ticked that has not been verified.
+
+- [ ] `docker run … ghcr.io/supreme-majesty/sld:2` on a clean Linux, macOS and Windows machine opens a working dashboard, with nothing else installed. *Verified on Windows + Docker Desktop with a locally built image. The image is not published yet: the GitHub account's billing lock blocks every workflow.*
+- [ ] A Laravel, Next.js, Django, Rails, Go, static and Dockerfile project each start from the dashboard and are reachable at `<name>.localhost`. *The end-to-end suite covers static, Node, Python, Dockerfile and compose, plus PHP in CI; real Laravel/compose projects were verified by hand (swiftsms, credora). Next.js, Django, Rails and Go fixtures are still to add.*
+- [ ] Project and shared databases can be created, browsed, queried, imported, snapshotted and cloned from the dashboard. *The database manager is in daily use against the bundled MariaDB. Project database containers and the PostgreSQL plugin are found by the same Docker discovery but were not tested end to end. `services.database.shared` (SLD-managed shared servers per project) is not implemented.*
+- [x] Every API route requires auth (except health, login and auth status); the router and API bind to loopback by default.
+- [ ] Upgraded v1-config PHP projects start with zero container recreation. *Covered by the config migration golden test only; no test compares container spec hashes before and after.*
+- [x] No `pkg/adapters`, systemd units or host-mutation code in the image build; no binaries in `git ls-files`. *(`sld legacy remove`, for leaving a V1 install, still offers to disable the old systemd unit on the host it runs on.)*
+- [x] README and ADRs 0007–0010 written (committed locally, not pushed).

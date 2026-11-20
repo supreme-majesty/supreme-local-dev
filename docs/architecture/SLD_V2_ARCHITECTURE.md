@@ -1,160 +1,144 @@
-# SLD V2 Architecture
+# SLD Architecture
 
-## 1. Product Definition
+*Current as of Phase 15 (2026-11). Decisions: [`docs/adr`](../adr). How we got here: [`SLD_V2_PHASE15_CUTOVER.md`](SLD_V2_PHASE15_CUTOVER.md).*
 
-**Supreme Local Dev (SLD) is a high-performance, Docker-backed local development orchestrator that bridges the seamless speed of Laravel Herd with the reproducible isolation of DDEV.**
+## 1. Product
 
-- **Target Users:** Professional web developers working primarily with PHP (Laravel, Symfony, WordPress) and Node.js (Vite, React) who need isolated environments without writing complex `docker-compose.yml` files.
-- **Supported OS:** Linux (Tier 1), macOS (Tier 2), Windows via WSL2 (Tier 3).
-- **Docker Requirements:** Docker Engine (Linux/WSL2) or Docker Desktop/OrbStack (macOS).
-- **Supported PHP Versions:** 8.1, 8.2, 8.3, 8.4 via official lightweight SLD images.
-- **What SLD Manages:** Docker container lifecycle, dynamic `.test` HTTP/HTTPS routing, local SSL generation (mkcert), isolated database/Redis provisioning, and seamless CLI passthrough (composer, artisan, npm).
-- **What SLD Intentionally Does NOT Manage:** Host-level package managers (`apt`, `brew`, `winget`), global host web servers, system PHP-FPM installations, host database daemons, or production deployments.
+**Supreme Local Dev (SLD) is a local development control plane that runs as one Docker container.** It finds the projects in a folder you mount, runs each one in containers with a `<name>.localhost` domain, and lets you manage projects, databases, logs and HTTPS from a dashboard.
 
----
+- **Stacks:** PHP (Laravel, Symfony, WordPress), Node, Python, Ruby, Go, static sites, a Dockerfile, any image, an existing Docker Compose project, or a process already running on the host.
+- **Platforms:** anything that runs Docker: Linux, macOS and Windows (Docker Desktop).
+- **Two front ends, one engine:** the dashboard (`sld serve`, the image's default command) and the CLI (`sld start`, `sld scan`, ...) for people who don't run the image.
+- **Out of scope:** installing software on the host, editing the hosts file or system DNS, production deployment.
 
-## 2. Architecture Principles
+## 2. Principles
 
-1. **Host Purity & Zero Host Mutation:** No runtime dependencies (Nginx, PHP, databases, Redis) are installed on the host. SLD never executes host package managers.
-2. **Go CLI as the Control Plane:** The CLI uses the Docker Engine API directly for deterministic state control rather than generating and shelling out to `docker-compose`.
-3. **No Elevated Daemon:** The V1 background daemon (port 2025 HTTP API) and systemd service are eliminated. The CLI runs in user-space. Docker Engine is the sole runtime engine.
-4. **Declarative State:** Projects explicitly define their requirements in `.sld/config.yaml`. Docker Engine state is the sole runtime source of truth, discovered via standardized Docker labels.
-5. **FastCGI Separation:** Traefik terminates HTTP/HTTPS and proxies to project Nginx; Traefik MUST NOT route HTTP directly to PHP-FPM. PHP-FPM speaks FastCGI. Project Nginx serves static assets directly and proxies PHP requests over FastCGI.
-6. **Deterministic Isolation:** Every project runs in its own isolated Docker bridge network. Auxiliary services (databases, Redis) are private to the project network and do not publish host ports by default.
+1. **The host is not changed.** Everything runs in containers. SLD installs nothing, edits no system files, and never calls a package manager ([ADR 0001](../adr/0001-docker-engine-runtime.md), [ADR 0008](../adr/0008-containerised-control-plane.md)).
+2. **Docker is the state.** Running state is read from Docker through standard labels; the project's `.sld/config.yaml` is the desired state ([ADR 0006](../adr/0006-reconciliation-model.md)).
+3. **Any runtime through drivers.** A project is a list of apps; each runtime has a driver that plans its containers ([ADR 0007](../adr/0007-multi-runtime-drivers.md)).
+4. **Projects keep their own setup.** Compose projects run their own compose files; SLD only adds routing and removes clashing host ports.
+5. **Locked down by default.** The API needs a token, listens on loopback, and checks Host/Origin/CSRF ([ADR 0010](../adr/0010-control-plane-authentication.md)).
+6. **One identity everywhere.** A project's ID comes from its host path, so the image and the CLI manage the same containers ([ADR 0003](../adr/0003-project-identity.md), [ADR 0009](../adr/0009-path-mapping-and-workspace-mounts.md)).
 
----
-
-## 3. Component Architecture
+## 3. Components
 
 ```mermaid
 graph TD
-    subgraph Host OS
-        CLI[SLD Go CLI]
-        Browser[Web Browser]
-        MK[mkcert]
-        Files[Project Source Code]
-        Secrets[~/.sld/ or .sld/secrets]
+    Browser[Browser]
+    subgraph Host
+        Projects[Projects folder]
+        Sock[/var/run/docker.sock/]
+    end
+    subgraph Docker
+        SLD["sld (control plane)<br/>dashboard + /api + /api/v2"]
+        Router["sld-router (Traefik)"]
+        subgraph "sld-global network"
+            Router
+            Plugins["sld-plugin-redis / -mailpit / -postgres"]
+        end
+        subgraph "project shop (sld-shop-…-net)"
+            Nginx[nginx] --> PHP[php-fpm]
+            PHP --> DB[(database)]
+            Vite[node: vite]
+        end
+        subgraph "compose project sunport"
+            CWeb[web service] --> CDB[(db)]
+        end
+        Helper["helpers: docker compose, composer, node, cloudflared"]
     end
 
-    subgraph Docker Engine
-        subgraph sld-global Network
-            Router[sld-router: Traefik v3.6]
-        end
-        
-        subgraph Project: App A (sld-app-a-3f7b49a1-net)
-            NginxA[sld-app-a-3f7b49a1-nginx]
-            PHPA[sld-app-a-3f7b49a1-php: PHP-FPM 8.3]
-            DBA[(sld-app-a-3f7b49a1-db: MySQL 8.0)]
-            RedisA[(sld-app-a-3f7b49a1-redis: Redis 7)]
-        end
-        
-        subgraph Project: App B (sld-app-b-e81a029c-net)
-            NginxB[sld-app-b-e81a029c-nginx]
-            PHPB[sld-app-b-e81a029c-php: PHP-FPM 8.4]
-        end
-    end
-
-    Browser -->|*.test HTTP/S| Router
-    Router -->|HTTP :80| NginxA
-    Router -->|HTTP :80| NginxB
-    NginxA -->|FastCGI :9000| PHPA
-    NginxB -->|FastCGI :9000| PHPB
-    PHPA --> DBA
-    PHPA --> RedisA
-    Files <-->|Bind Mount /app| NginxA
-    Files <-->|Bind Mount /app| PHPA
-    CLI -->|Docker Engine API| Router
-    CLI -->|Docker Engine API| NginxA
-    CLI -->|Docker Engine API| PHPA
+    Browser -->|"localhost:2025 (token)"| SLD
+    Browser -->|"*.localhost :80/:443"| Router
+    SLD -->|Docker API| Sock
+    Projects -->|"mounted at /workspace"| SLD
+    Router --> Nginx
+    Router --> Vite
+    Router --> CWeb
+    SLD -.creates.-> Router
+    SLD -.creates.-> Nginx
+    SLD -.runs.-> Helper
 ```
 
-### Request Flow Path
-1. **DNS Resolution**: `my-app.test` resolves to `127.0.0.1`.
-2. **Gateway**: Request hits host port 80/443, received by `sld-router` (Traefik) on `sld-global`.
-3. **TLS Termination**: Traefik terminates TLS using wildcard certificate (`*.test`) mounted from `~/.sld/certs/`.
-4. **Project Web Server**: Traefik routes HTTP request to `sld-{id}-nginx` over `sld-global`.
-5. **Static vs Dynamic**:
-   - Static files (`.css`, `.js`, images): Nginx delivers directly from `/app/public` without waking PHP.
-   - Dynamic / PHP requests: Nginx proxies over FastCGI (TCP port 9000) to `sld-{id}-php` on `sld-{id}-net`.
-6. **Backend Execution**: PHP-FPM processes application code, communicates with internal DB/Redis, and returns response via Nginx and Traefik to the browser.
+| Component | Code | Role |
+|---|---|---|
+| Control plane | `cmd/sld/serve.go`, `internal/server` | HTTP server: dashboard, `/api/v2` (projects, jobs, logs, settings, auth), Docker-backed `/api` routes for the original pages (sites, services, plugins, share, doctor, metrics, new project) |
+| Database manager | `pkg/daemon/api`, `pkg/services` | `/api/db/*`: browse, query, import, snapshot, clone databases on discovered MySQL/MariaDB/PostgreSQL containers |
+| Runner | `internal/v2` | Project operations shared by the API and the CLI: init, scan, start, stop, destroy, logs, exec |
+| Orchestrator | `internal/orchestrate` | Plans → containers: networks, volumes, image builds, reconcile, health waits, compose stacks, waiting for routes |
+| Drivers | `internal/runtime` | One per runtime: turn an app into containers / builds / routes |
+| Detection | `internal/detect` | Finds projects in a folder and writes their config |
+| Host environment | `internal/hostenv` | In-container vs host, path translation, ports, project identity |
+| TLS | `internal/tls` | SLD's own CA, one certificate per project, Traefik TLS config |
+| Router | `docker/router` (Traefik v3.6) | Routes `*.localhost` to containers by Docker labels; file routes for the proxy runtime |
+| Images | `docker/php`, `docker/nginx` | `sld-php:8.1–8.4` (FPM, extensions, Composer), `sld-nginx` |
 
----
+## 4. Request flow
 
-## 4. Docker Architecture & Resource Model
+1. The browser resolves `shop.localhost` to 127.0.0.1 by itself (no DNS setup).
+2. The request reaches `sld-router` on the host's HTTP/HTTPS ports (80/443, or `SLD_HTTP_PORT` / `SLD_HTTPS_PORT`).
+3. Traefik picks the route from the container labels and, for HTTPS, the project's certificate signed by SLD's CA.
+4. The request goes to the app container on the shared `sld-global` network:
+   - nginx (which hands PHP to PHP-FPM over FastCGI, [ADR 0004](../adr/0004-fastcgi-nginx-php-separation.md));
+   - a dev server (Vite, Next.js, Django, ...);
+   - a static nginx;
+   - the routed service of a compose stack.
+5. App containers reach their database, Redis and Mailpit on the private project network.
 
-### Engine API
-SLD communicates directly with the Docker socket via the official Docker Go SDK (`github.com/docker/docker/client`).
+`start` returns only once the router serves every domain of the project, so "started" also means "reachable".
 
-### Networks
-- `sld-global`: Global Docker bridge network for Traefik ingress to project Nginx containers.
-- `sld-{project-id}-net`: Private per-project bridge network for internal communication between Nginx, PHP-FPM, Database, and Redis.
+## 5. Projects
 
-### Resource Naming Standards
-- Project Network: `sld-{project-id}-net`
-- Nginx Container: `sld-{project-id}-nginx`
-- PHP Container: `sld-{project-id}-php`
-- Database Container: `sld-{project-id}-db`
-- Redis Container: `sld-{project-id}-redis`
-- Node Container: `sld-{project-id}-node`
-- Database Volume: `sld-{project-id}-db-data`
+- **Discovery:** a project is a folder with `.git`, `.sld/config.yaml` or its own compose file, found up to three levels deep in each workspace. Group folders such as `laravel-builds/` are searched inside. `.sldignore` hides a folder.
+- **Config:** `.sld/config.yaml`, `version: 2`, an ordered list of apps plus services. Version 1 files are upgraded in memory.
+- **Domains:**
+  - first app: `<name>.localhost`;
+  - other apps: `<app>.<name>.localhost`;
+  - `domain.aliases` add more.
 
-### Label Strategy
-Standardized labels distinguish metadata, services, and resource types:
-```ini
-com.supreme.sld=true
-com.supreme.sld.version=2
-com.supreme.sld.project=<project-id>
-com.supreme.sld.project-path=<canonical-absolute-path>
-com.supreme.sld.managed-by=sld
-com.supreme.sld.config-hash=<sha256>
-com.supreme.sld.service=<nginx|php|db|redis|node|router>
-com.supreme.sld.resource-type=<container|network|volume>
-```
-*Note*: `service` identifies the functional service; `resource-type` describes the Docker entity type. Networks and volumes are never labeled as services.
+  The TLD defaults to `localhost` (`SLD_TLD` changes it); for TLDs that don't resolve by themselves, SLD prints the hosts lines to add.
+- **Resources:**
+  - project network: `sld-<id>-net`, created only when SLD runs containers of its own for the project;
+  - containers: `sld-<id>-<app|service>`;
+  - volumes: `sld-<id>-…`;
+  - all labelled `com.supreme.sld.*`.
+- **Users and files:** app processes run as the owner of the project folder; dependencies live in per-app volumes keyed by the lockfile hash.
+- **Databases:**
+  - **project databases:** `services.database.type` gives the project its own MySQL/MariaDB/PostgreSQL container and a named volume. Generated credentials are kept in the project's `.sld/secrets.json` (mode 0600; keep it out of git), and data survives `stop` and `destroy` without `--volumes`;
+  - **shared servers:** the bundled compose stack provides MariaDB, Redis and Mailpit; the Plugins page adds PostgreSQL. The database manager works with any of them;
+  - `services.database.shared`, which will put a project's database on a shared server, is reserved but not implemented yet.
 
----
+## 6. Control plane
 
-## 5. Router Architecture (Traefik)
+- **Data directory** (`/home/sld/.sld` in the image, a named volume):
+  - `auth.json` (token hash);
+  - `settings.json` (automation, autostart, site tags);
+  - `router.json` (ports);
+  - `ca/`, `certs/` and `traefik/` (TLS);
+  - generated compose overrides and nginx configs.
+- **Jobs:** set up, start, stop, restart, destroy, create and clone run as background jobs whose output streams to the dashboard (SSE). Only one job runs per project at a time.
+- **Automation** (on start):
+  - optionally write configs for new projects;
+  - restart what was running (default on);
+  - start autostart projects, or everything.
 
-- **Selected Router:** Traefik v3.6 (`ghcr.io/supreme-majesty/sld-router:2`).
-- **Dynamic Configuration:** Traefik discovers project Nginx containers dynamically via Docker provider labels on the `sld-global` network.
-- **Docker Socket Security:** Traefik mounts `/var/run/docker.sock:ro` (read-only). Project containers NEVER mount the Docker socket.
-- **HTTPS Termination:** Traefik uses a dynamic file provider pointing to `~/.sld/certs/` for wildcard TLS termination.
+  Starts run one at a time.
+- **Original pages:** they keep their API shapes, answered from Docker:
+  - services: SLD's own containers;
+  - plugins: `sld-plugin-*` containers;
+  - share: a cloudflared container;
+  - new project: Composer/Node helper containers;
+  - Ghost Mode: Go copy plus a marker file.
 
----
+## 7. Distribution
 
-## 6. PHP & Nginx Runtime Architecture
+- **Image:** `ghcr.io/supreme-majesty/sld`, multi-arch, built by `.github/workflows/docker-images.yml` together with `sld-router`, `sld-nginx` and `sld-php:8.1–8.4`.
+- **Compose:** `compose.yaml` in the repository runs SLD plus MariaDB, Redis, Mailpit and phpMyAdmin (PostgreSQL with `--profile postgres`).
+- **CLI binaries:** Linux, macOS and Windows binaries are attached to each GitHub release.
+- **Tests:** `go test ./...` for the engine and server. `scripts/e2e.sh` runs the image against sample projects of every runtime in an isolated router and network.
 
-- **Nginx (`sld-nginx:1`):** Lightweight web server dual-homed on `sld-global` and `sld-{id}-net`. Contains `/sld-health` health endpoint, static asset delivery, and FastCGI proxy rules.
-- **PHP-FPM (`sld-php:8.1..8.4`):** Dedicated per-project container on `sld-{id}-net`.
-  - Extensions pre-installed: `pdo_mysql`, `pdo_pgsql`, `redis`, `gd`, `zip`, `bcmath`, `intl`, `mbstring`, `opcache`, `pcntl`, `exif`, `soap`, `sockets`.
-  - Composer bundled globally.
-  - Xdebug pre-installed, toggled via `xdebug.enabled: true` / `XDEBUG_MODE=debug`.
-  - Node.js is strictly excluded.
-  - User permissions: Mapped host UID/GID via `WWWUSER`/`WWWGROUP` env vars; no full-tree `chown -R` on startup.
+## 8. Security
 
----
-
-## 7. Node Execution Model
-
-- **One-Shot Commands (`sld npm install`, `sld npm run build`):** Executed in ephemeral containers (`--rm`) with matching host UID/GID.
-- **Persistent Dev Server (`sld npm run dev` / Vite):** Executed in a managed, persistent container (`sld-{id}-node`) with automatic host port conflict detection and allocation. Nested subdomains (`vite.app.test`) are avoided in MVP because `*.test` wildcard certs do not cover multi-level subdomains.
-
----
-
-## 8. Database & Secret Management
-
-- **Lifecycle:** Created on `sld start` when `services.database` is defined. Attached only to `sld-{id}-net`.
-- **Volumes:** Backed by persistent named Docker volume `sld-{id}-db-data`. Survives `sld stop`, `sld restart`, and normal `sld destroy`.
-- **Secrets:** Passwords are generated using cryptographically random bytes upon initialization, saved to local gitignored storage (`.sld/secrets.json` or `.sld/.env`), and injected into container environments. Deterministic or hardcoded credentials (such as `sld_secret`) are strictly forbidden.
-- **Destroy Semantics:** `sld destroy` leaves data volumes intact. `sld destroy --volumes` requires explicit interactive confirmation and clearly warns that database data will be lost.
-
----
-
-## 9. Platform DNS Strategy
-
-- **Separation of Concerns:** DNS answers "What IP does `*.test` resolve to?" (`127.0.0.1`). Traefik answers "Which container receives HTTP for `my-app.test`?".
-- **Platform Implementations:**
-  - **macOS:** `/etc/resolver/test` pointing to `127.0.0.1`.
-  - **Linux:** `/etc/hosts` synchronization or systemd-resolved domain routing (`Domains=~test`) only when an active DNS resolver is present on port 53. DNS must never point to a nonexistent port 53 resolver.
-  - **Windows WSL2:** Synchronize Windows hosts file for active `.test` domains.
+See [ADR 0010](../adr/0010-control-plane-authentication.md) and [`SLD_V2_SECURITY.md`](SLD_V2_SECURITY.md). In short:
+- the Docker socket is root-equivalent, so SLD binds to loopback, requires the token for every route, and refuses foreign Host headers and cross-site writes;
+- project containers never get the socket; only SLD's own helpers (compose) do;
+- static sites refuse hidden files (`.git`, `.env`, `.sld`).

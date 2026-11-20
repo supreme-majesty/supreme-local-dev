@@ -1,5 +1,7 @@
 # SLD V2 DNS Architecture & Resolution Strategy
 
+> **Updated (Phase 15).** The default TLD is now `.localhost`, which browsers resolve to 127.0.0.1 without any setup. SLD no longer edits the hosts file or `/etc/resolver`: for other TLDs (`SLD_TLD`), `sld start` prints the hosts line to add. The platform strategies below describe the earlier `.test` approach.
+
 This document defines the separation of concerns between DNS resolution and HTTP routing, evaluates host port 53 conflict constraints, and outlines the platform-specific resolution strategies for SLD V2.
 
 ---

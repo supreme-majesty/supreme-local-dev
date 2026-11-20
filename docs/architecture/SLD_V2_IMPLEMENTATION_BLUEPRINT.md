@@ -1,5 +1,7 @@
 # SLD V2 Implementation Blueprint
 
+> **Historical.** The plan V2 was built from. Where it differs from the code, the code and [`SLD_V2_ARCHITECTURE.md`](SLD_V2_ARCHITECTURE.md) are current. In particular: SLD now also runs as a container with an authenticated dashboard ([ADR 0008](../adr/0008-containerised-control-plane.md)), supports runtimes beyond PHP ([ADR 0007](../adr/0007-multi-runtime-drivers.md)), and defaults to `.localhost` with its own CA instead of `.test` and mkcert.
+
 This document defines the final implementation-ready architecture and engineering blueprint for Supreme Local Dev (SLD) V2. It resolves all outstanding architectural decisions, incorporates findings from `docs/audit/SLD_V2_CURRENT_STATE_AUDIT.md`, and serves as the authoritative specification before any code is implemented.
 
 ---

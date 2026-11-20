@@ -1,5 +1,7 @@
 # SLD V2 Docker Distribution Architecture
 
+> **Partly historical.** Superseded by [ADR 0008](../adr/0008-containerised-control-plane.md) and [ADR 0009](../adr/0009-path-mapping-and-workspace-mounts.md): the image runs `sld serve` (dashboard + API with token auth) against a mounted workspace, and paths are translated through the container's own mounts.
+
 This document defines the Docker distribution and execution architecture for Supreme Local Dev (SLD) v2, transitioning it from a host-mutating daemon into a clean, reusable Docker-backed orchestrator.
 
 ---
