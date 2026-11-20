@@ -10,9 +10,11 @@ import {
   RotateCw,
   Search,
   Settings2,
+  SlidersHorizontal,
   Square,
   Trash2,
 } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
 import { ApiError, v2, type JobView, type ProjectAction, type ProjectView } from "@/api/v2";
 import { Button } from "@/components/ui/Button";
 import { JobConsole } from "@/components/projects/JobConsole";
@@ -217,6 +219,7 @@ function ProjectRow({
   onShowJob: () => void;
   onAutostart: (enabled: boolean) => void;
 }) {
+  const navigate = useNavigate();
   const style = statusStyle[p.status];
   const isUp = p.status === "running" || p.status === "partial";
   const apps = p.apps ?? [];
@@ -226,7 +229,15 @@ function ProjectRow({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <h2 className="text-base font-semibold text-[var(--foreground)] truncate">{p.name}</h2>
+            <h2 className="text-base font-semibold text-[var(--foreground)] truncate">
+              {p.id ? (
+                <Link to={`/projects/${encodeURIComponent(p.id)}`} className="hover:underline">
+                  {p.name}
+                </Link>
+              ) : (
+                p.name
+              )}
+            </h2>
             <span className={cn("text-[11px] px-2 py-0.5 rounded-full border", style.className)}>{style.label}</span>
             {p.configured && (
               <button
@@ -275,6 +286,11 @@ function ProjectRow({
           {p.containers > 0 && (
             <Button size="sm" variant="ghost" onClick={onLogs}>
               <FileText size={14} /> Logs
+            </Button>
+          )}
+          {p.id && (
+            <Button size="sm" variant="ghost" title="Config, files and environment" onClick={() => navigate(`/projects/${encodeURIComponent(p.id)}`)}>
+              <SlidersHorizontal size={14} /> Details
             </Button>
           )}
           {p.configured && (

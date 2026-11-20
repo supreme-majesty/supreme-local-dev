@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AppShell } from "@/components/layout/AppShell";
 import Dashboard from "@/pages/Dashboard";
 import ProjectsV2 from "@/pages/ProjectsV2";
+import ProjectDetail from "@/pages/ProjectDetail";
 import Projects from "@/pages/Projects";
 import Domains from "@/pages/Domains";
 import Database from "@/pages/Database";
@@ -31,6 +32,7 @@ function App() {
               <Route element={<AppShell />}>
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/projects" element={<ProjectsV2 />} />
+                <Route path="/projects/:id" element={<ProjectDetail />} />
                 <Route path="/sites" element={<Projects />} />
                 <Route path="/domains" element={<Domains />} />
                 <Route path="/database" element={<Database />} />

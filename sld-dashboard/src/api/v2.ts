@@ -71,6 +71,39 @@ export interface SystemInfo {
   mounts?: { type: string; destination: string; source: string; volume: string }[] | null;
 }
 
+export interface FileEntry {
+  name: string;
+  path: string;
+  is_dir: boolean;
+  size: number;
+  mod_time: string;
+}
+
+export interface FileContent {
+  path: string;
+  content: string;
+  size: number;
+  mod_time: string;
+}
+
+export interface EnvVar {
+  key: string;
+  value: string;
+}
+
+export interface EnvFileView {
+  name: string;
+  variables: EnvVar[];
+  mod_time: string;
+}
+
+export interface EnvBackup {
+  id: string;
+  name: string;
+  created_at: string;
+  size: number;
+}
+
 export class ApiError extends Error {
   status: number;
   jobId?: string;
@@ -127,6 +160,37 @@ export const v2 = {
     request<{ id: string; autostart: boolean }>(`/projects/${encodeURIComponent(id)}/autostart`, {
       method: "POST",
       body: JSON.stringify({ enabled }),
+    }),
+
+  // Project detail: config, files and env. Paths are relative to the project folder.
+  saveConfig: (id: string, config: string) =>
+    request<{ saved: boolean }>(`/projects/${encodeURIComponent(id)}/config`, {
+      method: "PUT",
+      body: JSON.stringify({ config }),
+    }),
+  files: (id: string, path = "") =>
+    request<{ path: string; entries: FileEntry[] }>(
+      `/projects/${encodeURIComponent(id)}/files?path=${encodeURIComponent(path)}`,
+    ),
+  readFile: (id: string, path: string) =>
+    request<FileContent>(`/projects/${encodeURIComponent(id)}/file?path=${encodeURIComponent(path)}`),
+  writeFile: (id: string, path: string, content: string, modTime?: string) =>
+    request<{ path: string; mod_time?: string }>(`/projects/${encodeURIComponent(id)}/file`, {
+      method: "PUT",
+      body: JSON.stringify({ path, content, mod_time: modTime }),
+    }),
+  env: (id: string) => request<{ files: EnvFileView[]; known: string[] }>(`/projects/${encodeURIComponent(id)}/env`),
+  saveEnv: (id: string, name: string, variables: EnvVar[]) =>
+    request<{ saved: boolean }>(`/projects/${encodeURIComponent(id)}/env`, {
+      method: "PUT",
+      body: JSON.stringify({ name, variables }),
+    }),
+  envBackups: (id: string, name: string) =>
+    request<EnvBackup[]>(`/projects/${encodeURIComponent(id)}/env/backups?name=${encodeURIComponent(name)}`),
+  restoreEnv: (id: string, backupId: string) =>
+    request<{ restored: string }>(`/projects/${encodeURIComponent(id)}/env/restore`, {
+      method: "POST",
+      body: JSON.stringify({ id: backupId }),
     }),
 
   /** Streams a job's output; returns a function that stops listening. */

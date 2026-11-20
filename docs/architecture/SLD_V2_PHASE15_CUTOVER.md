@@ -421,7 +421,7 @@ What landed:
 Follow-ups:
 - A browser end-to-end check (the Chrome extension was not connected during implementation).
 - Delete the unrouted V1 page files.
-- Per-project detail view (config editor, file manager, env editor).
+- ~~Per-project detail view (config editor, file manager, env editor).~~ Done 2026-11-20: `/projects/:id` with Overview, Config, Files, Environment and Logs tabs, backed by `/api/v2/projects/{id}/{config,files,file,env}` (`internal/server/projectfiles.go`). Paths are confined to the project folder (symlinks included), configs are validated before saving, env edits keep comments and order, and env backups live in the data volume.
 
 Original scope:
 - Login screen and token handling in `src/api/daemon.ts`; remove the hard-coded `localhost:2025` (`Database.tsx:2407`).

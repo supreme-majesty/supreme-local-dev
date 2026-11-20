@@ -83,6 +83,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	s.registerPlugins(mux)
 	s.registerShare(mux)
 	s.registerCreate(mux)
+	s.registerProjectFiles(mux)
 }
 
 // newRunner creates a runner whose output goes to w. Each job gets its own
