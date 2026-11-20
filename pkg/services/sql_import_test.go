@@ -128,4 +128,3 @@ func TestParseSnapshotDBName(t *testing.T) {
 		t.Errorf("table snapshot = (%q, %v), want my_app_db", db2, err)
 	}
 }
-

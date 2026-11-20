@@ -1,7 +1,7 @@
 .PHONY: build build-fast frontend run install update update-fast clean \
         restart refresh status park forget link unlink paths links logs daemon \
         docker-config docker-up docker-up-pg docker-app docker-stop docker-down docker-logs docker-build docker-ps docker-shell docker-clean \
-        docker-images docker-image-router docker-image-nginx docker-image-php
+        docker-images docker-image-app docker-image-router docker-image-nginx docker-image-php \n        test serve docker-token
 
 BINARY_NAME=sld
 MAIN_PATH=./cmd/sld
@@ -50,6 +50,14 @@ clean:
 # Install to GOPATH (dev use)
 install:
 	go install $(MAIN_PATH)
+
+# Run the engine tests
+test:
+	go test ./internal/...
+
+# Build and run the V2 control plane (dashboard + API with token auth) in the foreground
+serve: build
+	./$(BINARY_NAME) serve
 
 # Build and run the daemon (foreground)
 run: build
@@ -147,11 +155,18 @@ docker-shell:
 docker-clean:
 	docker compose down -v
 
+# Show the admin token printed by the control plane on first start
+docker-token:
+	@docker compose logs app 2>&1 | grep -A2 "admin token" | tail -1 || echo "No token in the logs: restart with 'docker compose run --rm app serve --reset-token'"
+
 # ─────────────────────────────────────────────
 #  V2 Official Docker Images
 # ─────────────────────────────────────────────
 
-docker-images: docker-image-router docker-image-nginx docker-image-php
+docker-images: docker-image-app docker-image-router docker-image-nginx docker-image-php
+
+docker-image-app:
+	docker build -t ghcr.io/supreme-majesty/sld:latest .
 
 docker-image-router:
 	docker build -t ghcr.io/supreme-majesty/sld-router:2 -t ghcr.io/supreme-majesty/sld-router:latest docker/router

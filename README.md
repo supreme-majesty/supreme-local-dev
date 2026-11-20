@@ -1,160 +1,145 @@
 # Supreme Local Dev (SLD) 🚀
 
-High-performance local development environment for PHP/Laravel, built with Go.
+**A local development control plane that runs as one Docker container.** Point it at your projects folder and manage every project from a dashboard: each one gets a `*.localhost` domain, the right runtime, its databases, logs and HTTPS — on Windows, macOS and Linux, with nothing installed on your machine except Docker.
 
-SLD provides a seamless experience for managing local web projects on Linux, offering automatic Nginx configuration, SSL management, and easy PHP version switching.
+- **Any web stack.** PHP (Laravel, Symfony, WordPress), Node (Next.js, Nuxt, Vite, Astro, SvelteKit, NestJS, Express…), Python (Django, FastAPI, Flask), Ruby (Rails), Go, static sites, a Dockerfile, any image — or a process already running on your machine.
+- **Your existing Docker Compose projects, as they are.** SLD runs a project's own `compose.yaml` and gives its web service a domain. It removes clashing host ports and keeps your containers, images and data volumes.
+- **Monorepos.** `backend/` + `frontend/` folders become separate apps of one project; mobile apps (React Native, Expo, Flutter) are skipped.
+- **Dashboard.** Sign in, see every project with its status and URLs, set up / start / stop / restart, follow output live, read logs, and manage databases.
 
-## Features
+## Quick start
 
-- **Project Parking**: Serve any directory of projects instantly.
-- **Link System**: Create custom domains (e.g., `project.test`) for any path.
-- **Automatic SSL**: Native HTTPS support via `mkcert`.
-- **PHP Version Manager**: Switch between PHP versions (8.0, 8.1, 8.2, etc.) command.
-- **Tools Integration**: Built-in support for phpMyAdmin.
-- **GUI Dashboard**: Visual management of your sites and configurations.
-
-## Installation
-
-### Prerequisites
-
-- Linux (Ubuntu/Debian recommended)
-- Go 1.25+ (for building)
-
-### Build & Install
+You need Docker (Docker Desktop on Windows/macOS).
 
 ```bash
-# Clone the repository
-git clone https://github.com/supreme-majesty/supreme-local-dev.git
-cd supreme-local-dev
+docker run -d --name sld --restart unless-stopped \
+  -p 127.0.0.1:2025:2025 \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  --group-add 0 \
+  -v sld-data:/home/sld/.sld \
+  -v "$HOME/Projects:/workspace" \
+  ghcr.io/supreme-majesty/sld:latest
 
-# Build the binary
-go build -o sld cmd/sld/main.go
-
-# Install binary (optional, or just add to PATH)
-sudo mv sld /usr/local/bin/
-
-# Initialize System Dependencies
-sudo sld install
+docker logs sld        # copy the admin token printed on first start
 ```
 
-## Usage
+Open **http://localhost:2025**, paste the token, and you will see every project found in `~/Projects`.
 
-### Basic Commands
+- **Windows (PowerShell):** use your folder path, e.g. `-v "C:\Users\me\Projects:/workspace"`.
+- **Linux:** SLD runs as a non-root user and needs the Docker socket's group: replace `--group-add 0` with `--group-add $(stat -c %g /var/run/docker.sock)`.
 
-- **`sld install`**: Install system dependencies (Nginx, PHP, Dnsmasq, etc.) and configure the environment.
-- **`sld park [path]`**: Register a directory. All subdirectories will be served as `http://<dirname>.test`.
-- **`sld link [name]`**: Link the current directory to `http://<name>.test`.
-- **`sld secure`**: Generate SSL certificates and enable HTTPS for all `.test` domains.
-- **`sld gui`**: Open the web-based dashboard.
+> **The admin token is shown once.** Only its hash is stored. Lost it? Restart SLD with `serve --reset-token` to print a new one.
 
-### Managing Sites
+### With this repository (Docker Compose)
 
 ```bash
-# Park your projects folder
-sld park ~/Developments
-
-# Link a specific project
-cd ~/dev/my-project
-sld link my-project
-
-# Remove a link
-sld unlink my-project
-
-# List all sites
-sld paths   # Parked paths
-sld links   # Linked sites
+cp .env.example .env    # optional: change ports, projects folder
+docker compose up -d --build
+docker compose logs app # admin token
 ```
 
-### PHP Management
+`compose.yaml` runs the SLD control plane plus MariaDB, Redis, Mailpit and phpMyAdmin that SLD's database manager uses. By default the folder **containing** this repository is mounted as your projects workspace (set `SLD_WORKSPACE` to change it).
 
-Switch the global PHP version used by FPM:
-
-```bash
-sld php 8.2
-sld php 8.1
-```
-
-### Services
-
-```bash
-# Check status of Nginx and PHP
-sld status
-
-# Start the background daemon (API)
-sld daemon
-```
-
-## Docker
-
-Runs the **SLD dashboard/API, MariaDB, phpMyAdmin, Redis, and Mailpit** (plus optional **PostgreSQL**) in project-scoped containers (`name: sld`, bridge network `sld-net`) with loopback-only host bindings (`127.0.0.1` by default) and named-volume persistence:
-
-```bash
-cp .env.example .env   # optional; override MYSQL_PORT / REDIS_PORT if 3306 or 6379 are already in use
-docker compose config -q
-docker compose up --build -d
-```
-
-If another local project already binds port `3306` or `6379` and you only want the SLD dashboard (which auto-discovers and connects to your running Docker databases):
-
-```bash
-docker compose up --build -d --no-deps app
-```
-
-### Services & Endpoints
-
-All host ports bind to `${SLD_BIND_HOST:-127.0.0.1}` so local development services are not exposed on LAN/Wi-Fi.
-
-| Service | Host Binding / URL | Credentials / Notes |
+| Service | Address | Notes |
 |---|---|---|
-| **SLD Dashboard / API (`app`)** | [http://127.0.0.1:2025](http://127.0.0.1:2025) | Control plane, Docker DB discovery, SQL import/export, Web UI |
-| **phpMyAdmin (`phpmyadmin`)** | [http://127.0.0.1:8080](http://127.0.0.1:8080) | System catalogs automatically filtered |
-| **MariaDB (`mariadb`)** | `127.0.0.1:${MYSQL_PORT:-3306}` | User: `root`, Password: `${MYSQL_ROOT_PASSWORD:-sld}` |
-| **Redis (`redis`)** | `127.0.0.1:${REDIS_PORT:-6379}` | Key-value store (persistent volume `sld-redis`) |
-| **Mailpit Web UI (`mailpit`)** | [http://127.0.0.1:8025](http://127.0.0.1:8025) | Local email inbox (`axllent/mailpit:v1.31.2`) |
-| **Mailpit SMTP (`mailpit`)** | `127.0.0.1:${MAILPIT_SMTP_PORT:-1025}` | SMTP capture server |
-| **PostgreSQL (`postgres`, profile `postgres`)** | `127.0.0.1:${POSTGRES_PORT:-5432}` | User: `${POSTGRES_USER:-sld}`, DB: `${POSTGRES_DB:-app}` |
+| SLD dashboard + API | http://127.0.0.1:2025 | sign in with the admin token |
+| phpMyAdmin | http://127.0.0.1:8080 | |
+| MariaDB | `127.0.0.1:${MYSQL_PORT:-3306}` | user `root`, password `${MYSQL_ROOT_PASSWORD:-sld}` |
+| Redis | `127.0.0.1:${REDIS_PORT:-6379}` | |
+| Mailpit | http://127.0.0.1:8025, SMTP `127.0.0.1:1025` | |
+| PostgreSQL (`--profile postgres`) | `127.0.0.1:${POSTGRES_PORT:-5432}` | |
 
-### Commands
+If another project already uses 3306 or 6379, set `MYSQL_PORT` / `REDIS_PORT` in `.env` (e.g. 3316 / 6380).
 
-```bash
-# Validate Compose configuration
-docker compose config -q
+## Using the dashboard
 
-# Start full default stack (app, mariadb, phpmyadmin, redis, mailpit)
-docker compose up --build -d
+- **Projects** — every project in the workspace: git repositories, folders with their own compose stack, or with an SLD config. Group folders such as `laravel-builds/` are searched inside.
+  - **Set up** writes the project's `.sld/config.yaml` (detected automatically; review it in the repo).
+  - **Start / Stop / Restart** run in the background; their output streams into a console.
+  - **Logs** follows any container of the project.
+  - **Remove** deletes containers but keeps data unless you explicitly choose to delete the data volumes.
+- **Setup** — Docker and router status, ports, workspace, and the HTTPS certificate download.
+- **Database**, **Dashboard**, **Domains**, **Logs**, **Settings** and the other pages work as before.
 
-# Start stack including PostgreSQL
-docker compose --profile postgres up --build -d
+### Domains and ports
 
-# Start dashboard only (skips bundled MariaDB/Redis if ports 3306/6379 are already taken)
-docker compose up --build -d --no-deps app
+Projects are served on `http://<name>.localhost`. Browsers resolve `*.localhost` to your machine automatically — no hosts file, no admin rights.
 
-# Check status & health of containers
-docker compose ps
+SLD's router uses ports 80/443. If another app already uses them, choose others with `SLD_HTTP_PORT` / `SLD_HTTPS_PORT` (e.g. 8888 / 8443); URLs then include the port: `http://shop.localhost:8888`.
 
-# View logs
-docker compose logs -f --tail=100
+### HTTPS
 
-# Open a shell inside the app container
-docker compose exec app sh
+SLD creates a local certificate authority and a certificate per project. Download the CA from **Setup → Download CA certificate** and trust it once (Windows: *Install Certificate → Local Machine → Trusted Root Certification Authorities*; macOS: Keychain Access → *Always Trust*; Firefox: *Settings → Certificates → Import*). Plain `http://` works without it. Enable HTTPS per project with `domain.tls: true`.
 
-# Stop containers safely (preserves all named volumes)
-docker compose stop
+## Project configuration
 
-# Stop & remove containers and network (preserves all named volumes)
-docker compose down
+`sld` writes `.sld/config.yaml` when you set a project up. Examples:
+
+```yaml
+# A Laravel app with a Vite dev server, MySQL, Redis and Mailpit
+version: 2
+name: shop
+apps:
+  web:  { runtime: php, version: "8.3", web_root: public }
+  vite: { runtime: node, command: "npm run dev -- --host 0.0.0.0", port: 5173 }
+services:
+  database: { type: mysql }
+  redis:    { enabled: true }
+  mailpit:  { enabled: true }
 ```
 
-> **Persistence & Data Safety**: `docker compose stop` and `docker compose down` retain `sld-state`, `sld-mariadb`, `sld-postgres`, and `sld-redis` volumes. Avoid `docker compose down -v` unless you intentionally want to permanently erase all local databases and SLD state.
->
-> **Security Note**: The `app` container mounts `/var/run/docker.sock` to discover and connect to local project database containers. Keep `SLD_BIND_HOST=127.0.0.1` and run this Compose stack only on trusted local development workstations, never as an internet-facing service.
+```yaml
+# An existing Docker Compose project in a sub-folder (sunport-apps/backend)
+version: 2
+name: sunport                 # domain: sunport.localhost
+apps:
+  backend: { runtime: compose, path: backend, service: nginx, port: 80 }
+```
 
-## phpMyAdmin
+```yaml
+# A Next.js frontend and a FastAPI backend
+version: 2
+name: tailorly
+apps:
+  web: { runtime: node, command: "npm run dev -- -H 0.0.0.0 -p 3000", port: 3000 }
+  api: { runtime: python, command: "uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload", port: 8000 }
+services:
+  database: { type: postgres }
+```
 
-Access phpMyAdmin at:
+Runtimes: `php`, `static`, `node`, `python`, `ruby`, `go`, `image`, `dockerfile`, `proxy`, `compose`. The first app owns the root domain; others get `<app>.<name>.localhost`. Dependencies are installed inside the containers (in a per-app volume) and reinstalled when the lockfile changes. Version 1 files keep working; `sld v2 config migrate` rewrites them.
 
-- http://phpmyadmin.test (Preferred)
-- http://localhost/phpmyadmin
+Add a `.sldignore` file to a folder to keep SLD from treating it as a project.
+
+## Command line (without the dashboard)
+
+The same engine is available as `sld v2 …` for people who don't run the image. From a project folder:
+
+```bash
+sld v2 init               # start the router, create the local CA
+sld v2 scan [dir]         # list projects and the domain each gets (--write creates configs)
+sld v2 init-project       # detect the stack and write .sld/config.yaml (--dry-run to preview)
+sld v2 start | stop | restart | status | logs [app] | destroy [--volumes]
+sld v2 shell [app]        # shell in an app container (runs as your user)
+sld v2 npm|php|composer|artisan|python|pip|rails|go …   # tools inside the project
+sld serve                 # run the dashboard + API yourself
+```
+
+Binaries for Linux, macOS and Windows are attached to each GitHub release.
+
+## Security
+
+The SLD container controls Docker through its socket, which is equivalent to root access on the machine. SLD therefore binds to `127.0.0.1` only, requires the admin token for every API call, rejects requests for unknown host names (DNS rebinding), and requires a CSRF header plus a local `Origin` on browser writes. Run it only on your own development machine, never as an internet-facing service.
+
+## Development
+
+```bash
+go test ./internal/...            # engine tests
+go build -o sld ./cmd/sld          # CLI / server
+cd sld-dashboard && npm ci && npm run dev   # dashboard on :5173 (proxies /api to :2025)
+```
+
+Architecture and decisions: [`docs/architecture`](docs/architecture) and [`docs/adr`](docs/adr); the V2 plan is [`docs/architecture/SLD_V2_PHASE15_CUTOVER.md`](docs/architecture/SLD_V2_PHASE15_CUTOVER.md).
 
 ## License
 

@@ -670,7 +670,7 @@ func (l *LinuxAdapter) InstallBinary() error {
 
 	// Copy binary
 	fmt.Printf("Installing binary to %s...\n", dest)
-	
+
 	// Remove destination first to prevent 'Text file busy' error if the daemon is running
 	exec.Command("sudo", "rm", "-f", dest).Run()
 

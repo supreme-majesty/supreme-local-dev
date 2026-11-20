@@ -314,4 +314,3 @@ func parseSnapshotDBName(filename string) (string, error) {
 	}
 	return strings.Join(parts[:len(parts)-2], "_"), nil
 }
-

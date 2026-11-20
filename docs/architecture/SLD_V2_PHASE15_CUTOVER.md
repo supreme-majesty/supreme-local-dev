@@ -431,7 +431,21 @@ Original scope:
 - Remove the Plugins page and PHP-only wording.
 - Tauri: keep it as an optional shell that just points at the container URL (no sidecar).
 
-### M7 — Image, compose, release *(2–3 days)*
+### M7 — Image, compose, release *(2–3 days)* — local part done 2026-11-20; publishing blocked
+
+What landed:
+- **Image and compose:**
+  - The image's default command is `serve`, and the compose `app` service runs `serve`.
+  - Compose mounts the projects folder at `/workspace` (`SLD_WORKSPACE`, default: the folder containing the repo) and passes router ports (`SLD_HTTP_PORT`/`SLD_HTTPS_PORT`).
+  - The bundled MariaDB, Redis, Mailpit and phpMyAdmin stay. They are the database manager's default servers until shared servers are managed from the dashboard (D4).
+- **Release workflow:** `.deb`/`.pkg`/`.msi` host installers are no longer built. Releases carry the CLI binaries plus `SHA256SUMS` and the Tauri desktop app. (`scripts/packaging` is deleted with V1 in M9.)
+- **README** is rewritten around "run one container": quick start (including `--group-add` for the socket), compose, dashboard, domains/ports, HTTPS, config examples, CLI, security.
+- **Makefile** gains `test`, `serve`, `docker-token` and `docker-image-app`. Host-mode targets are kept.
+- **Formatting:** three pre-existing files are now gofmt'd, so CI's format check passes.
+
+**Blocked: publishing.** `docker-images.yml` already builds and pushes `sld`, `sld-router`, `sld-nginx` and `sld-php:8.1–8.4` to GHCR on pushes to `main`. Every run fails before starting because *"your account is locked due to a billing issue"* (GitHub). Once billing is fixed and Phase 15 is pushed, the images are published automatically.
+
+Original scope:
 - Root `Dockerfile`: `CMD ["serve"]`, `VOLUME /data`, `SLD_STATE_DIR=/data`, healthcheck on `/api/health`. Multi-arch build, cosign signing, SBOM, Trivy (the pipeline already exists in `docker-images.yml`).
 - `compose.yaml` reduced to `sld` (+ `hardened` socket-proxy profile). The old bundled DB services move to docs under "shared servers".
 - Release workflow: image tags; drop `.deb`/`.pkg`/`.msi`, systemd units, `postinst`. Ship a final 2.2.x host binary for `legacy migrate` (D5).
