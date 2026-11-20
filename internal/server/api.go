@@ -85,6 +85,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	s.registerCreate(mux)
 	s.registerProjectFiles(mux)
 	s.registerParking(mux)
+	s.registerHTTPS(mux)
 }
 
 // newRunner creates a runner whose output goes to w. Each job gets its own
@@ -114,6 +115,7 @@ type ProjectView struct {
 	Services   []ServiceRef `json:"services,omitempty"`
 	Dockerized bool         `json:"dockerized"`          // own compose file or Dockerfile, or has containers
 	ParkedIn   string       `json:"parked_in,omitempty"` // parked/linked folder that covers it, relative to its workspace
+	TLS        bool         `json:"tls"`                 // served over HTTPS (domain.tls)
 }
 
 // AppView is one app of a project with its URL.
@@ -162,7 +164,7 @@ func (s *Server) scan(force bool) ([]v2.ScanResult, error) {
 
 func (s *Server) view(ctx context.Context, r v2.ScanResult) ProjectView {
 	id, _ := s.opts.Env.ProjectIdentity(r.Root)
-	v := ProjectView{Name: r.Name, Folder: s.relFolder(r.Root), Problems: r.Problems}
+	v := ProjectView{Name: r.Name, Folder: s.relFolder(r.Root), Problems: r.Problems, TLS: r.TLS}
 	if id != nil {
 		v.ID = id.ID
 		v.JobID = s.jobs.Running(id.ID)

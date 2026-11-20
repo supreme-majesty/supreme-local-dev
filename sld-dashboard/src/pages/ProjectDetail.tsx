@@ -35,6 +35,8 @@ import { Button } from "@/components/ui/Button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import { JobConsole } from "@/components/projects/JobConsole";
 import { LogViewer } from "@/components/projects/LogViewer";
+import { CaTrustNotice, HttpsSwitch } from "@/components/projects/HttpsCard";
+import { useSetHttps } from "@/hooks/use-https";
 import { useToast } from "@/hooks/useToast";
 import { useTheme } from "@/hooks/useTheme";
 import { cn } from "@/lib/utils";
@@ -219,6 +221,7 @@ function Overview({ project }: { project: ProjectView }) {
           </ul>
         </Section>
       )}
+      <HttpsSection project={project} />
       <Section title="Apps">
         {apps.length === 0 ? (
           <p className="text-sm text-[var(--muted-foreground)]">No apps configured yet.</p>
@@ -285,6 +288,32 @@ function Overview({ project }: { project: ProjectView }) {
         )}
       </Section>
     </div>
+  );
+}
+
+function HttpsSection({ project }: { project: ProjectView }) {
+  const { setHttps, pending } = useSetHttps();
+  const isUp = project.status === "running" || project.status === "partial";
+  return (
+    <Section
+      title="HTTPS"
+      actions={<HttpsSwitch project={project} pending={pending.has(project.id)} onChange={(on) => setHttps(project, on)} />}
+    >
+      <div className="space-y-2">
+        <p className="text-sm text-[var(--muted-foreground)]">
+          {!project.configured
+            ? "Set the project up to turn HTTPS on."
+            : project.tls
+              ? isUp
+                ? "Served over HTTPS with a certificate from SLD's certificate authority. Plain HTTP keeps working."
+                : "HTTPS is on and applies when the project starts."
+              : isUp
+                ? "Served over plain HTTP. Turning HTTPS on applies it right away (containers may be recreated)."
+                : "Served over plain HTTP."}
+        </p>
+        {project.tls && <CaTrustNotice compact />}
+      </div>
+    </Section>
   );
 }
 

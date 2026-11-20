@@ -40,6 +40,8 @@ export interface ProjectView {
   dockerized: boolean;
   /** The parked/linked folder that makes SLD detect it (relative to its workspace), if any. */
   parked_in?: string;
+  /** Served over HTTPS (domain.tls in its config). */
+  tls: boolean;
 }
 
 export interface AutomationSettings {
@@ -162,6 +164,13 @@ export const v2 = {
     request<AutomationSettings>("/settings", { method: "PUT", body: JSON.stringify(patch) }),
   setAutostart: (id: string, enabled: boolean) =>
     request<{ id: string; autostart: boolean }>(`/projects/${encodeURIComponent(id)}/autostart`, {
+      method: "POST",
+      body: JSON.stringify({ enabled }),
+    }),
+
+  /** Turns HTTPS on or off; a running project gets a job that applies it. */
+  setTLS: (id: string, enabled: boolean) =>
+    request<{ tls: boolean; job?: JobView }>(`/projects/${encodeURIComponent(id)}/tls`, {
       method: "POST",
       body: JSON.stringify({ enabled }),
     }),
