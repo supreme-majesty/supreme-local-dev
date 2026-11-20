@@ -168,6 +168,53 @@ func TestLoadAuth_PersistsOnlyHash(t *testing.T) {
 	}
 }
 
+func TestIssueToken_RunningServerAcceptsNewToken(t *testing.T) {
+	t.Setenv(envAdminToken, "")
+	dir := t.TempDir()
+	var out bytes.Buffer
+	a, err := LoadAuth(dir, false, &out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var old string
+	for _, line := range strings.Split(out.String(), "\n") {
+		if l := strings.TrimSpace(line); len(l) > 20 && !strings.ContainsAny(l, " ═:") {
+			old = l
+		}
+	}
+	if !a.checkToken(old) {
+		t.Fatal("first token not accepted")
+	}
+
+	// `sld token` (another process) replaces the stored hash.
+	time.Sleep(20 * time.Millisecond) // distinct modification time
+	fresh, err := IssueToken(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !a.checkToken(fresh) || a.checkToken(old) {
+		t.Error("running server must accept the new token and refuse the old one")
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, authFileName))
+	if strings.Contains(string(data), fresh) {
+		t.Error("new token stored in plain text")
+	}
+
+	// A broken file never locks the running server out: it keeps the last good hash.
+	time.Sleep(20 * time.Millisecond)
+	if err := os.WriteFile(filepath.Join(dir, authFileName), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !a.checkToken(fresh) {
+		t.Error("a corrupt auth file must not lock the running server out")
+	}
+
+	t.Setenv(envAdminToken, "fixed")
+	if _, err := IssueToken(dir); !errors.Is(err, ErrTokenFromEnv) {
+		t.Errorf("IssueToken with SLD_ADMIN_TOKEN set: %v", err)
+	}
+}
+
 func TestJobs(t *testing.T) {
 	js := NewJobs()
 	release := make(chan struct{})

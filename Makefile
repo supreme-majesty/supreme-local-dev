@@ -1,7 +1,7 @@
 .PHONY: build build-fast frontend install clean test e2e serve \
         start stop status scan doctor \
         docker-config docker-up docker-up-pg docker-app docker-stop docker-down docker-logs docker-build docker-ps docker-shell docker-clean \
-        docker-images docker-image-app docker-image-router docker-image-nginx docker-image-php docker-token
+        docker-images docker-image-app docker-image-router docker-image-nginx docker-image-php token
 
 BINARY_NAME=sld
 MAIN_PATH=./cmd/sld
@@ -111,9 +111,10 @@ docker-shell:
 docker-clean:
 	docker compose down -v
 
-# Show the admin token printed by the control plane on first start
-docker-token:
-	@docker compose logs app 2>&1 | grep -A2 "admin token" | tail -1 || echo "No token in the logs: restart with 'docker compose run --rm app serve --reset-token'"
+# Print a new admin token and a sign-in link (the running dashboard accepts it at once)
+token:
+	docker compose exec app sld token
+
 
 # ─────────────────────────────────────────────
 #  V2 Official Docker Images

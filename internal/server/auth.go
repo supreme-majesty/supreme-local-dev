@@ -35,17 +35,25 @@ const (
 // is generated; only its SHA-256 is stored. Browsers exchange it for an
 // HttpOnly session cookie; scripts send it as a Bearer token.
 type Auth struct {
-	tokenHash    [32]byte
 	allowedHosts []string // extra Host names besides localhost/*.localhost; "*" allows any
 
-	mu       sync.Mutex
-	sessions map[string]time.Time // session id -> expiry
+	mu        sync.Mutex
+	tokenHash [32]byte
+	sessions  map[string]time.Time // session id -> expiry
+
+	// path is the stored hash. When `sld token` replaces it, the running
+	// server notices the new modification time and accepts the new token.
+	path    string
+	modTime time.Time
 }
 
 type authFile struct {
 	TokenSHA256 string    `json:"token_sha256"`
 	CreatedAt   time.Time `json:"created_at"`
 }
+
+// ErrTokenFromEnv is returned by IssueToken when SLD_ADMIN_TOKEN fixes the token.
+var ErrTokenFromEnv = errors.New("the admin token is set by SLD_ADMIN_TOKEN; change that variable instead")
 
 // LoadAuth reads the token hash from dataDir, or creates a new token (from
 // SLD_ADMIN_TOKEN, or random) and prints it to out. reset discards the old one.
@@ -63,42 +71,91 @@ func LoadAuth(dataDir string, reset bool, out io.Writer) (*Auth, error) {
 		return a, nil
 	}
 
-	path := filepath.Join(dataDir, authFileName)
+	a.path = filepath.Join(dataDir, authFileName)
 	if !reset {
-		if data, err := os.ReadFile(path); err == nil {
-			var f authFile
-			if err := json.Unmarshal(data, &f); err == nil {
-				if raw, err := hex.DecodeString(f.TokenSHA256); err == nil && len(raw) == 32 {
-					copy(a.tokenHash[:], raw)
-					fmt.Fprintln(out, "[SLD] Using the admin token created on first start (run 'sld serve --reset-token' to issue a new one).")
-					return a, nil
-				}
-			}
-			return nil, fmt.Errorf("%s is corrupt; start with --reset-token", path)
-		} else if !errors.Is(err, os.ErrNotExist) {
+		err := a.reload()
+		if err == nil {
+			fmt.Fprintln(out, "[SLD] Using the stored admin token. Lost it? Run 'sld token' in this container for a new one.")
+			return a, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
 			return nil, err
 		}
 	}
 
-	token, err := randomString(24)
+	token, err := IssueToken(dataDir)
 	if err != nil {
 		return nil, err
 	}
-	a.tokenHash = sha256.Sum256([]byte(token))
-	data, _ := json.MarshalIndent(authFile{TokenSHA256: hex.EncodeToString(a.tokenHash[:]), CreatedAt: time.Now().UTC()}, "", "  ")
-	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+	if err := a.reload(); err != nil {
 		return nil, err
-	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return nil, fmt.Errorf("failed to store admin token: %w", err)
 	}
 	fmt.Fprintf(out, "\n"+
 		"══════════════════════════════════════════════════════════════\n"+
-		"  SLD admin token (shown only once — keep it somewhere safe):\n\n"+
+		"  SLD admin token (shown only once):\n\n"+
 		"      %s\n\n"+
-		"  Paste it on the dashboard's sign-in page.\n"+
+		"  Paste it on the dashboard's sign-in page. Lost it? Run\n"+
+		"  'sld token' in this container (make token) for a new one.\n"+
 		"══════════════════════════════════════════════════════════════\n\n", token)
 	return a, nil
+}
+
+// IssueToken creates a new random admin token, stores its hash in dataDir
+// (replacing the old one) and returns the token. A running server picks the
+// new hash up on its next request; existing dashboard sessions stay signed in.
+func IssueToken(dataDir string) (string, error) {
+	if os.Getenv(envAdminToken) != "" {
+		return "", ErrTokenFromEnv
+	}
+	token, err := randomString(24)
+	if err != nil {
+		return "", err
+	}
+	hash := sha256.Sum256([]byte(token))
+	data, _ := json.MarshalIndent(authFile{TokenSHA256: hex.EncodeToString(hash[:]), CreatedAt: time.Now().UTC()}, "", "  ")
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		return "", err
+	}
+	path := filepath.Join(dataDir, authFileName)
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return "", fmt.Errorf("failed to store admin token: %w", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return "", fmt.Errorf("failed to store admin token: %w", err)
+	}
+	return token, nil
+}
+
+// reload reads the stored hash if the file changed since it was last read.
+func (a *Auth) reload() error {
+	info, err := os.Stat(a.path)
+	if err != nil {
+		return err
+	}
+	a.mu.Lock()
+	unchanged := info.ModTime().Equal(a.modTime)
+	a.mu.Unlock()
+	if unchanged {
+		return nil
+	}
+	data, err := os.ReadFile(a.path)
+	if err != nil {
+		return err
+	}
+	var f authFile
+	if err := json.Unmarshal(data, &f); err != nil {
+		return fmt.Errorf("%s is corrupt; run 'sld token' for a new token", a.path)
+	}
+	raw, err := hex.DecodeString(f.TokenSHA256)
+	if err != nil || len(raw) != 32 {
+		return fmt.Errorf("%s is corrupt; run 'sld token' for a new token", a.path)
+	}
+	a.mu.Lock()
+	copy(a.tokenHash[:], raw)
+	a.modTime = info.ModTime()
+	a.mu.Unlock()
+	return nil
 }
 
 func randomString(n int) (string, error) {
@@ -114,7 +171,12 @@ func (a *Auth) checkToken(token string) bool {
 	if token == "" {
 		return false
 	}
+	if a.path != "" {
+		_ = a.reload() // keep the last good hash if the file is briefly unreadable
+	}
 	h := sha256.Sum256([]byte(token))
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	return subtle.ConstantTimeCompare(h[:], a.tokenHash[:]) == 1
 }
 

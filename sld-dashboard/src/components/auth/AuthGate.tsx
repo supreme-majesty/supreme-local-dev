@@ -21,7 +21,19 @@ export function AuthGate({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
-    check();
+    // A sign-in link (`sld token`) carries the token in the URL fragment, which
+    // never reaches the server or its logs. Drop it from the address bar at
+    // once, then sign in with it.
+    const linkToken = new URLSearchParams(window.location.hash.slice(1)).get("token");
+    if (linkToken) {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+      v2.login(linkToken)
+        .then(() => queryClient.invalidateQueries())
+        .catch(() => undefined)
+        .finally(check);
+    } else {
+      check();
+    }
     const onUnauthorized = () => setState("signed-out");
     window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
     return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
@@ -93,7 +105,7 @@ function SignInForm({ onSignedIn }: { onSignedIn: () => void }) {
           value={token}
           onChange={(e) => setToken(e.target.value)}
           className="w-full h-10 pl-9 pr-3 rounded-lg border border-[var(--border)] bg-[var(--background)] text-sm text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
-          placeholder="Paste the token from the SLD container log"
+          placeholder="Paste your admin token"
         />
       </div>
       {error && <p className="text-sm text-red-400">{error}</p>}
@@ -101,9 +113,9 @@ function SignInForm({ onSignedIn }: { onSignedIn: () => void }) {
         Sign in
       </Button>
       <p className="text-xs text-[var(--muted-foreground)] leading-relaxed">
-        The token is printed once when SLD first starts. Find it with{" "}
-        <code className="px-1 py-0.5 rounded bg-[var(--secondary)]">docker logs sld</code>, or issue a new one by
-        restarting SLD with <code className="px-1 py-0.5 rounded bg-[var(--secondary)]">serve --reset-token</code>.
+        Lost it? Get a new token and a sign-in link with{" "}
+        <code className="px-1 py-0.5 rounded bg-[var(--secondary)]">docker exec sld sld token</code> (or{" "}
+        <code className="px-1 py-0.5 rounded bg-[var(--secondary)]">make token</code> in the SLD repository).
       </p>
     </form>
   );

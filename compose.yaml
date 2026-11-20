@@ -8,7 +8,8 @@ services:
     image: sld:local
     init: true
     # The control plane: dashboard + API behind token auth. The admin token is
-    # printed once in `docker compose logs app` on first start.
+    # printed once in `docker compose logs app` on first start; `make token`
+    # prints a new one with a sign-in link.
     command: ["serve"]
     security_opt:
       - no-new-privileges:true
@@ -17,6 +18,8 @@ services:
     environment:
       SLD_SKIP_INSTALL: "1"
       SLD_STATE_DIR: /home/sld/.sld
+      # Used in the sign-in link printed by `sld token`.
+      SLD_DASHBOARD_URL: http://localhost:${SLD_PORT:-2025}
       SLD_DB_HOST: mariadb
       SLD_DB_PORT: "3306"
       SLD_DB_USER: root

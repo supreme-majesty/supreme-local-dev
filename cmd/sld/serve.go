@@ -131,8 +131,36 @@ func serveWorkspaces(env *hostenv.Env) ([]string, error) {
 	return out, nil
 }
 
+// tokenCmd issues a new admin token for a running (or the next) `sld serve`.
+// Inside the SLD container: docker exec sld sld token (or: make token).
+var tokenCmd = &cobra.Command{
+	Use:   "token",
+	Short: "Print a new admin token and a sign-in link for the dashboard",
+	Long: `Issues a new admin token and prints it with a link that signs you in.
+The running dashboard accepts it immediately; the old token stops working.
+Browsers that are already signed in stay signed in.
+
+Run it where SLD keeps its data: inside the SLD container
+  docker exec sld sld token            (docker run setup)
+  make token                           (this repository's compose setup)`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		token, err := server.IssueToken(hostenv.DefaultDataDir())
+		if err != nil {
+			return err
+		}
+		base := strings.TrimRight(os.Getenv("SLD_DASHBOARD_URL"), "/")
+		if base == "" {
+			base = "http://localhost:2025"
+		}
+		fmt.Printf("Admin token: %s\n\nSign in: %s/#token=%s\n", token, base, token)
+		return nil
+	},
+}
+
 func init() {
 	serveCmd.Flags().StringVar(&serveListen, "listen", "", "Address to listen on (default :2025, or SLD_LISTEN)")
 	serveCmd.Flags().BoolVar(&serveResetToken, "reset-token", false, "Issue a new admin token, invalidating the old one")
 	rootCmd.AddCommand(serveCmd)
+	rootCmd.AddCommand(tokenCmd)
 }

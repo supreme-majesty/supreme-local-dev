@@ -30,14 +30,14 @@ Open **http://localhost:2025**, paste the token, and you will see every project 
 - **Linux:** SLD runs as a non-root user and needs the Docker socket's group: replace `--group-add 0` with `--group-add $(stat -c %g /var/run/docker.sock)`.
 - **Several project folders:** mount each one and list them: `-v ~/work:/workspace/work -v ~/oss:/workspace/oss`, or set `SLD_WORKSPACES=/a,/b`.
 
-> **The admin token is shown once.** Only its hash is stored. Lost it? Restart SLD with `serve --reset-token` to print a new one.
+> **Lost the token?** Only its hash is stored, so it can't be shown again, but `docker exec sld sld token` prints a new one with a link that signs you straight in. The running dashboard accepts it at once; the old token stops working.
 
 ### With this repository (Docker Compose)
 
 ```bash
 cp .env.example .env    # optional: change ports, projects folder
 docker compose up -d --build
-docker compose logs app # admin token
+docker compose logs app # admin token (later: make token)
 ```
 
 `compose.yaml` runs the SLD control plane plus MariaDB, Redis, Mailpit and phpMyAdmin that SLD's database manager uses. By default the folder **containing** this repository is mounted as your projects workspace (set `SLD_WORKSPACE` to change it).
