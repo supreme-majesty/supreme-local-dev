@@ -11,7 +11,7 @@ import (
 	"github.com/supreme-majesty/supreme-local-dev/internal/detect"
 )
 
-// InitOptions adjust `sld v2 init-project`.
+// InitOptions adjust `sld init-project`.
 type InitOptions struct {
 	Runtime string // keep only apps of this runtime
 	DryRun  bool   // print the configuration instead of writing it
@@ -41,7 +41,7 @@ func InitProjectWith(projectRoot string, opts InitOptions) error {
 	if errors.Is(err, detect.ErrNothingDetected) {
 		return fmt.Errorf("%w in %s.\n  SLD looks for composer.json/artisan, package.json, manage.py/requirements.txt/pyproject.toml,\n"+
 			"  Gemfile, go.mod, a Dockerfile or index.html. Create .sld/config.yaml by hand\n"+
-			"  (see 'sld v2 config show' on another project for the format)", err, projectRoot)
+			"  (see 'sld config show' on another project for the format)", err, projectRoot)
 	}
 	if err != nil {
 		return err
@@ -78,7 +78,7 @@ func InitProjectWith(projectRoot string, opts InitOptions) error {
 	fmt.Println()
 	printConfigSummary(resolved)
 	fmt.Println()
-	fmt.Println("[SLD] Review the file, then run 'sld v2 start' to launch the development environment.")
+	fmt.Println("[SLD] Review the file, then run 'sld start' to launch the development environment.")
 	return nil
 }
 

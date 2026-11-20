@@ -39,6 +39,9 @@ export interface Project {
   creating?: boolean; // true if project is still being created in background
   tags?: string[];
   category?: string;
+  url?: string; // full URL including the router port
+  id?: string; // V2 project id
+  status?: string;
 }
 
 export interface DatabaseSource {

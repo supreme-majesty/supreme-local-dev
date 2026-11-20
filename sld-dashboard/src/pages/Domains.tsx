@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Globe,
   Lock,
@@ -15,16 +16,16 @@ import {
   CardContent,
 } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
-import { useSites, useSldState, useSecureMutation } from "@/hooks/use-daemon";
+import { useSites, useSldState } from "@/hooks/use-daemon";
 import { cn } from "@/lib/utils";
 
 export default function Domains() {
-  const { data: projects = [] } = useSites();
+  const { data: projects = [], refetch, isFetching } = useSites();
   const { data: state } = useSldState();
-  const secureMutation = useSecureMutation();
+  const navigate = useNavigate();
 
   const enableSecure = () => {
-    secureMutation.mutate();
+    navigate("/setup");
   };
 
   const domains = useMemo(() => {
@@ -34,10 +35,15 @@ export default function Domains() {
       path: project.path,
       secure: project.secure,
       type: project.type,
+      url: project.url,
     }));
   }, [projects]);
 
-  const handleOpenDomain = (domain: string, secure: boolean) => {
+  const handleOpenDomain = (domain: string, secure: boolean, url?: string) => {
+    if (url) {
+      window.open(url, "_blank");
+      return;
+    }
     const protocol = secure ? "https" : "http";
     window.open(`${protocol}://${domain}`, "_blank");
   };
@@ -53,9 +59,9 @@ export default function Domains() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button variant="secondary">
+          <Button variant="secondary" onClick={() => refetch()} disabled={isFetching}>
             <RefreshCw size={16} />
-            Refresh DNS
+            Refresh
           </Button>
           <Button variant="primary" onClick={enableSecure}>
             <ShieldCheck size={16} />
@@ -102,8 +108,8 @@ export default function Domains() {
                       HTTPS is enabled globally
                     </p>
                     <p className="text-sm text-[var(--muted-foreground)]">
-                      All .{state.tld} domains are secured with mkcert
-                      certificates
+                      Projects with HTTPS on use certificates from SLD's
+                      own certificate authority
                     </p>
                   </div>
                 </>
@@ -117,8 +123,8 @@ export default function Domains() {
                       HTTPS is not enabled
                     </p>
                     <p className="text-sm text-[var(--muted-foreground)]">
-                      Click "Enable HTTPS" to install SSL certificates for all
-                      domains
+                      Turn on HTTPS per project (domain.tls), and trust SLD's
+                      certificate authority once from Setup
                     </p>
                   </div>
                 </>
@@ -197,7 +203,7 @@ export default function Domains() {
                   </div>
 
                   <button
-                    onClick={() => handleOpenDomain(domain.name, domain.secure)}
+                    onClick={() => handleOpenDomain(domain.name, domain.secure, domain.url)}
                     className={cn(
                       "flex items-center gap-2 px-3 py-1.5 rounded-lg",
                       "text-sm font-medium",

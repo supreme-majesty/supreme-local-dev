@@ -1,7 +1,7 @@
-.PHONY: build build-fast frontend run install update update-fast clean \
-        restart refresh status park forget link unlink paths links logs daemon \
+.PHONY: build build-fast frontend install clean test e2e serve \
+        start stop status scan doctor \
         docker-config docker-up docker-up-pg docker-app docker-stop docker-down docker-logs docker-build docker-ps docker-shell docker-clean \
-        docker-images docker-image-app docker-image-router docker-image-nginx docker-image-php \n        test serve docker-token e2e
+        docker-images docker-image-app docker-image-router docker-image-nginx docker-image-php docker-token
 
 BINARY_NAME=sld
 MAIN_PATH=./cmd/sld
@@ -10,25 +10,13 @@ MAIN_PATH=./cmd/sld
 #  Build
 # ─────────────────────────────────────────────
 
-# Full rebuild (frontend + backend) then install
-update: build
-	@echo "Installing $(BINARY_NAME)..."
-	sudo ./$(BINARY_NAME) install
-	@echo "Done! SLD updated successfully. 🚀"
-
-# Backend-only rebuild then install (faster — skips npm)
-update-fast: build-fast
-	@echo "Installing $(BINARY_NAME) (fast)..."
-	sudo ./$(BINARY_NAME) install
-	@echo "Done! SLD updated successfully. 🚀"
-
-# Build binary with frontend
+# Build binary with the dashboard embedded
 build: frontend
 	@echo "Building $(BINARY_NAME)..."
 	go build -o $(BINARY_NAME) $(MAIN_PATH)
 	@echo "Build complete."
 
-# Build backend only — skips npm
+# Build backend only — skips npm (embeds whatever is in pkg/assets/gui)
 build-fast:
 	@echo "Building $(BINARY_NAME) (backend only)..."
 	go build -o $(BINARY_NAME) $(MAIN_PATH)
@@ -51,75 +39,38 @@ clean:
 install:
 	go install $(MAIN_PATH)
 
-# Run the engine tests
+# Run the Go tests
 test:
-	go test ./internal/...
+	go test ./...
 
 # End-to-end test of an SLD image against fixture projects (uses its own router
 # and network, so it can run next to a real SLD). Usage: make e2e [SLD_IMAGE=sld:local]
 e2e:
 	SLD_IMAGE=$(or $(SLD_IMAGE),sld:local) bash scripts/e2e.sh
 
-# Build and run the V2 control plane (dashboard + API with token auth) in the foreground
+# Build and run the control plane (dashboard + API with token auth) in the foreground
 serve: build
 	./$(BINARY_NAME) serve
 
-# Build and run the daemon (foreground)
-run: build
-	@echo "Starting daemon..."
-	./$(BINARY_NAME) daemon
-
 # ─────────────────────────────────────────────
-#  SLD System Commands  (proxy to running daemon)
+#  Projects without the SLD container (run inside a project folder)
 # ─────────────────────────────────────────────
 
-# Show service status
+start:
+	sld start
+
+stop:
+	sld stop
+
 status:
-	sld status
+	sld status --all
 
-# Restart all services (Nginx, PHP-FPM, Dnsmasq)
-restart:
-	sld restart
+# Find projects under a folder. Usage: make scan [dir=~/Developments]
+scan:
+	sld scan $(or $(dir),.)
 
-# Re-scan all parked directories for project changes
-refresh:
-	sld refresh
-
-# Start daemon in foreground (for debugging)
-daemon:
-	sudo sld daemon
-
-# Park a directory. Usage: make park path=/home/you/projects
-park:
-	@if [ -z "$(path)" ]; then echo "Usage: make park path=<directory>"; exit 1; fi
-	sld park $(path)
-
-# Un-park a directory. Usage: make forget path=/home/you/projects
-forget:
-	@if [ -z "$(path)" ]; then echo "Usage: make forget path=<directory>"; exit 1; fi
-	sld forget $(path)
-
-# Link current directory to a .test domain. Usage: make link name=myapp
-link:
-	@if [ -z "$(name)" ]; then echo "Usage: make link name=<sitename>"; exit 1; fi
-	sld link $(name)
-
-# Unlink a site. Usage: make unlink name=myapp
-unlink:
-	@if [ -z "$(name)" ]; then echo "Usage: make unlink name=<sitename>"; exit 1; fi
-	sld unlink $(name)
-
-# List all parked directories
-paths:
-	sld paths
-
-# List all linked sites
-links:
-	sld links
-
-# Tail nginx error logs (default). Usage: make logs svc=nginx-access
-logs:
-	sld logs $(or $(svc),nginx-error)
+doctor:
+	sld doctor
 
 # ─────────────────────────────────────────────
 #  Docker (dashboard + MariaDB + phpMyAdmin + Redis + Mailpit)

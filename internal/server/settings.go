@@ -24,6 +24,14 @@ type Settings struct {
 	Autostart map[string]bool `json:"autostart,omitempty"`
 	// Running remembers projects started through SLD and not stopped since.
 	Running map[string]bool `json:"running,omitempty"`
+	// SiteMeta holds the tags and category set on the Sites page, by domain.
+	SiteMeta map[string]SiteMeta `json:"site_meta,omitempty"`
+}
+
+// SiteMeta is how a project is labelled on the Sites page.
+type SiteMeta struct {
+	Tags     []string `json:"tags,omitempty"`
+	Category string   `json:"category,omitempty"`
 }
 
 // defaultSettings: bring back what was running, change nothing else.
@@ -75,6 +83,10 @@ func (st *settingsStore) copyLocked() Settings {
 	c.Running = make(map[string]bool, len(st.s.Running))
 	for k, v := range st.s.Running {
 		c.Running[k] = v
+	}
+	c.SiteMeta = make(map[string]SiteMeta, len(st.s.SiteMeta))
+	for k, v := range st.s.SiteMeta {
+		c.SiteMeta[k] = SiteMeta{Tags: append([]string(nil), v.Tags...), Category: v.Category}
 	}
 	return c
 }

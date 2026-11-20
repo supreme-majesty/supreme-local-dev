@@ -18,7 +18,7 @@ import (
 
 // RegisterExecCommands adds exec, shell, and passthrough commands to the V2 subcommand.
 func RegisterExecCommands(v2Cmd *cobra.Command) {
-	// --- sld v2 shell ---
+	// --- sld shell ---
 	var shellService string
 	shellCmd := &cobra.Command{
 		Use:   "shell [app|service|path]",
@@ -46,7 +46,7 @@ as an argument or with --service.`,
 	shellCmd.Flags().StringVarP(&shellService, "service", "s", "", "App name or service (php, nginx, db, redis, mailpit)")
 	v2Cmd.AddCommand(shellCmd)
 
-	// --- sld v2 exec ---
+	// --- sld exec ---
 	v2Cmd.AddCommand(&cobra.Command{
 		Use:                "exec [--service <app|service>] <command...>",
 		Short:              "Execute a command inside a project container (default: the main app)",
@@ -60,7 +60,7 @@ as an argument or with --service.`,
 				target, cmdArgs = strings.TrimPrefix(cmdArgs[0], "--service="), cmdArgs[1:]
 			}
 			if len(cmdArgs) == 0 {
-				return fmt.Errorf("usage: sld v2 exec [--service <app|service>] <command> [args...]")
+				return fmt.Errorf("usage: sld exec [--service <app|service>] <command> [args...]")
 			}
 			cwd, err := os.Getwd()
 			if err != nil {
@@ -99,7 +99,7 @@ as an argument or with --service.`,
 		})
 	}
 
-	// --- sld v2 npm / npx ---
+	// --- sld npm / npx ---
 	for _, tool := range []string{"npm", "npx"} {
 		tool := tool
 		v2Cmd.AddCommand(&cobra.Command{
@@ -192,7 +192,7 @@ func pickContainer(containers []*reconcile.ActualContainer, cfg *config.Config, 
 		available = append(available, name)
 	}
 	if len(available) == 0 {
-		return nil, fmt.Errorf("no containers are running for this project. Run 'sld v2 start' first")
+		return nil, fmt.Errorf("no containers are running for this project. Run 'sld start' first")
 	}
 	return nil, fmt.Errorf("no running container for %q. Running: %s", target, strings.Join(available, ", "))
 }
@@ -330,7 +330,7 @@ func execInNode(projectRoot string, command []string) error {
 
 // runAttached wires the current process's stdio to a container command. A TTY
 // is allocated when stdin and stdout are both terminals; piped stdin
-// (e.g. `sld v2 exec mysql < dump.sql`) is forwarded without a TTY.
+// (e.g. `sld exec mysql < dump.sql`) is forwarded without a TTY.
 func runAttached(command []string, run func(context.Context, docker.ExecOptions) (int, error)) (int, error) {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()

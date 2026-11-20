@@ -107,23 +107,25 @@ services:
   database: { type: postgres }
 ```
 
-Runtimes: `php`, `static`, `node`, `python`, `ruby`, `go`, `image`, `dockerfile`, `proxy`, `compose`. The first app owns the root domain; others get `<app>.<name>.localhost`. Dependencies are installed inside the containers (in a per-app volume) and reinstalled when the lockfile changes. Version 1 files keep working; `sld v2 config migrate` rewrites them.
+Runtimes: `php`, `static`, `node`, `python`, `ruby`, `go`, `image`, `dockerfile`, `proxy`, `compose`. The first app owns the root domain; others get `<app>.<name>.localhost`. Dependencies are installed inside the containers (in a per-app volume) and reinstalled when the lockfile changes. Version 1 files keep working; `sld config migrate` rewrites them.
 
 Add a `.sldignore` file to a folder to keep SLD from treating it as a project.
 
 ## Command line (without the dashboard)
 
-The same engine is available as `sld v2 …` for people who don't run the image. From a project folder:
+The same engine is available as the `sld` CLI for people who don't run the image. From a project folder:
 
 ```bash
-sld v2 init               # start the router, create the local CA
-sld v2 scan [dir]         # list projects and the domain each gets (--write creates configs)
-sld v2 init-project       # detect the stack and write .sld/config.yaml (--dry-run to preview)
-sld v2 start | stop | restart | status | logs [app] | destroy [--volumes]
-sld v2 shell [app]        # shell in an app container (runs as your user)
-sld v2 npm|php|composer|artisan|python|pip|rails|go …   # tools inside the project
+sld init                  # start the router, create the local CA
+sld scan [dir]            # list projects and the domain each gets (--write creates configs)
+sld init-project          # detect the stack and write .sld/config.yaml (--dry-run to preview)
+sld start | stop | restart | status | logs [app] | destroy [--volumes]
+sld shell [app]           # shell in an app container (runs as your user)
+sld npm|php|composer|artisan|python|pip|rails|go …   # tools inside the project
 sld serve                 # run the dashboard + API yourself
 ```
+
+Scripts written for the earlier `sld v2 …` commands keep working: `v2` is an alias.
 
 Binaries for Linux, macOS and Windows are attached to each GitHub release.
 

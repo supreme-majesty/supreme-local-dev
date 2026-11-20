@@ -470,7 +470,27 @@ Original scope:
 - Same suite on `ubuntu-latest` and on a Docker Desktop–style path layout (fixture for C1).
 - Gate for M9.
 
-### M9 — Delete V1 *(1–2 days)*
+### M9 — Delete V1 *(1–2 days)* — implemented 2026-11-20
+
+Decisions (2026-11-20): keep every dashboard page and back the host-dependent ones with Docker; make the V2 commands the top-level CLI.
+
+Deleted:
+- **Host layer:** `pkg/adapters` (Linux/macOS/Windows), the V1 daemon's nginx/PHP-FPM/hosts/cert logic and `state.json` (`pkg/daemon/state`, `pkg/daemon/metrics`), `pkg/plugins` and the host plugins (redis/mailhog/postgres binaries), the cloudflared download (`tunnel.go`), `pkg/assets/runtime` (nginx templates, `router.php`), `scripts/packaging`, `cmd/debug-env`, `pkg/project`, `pkg/util`.
+- **Unauthenticated listener:** the V1 daemon's own listener (`api.Server.Start`), which served the API without auth and with `Access-Control-Allow-Origin: *`.
+- **CLI:** the V1 host commands (install, uninstall, daemon, park, link, secure, php, service, plugin, share, sites ...). The project commands are top level (`sld init`, `sld start`, `sld scan`, ...); `sld v2 …` stays as a hidden alias. `sld db clone|snapshot`, `sld serve` and `sld legacy …` (for moving off V1) remain.
+- **Host changes:** `internal/dns` no longer writes `/etc/hosts` or `/etc/resolver`. For TLDs other than `.localhost`, `sld start` prints the hosts line to add. The healer no longer runs `apt-get install` or `fuser -k`; issues can only be dismissed, and their text says what to do.
+
+Re-backed with Docker (in `internal/server`: `classic.go`, `plugins.go`, `share.go`, `create.go`), with the same JSON shapes the pages already use:
+- **Overview, Sites, Domains:** `/api/state`, `/api/sites` come from the workspace scan. Tags and categories are stored in `settings.json`, and sites carry a `url` that includes the router port. "Remove" writes `.sldignore`; park/link un-hide a folder inside a workspace and refuse paths outside it.
+- **Services, Doctor, Metrics:** services are SLD's own containers: the router, the other services of SLD's compose stack, and plugin containers. Start/stop/restart only accept those. Doctor checks Docker, the router, workspaces, the CA and domain resolution. "Restart" restarts the router.
+- **Plugins:** Redis, Mailpit and PostgreSQL run as `sld-plugin-<id>` containers on the router network. Redis and Mailpit reuse the SLD compose stack's own containers when present.
+- **Share:** a `cloudflare/cloudflared` container on the router network runs a quick tunnel to `sld-router` with the project's Host header.
+- **New project / Ghost Mode:** templates run in throwaway `composer:2.8` / `node:22` containers as the folder owner. WordPress is downloaded and unpacked in Go. Clones are copied in Go, get their own `.sld/config.yaml` and a `.sld/ghost-of` marker. Discard only deletes folders that carry the marker. Every path must be inside a workspace.
+- **Pages:** global PHP switch replaced by the list of available versions (PHP is set per project). "Park folder" opens Projects, "Enable HTTPS" opens Setup.
+
+Not moved yet: `pkg/services` and `pkg/daemon` (now only the database manager, logs, env, artisan, healer and X-Ray services) still live under `pkg/`. Moving them under `internal/` is a rename with no behaviour change, left for a quiet moment. Artisan (the console drawer) and X-Ray still expect a host PHP and nginx log; the CLI's `sld artisan` runs in the project container.
+
+Original scope:
 - Delete `pkg/adapters/`, V1 parts of `pkg/daemon/` (nginx config gen, `state.json` routing), `pkg/plugins/`, `pkg/assets/runtime/`, `internal/dns` hosts-file editing (keep only the "suggest hosts lines" helper), `scripts/packaging/*`.
 - Move surviving `pkg/services` code (DB drivers, SQL import, healer, env manager, tunnel, discovery) under `internal/`.
 - `internal/legacy` remains only in the final host-binary build tag.

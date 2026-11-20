@@ -14,7 +14,6 @@ import {
   Stethoscope,
   RefreshCw,
   ExternalLink,
-  Terminal,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -31,6 +30,7 @@ interface CommandItem {
 interface Site {
   name: string;
   domain: string;
+  url?: string;
 }
 
 export function CommandPalette() {
@@ -124,61 +124,11 @@ export function CommandPalette() {
       keywords: ["health", "diagnostics"],
     },
 
-    // PHP Switching
-    {
-      id: "php-81",
-      label: "Switch PHP to 8.1",
-      icon: Terminal,
-      category: "php",
-      action: async () => {
-        setLoading(true);
-        await fetch("/api/php", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ version: "8.1" }),
-        });
-        setLoading(false);
-      },
-      keywords: ["version"],
-    },
-    {
-      id: "php-82",
-      label: "Switch PHP to 8.2",
-      icon: Terminal,
-      category: "php",
-      action: async () => {
-        setLoading(true);
-        await fetch("/api/php", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ version: "8.2" }),
-        });
-        setLoading(false);
-      },
-      keywords: ["version"],
-    },
-    {
-      id: "php-83",
-      label: "Switch PHP to 8.3",
-      icon: Terminal,
-      category: "php",
-      action: async () => {
-        setLoading(true);
-        await fetch("/api/php", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ version: "8.3" }),
-        });
-        setLoading(false);
-      },
-      keywords: ["version"],
-    },
-
     // Services
     {
       id: "restart-services",
-      label: "Restart Services",
-      description: "Nginx, PHP, Dnsmasq",
+      label: "Restart Router",
+      description: "Reload every project route",
       icon: RefreshCw,
       category: "services",
       action: async () => {
@@ -186,7 +136,7 @@ export function CommandPalette() {
         await fetch("/api/restart", { method: "POST" });
         setLoading(false);
       },
-      keywords: ["reload", "nginx", "php"],
+      keywords: ["reload", "router", "routes"],
     },
   ];
 
@@ -199,7 +149,7 @@ export function CommandPalette() {
       icon: ExternalLink,
       category: "sites" as const,
       action: () => {
-        window.open(`http://${site.domain}`, "_blank");
+        window.open(site.url || `http://${site.domain}`, "_blank");
       },
       keywords: ["browser", "visit"],
     },

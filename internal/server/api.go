@@ -77,6 +77,12 @@ func (s *Server) Register(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /api/v2/jobs/{id}", s.handleJob)
 	mux.HandleFunc("GET /api/v2/jobs/{id}/events", s.handleJobEvents)
+
+	// The original dashboard pages, backed by Docker.
+	s.registerClassic(mux)
+	s.registerPlugins(mux)
+	s.registerShare(mux)
+	s.registerCreate(mux)
 }
 
 // newRunner creates a runner whose output goes to w. Each job gets its own

@@ -12,8 +12,7 @@ import (
 )
 
 const (
-	DefaultTLD   = "test"
-	SLDTagMarker = "# added by sld"
+	DefaultTLD = "test"
 )
 
 // IsWSL2 reports whether the current Linux process is executing inside Windows Subsystem for Linux.
@@ -112,111 +111,18 @@ func HasHostsEntryInFile(path, domain string) (bool, error) {
 	return false, scanner.Err()
 }
 
-// AddHostsEntry appends a loopback entry for the domain to the system hosts file.
-func AddHostsEntry(domain string) error {
-	return AddHostsEntryToFile(HostsFilePath(), domain)
+// HostsLine is the hosts-file line that makes domain resolve to this
+// computer. SLD never edits the hosts file itself; it prints this line.
+func HostsLine(domain string) string {
+	return "127.0.0.1 " + strings.TrimSpace(domain)
 }
 
-// AddHostsEntryToFile appends a loopback entry for domain to the given hosts file if not present.
-func AddHostsEntryToFile(path, domain string) error {
-	domain = strings.TrimSpace(domain)
-	if domain == "" {
-		return fmt.Errorf("domain cannot be empty")
-	}
-
-	exists, err := HasHostsEntryInFile(path, domain)
-	if err == nil && exists {
-		return nil // Already present
-	}
-
-	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		return fmt.Errorf("cannot write %s (run with elevated privileges or add '127.0.0.1 %s' manually): %w", path, domain, err)
-	}
-	defer file.Close()
-
-	entry := fmt.Sprintf("\n127.0.0.1 %s %s\n", domain, SLDTagMarker)
-	_, err = file.WriteString(entry)
-	return err
-}
-
-// RemoveHostsEntry removes SLD-managed hosts entries for the domain from the system hosts file.
-func RemoveHostsEntry(domain string) error {
-	return RemoveHostsEntryFromFile(HostsFilePath(), domain)
-}
-
-// RemoveHostsEntryFromFile removes SLD-managed loopback lines matching domain from the given hosts file.
-func RemoveHostsEntryFromFile(path, domain string) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("failed to read %s: %w", path, err)
-	}
-
-	lines := strings.Split(string(data), "\n")
-	kept := make([]string, 0, len(lines))
-	removed := false
-
-	for _, rawLine := range lines {
-		trimmed := strings.TrimSpace(rawLine)
-		if strings.Contains(trimmed, SLDTagMarker) {
-			noComment := trimmed
-			if idx := strings.Index(noComment, "#"); idx >= 0 {
-				noComment = strings.TrimSpace(noComment[:idx])
-			}
-			fields := strings.Fields(noComment)
-			if len(fields) >= 2 && (fields[0] == "127.0.0.1" || fields[0] == "::1") && strings.EqualFold(fields[1], domain) {
-				removed = true
-				continue
-			}
-		}
-		kept = append(kept, rawLine)
-	}
-
-	if !removed {
-		return nil
-	}
-
-	return os.WriteFile(path, []byte(strings.Join(kept, "\n")), 0644)
-}
-
-// EnsureDomain verifies that domain resolves to loopback, falling back to adding a hosts entry.
-// Returns (true, nil) if a hosts entry was newly added.
-func EnsureDomain(domain string) (bool, error) {
+// NeedsHostsEntry reports whether domain neither resolves to loopback nor has
+// a hosts entry, i.e. whether the user should add HostsLine(domain).
+func NeedsHostsEntry(domain string) bool {
 	if resolved, _ := CheckResolution(domain); resolved {
-		return false, nil
+		return false
 	}
-	if has, _ := HasHostsEntry(domain); has {
-		return false, nil
-	}
-	if err := AddHostsEntry(domain); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-// EnsureResolver performs OS-specific setup for local *.test domain resolution.
-func EnsureResolver(tld string) error {
-	if tld == "" {
-		tld = DefaultTLD
-	}
-
-	switch runtime.GOOS {
-	case "darwin":
-		// On macOS, create /etc/resolver/<tld> pointing to loopback
-		resolverDir := "/etc/resolver"
-		if err := os.MkdirAll(resolverDir, 0755); err != nil {
-			return fmt.Errorf("failed to create %s (may require sudo): %w", resolverDir, err)
-		}
-		resolverFile := fmt.Sprintf("%s/%s", resolverDir, tld)
-		content := "nameserver 127.0.0.1\nport 53\n"
-		return os.WriteFile(resolverFile, []byte(content), 0644)
-
-	case "linux", "windows":
-		// On Linux and Windows/WSL2, MVP strategy uses per-domain hosts sync on project start
-		// to avoid port 53 collisions with systemd-resolved or WSL2 NAT.
-		return nil
-
-	default:
-		return nil
-	}
+	has, _ := HasHostsEntry(domain)
+	return !has
 }

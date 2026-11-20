@@ -189,6 +189,14 @@ for case in "${CASES[@]}"; do
   [ "$left" = "0" ] && ok "no containers left" || bad "$name: $left container(s) left after destroy"
 done
 
+log "Dashboard pages (Docker-backed)"
+classic() { curl -sS --max-time 30 -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:$API_PORT/api$1"; }
+classic /sites | grep -q '"name":"e2e-static"' && ok "sites list" || bad "sites list misses e2e-static"
+classic /services | grep -q '"kind":"router"' && ok "services list shows the router" || bad "services list: $(classic /services | head -c 200)"
+classic /plugins | grep -q '"id":"postgres"' && ok "plugins list" || bad "plugins list: $(classic /plugins | head -c 200)"
+classic /system/doctor | grep -q '"name":"Docker","status":"pass"' && ok "doctor" || bad "doctor: $(classic /system/doctor | head -c 200)"
+classic /metrics | grep -q '"services_total"' && ok "metrics" || bad "metrics: $(classic /metrics | head -c 200)"
+
 log "Result: $pass passed, $fail failed"
 if [ "$fail" -gt 0 ]; then
   echo "--- control plane log (tail) ---"

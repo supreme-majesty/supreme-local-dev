@@ -15,7 +15,7 @@ var (
 	multipleHyphensRegex = regexp.MustCompile(`-+`)
 )
 
-// Identity represents the deterministic identity of an SLD V2 project.
+// Identity represents the deterministic identity of an SLD project.
 type Identity struct {
 	ID            string // <slug>-<hash8> e.g. "my-app-3f7b49a1"
 	Slug          string // e.g. "my-app"

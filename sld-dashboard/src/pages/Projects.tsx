@@ -242,7 +242,7 @@ export default function Projects() {
 
               <div className="flex flex-col gap-2">
                 <a
-                  href={`http://${project.domain}`}
+                  href={project.url || `http://${project.domain}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex items-center justify-center gap-2 w-full py-2.5 bg-[var(--primary)]/10 text-[var(--primary)] hover:bg-[var(--primary)] hover:text-white rounded-lg font-medium transition-all group-hover:shadow-md"

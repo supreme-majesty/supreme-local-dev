@@ -238,7 +238,7 @@ func TestRegisterCommands_CompleteTree(t *testing.T) {
 
 	for _, name := range expected {
 		if !found[name] {
-			t.Errorf("expected 'sld v2 %s' command to be registered", name)
+			t.Errorf("expected 'sld %s' command to be registered", name)
 		}
 	}
 }

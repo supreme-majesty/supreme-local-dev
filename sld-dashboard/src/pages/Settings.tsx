@@ -17,7 +17,6 @@ import { Button } from "@/components/ui/Button";
 import { useAppStore } from "@/stores/useAppStore";
 import {
   useSldState,
-  useSwitchPHPMutation,
   usePHPVersions,
 } from "@/hooks/use-daemon";
 import { cn } from "@/lib/utils";
@@ -77,55 +76,15 @@ function SettingsRow({
   );
 }
 
-function Select({
-  value,
-  options,
-  onChange,
-}: {
-  value: string;
-  options: { value: string; label: string }[];
-  onChange: (value: string) => void;
-}) {
-  return (
-    <select
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className={cn(
-        "px-3 py-2 rounded-lg",
-        "bg-[var(--input)] border border-[var(--border)]",
-        "text-[var(--foreground)]",
-        "focus:outline-none focus:border-[var(--ring)]",
-        "transition-colors duration-200"
-      )}
-    >
-      {options.map((option) => (
-        <option key={option.value} value={option.value}>
-          {option.label}
-        </option>
-      ))}
-    </select>
-  );
-}
-
 export default function Settings() {
   const { theme, toggleTheme } = useAppStore();
   const { data: state, isLoading: isStateLoading } = useSldState();
-  const switchPHPMutation = useSwitchPHPMutation();
   const { data: phpVersions, isLoading: isVersionsLoading } = usePHPVersions();
   const { toast } = useToast();
 
   const [autostart, setAutostart] = useState(true);
   const [notifications, setNotifications] = useState(true);
 
-  // Note: We use local state for php version to allow immediate UI update,
-  // but we should sync with state.php_version if we want to be strict.
-  // For now initializing with state value or default is fine.
-  const [phpVersion, setPhpVersion] = useState(state?.php_version || "8.2");
-
-  const handlePhpChange = (version: string) => {
-    setPhpVersion(version);
-    switchPHPMutation.mutate(version);
-  };
 
   const handleSave = () => {
     // Just a mock save for now since general settings aren't persisted in daemon yet
@@ -167,7 +126,7 @@ export default function Settings() {
       >
         <SettingsRow
           label="Auto-start on login"
-          description="Start SLD daemon when you log in"
+          description="Start SLD when you log in"
         >
           <Switch checked={autostart} onCheckedChange={setAutostart} />
         </SettingsRow>
@@ -186,26 +145,21 @@ export default function Settings() {
         icon={<Terminal size={20} />}
       >
         <SettingsRow
-          label="Default PHP Version"
-          description="Used for all projects unless overridden"
+          label="PHP Versions"
+          description="Each project picks its own version (apps.<name>.version in .sld/config.yaml)"
         >
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2">
             {isVersionsLoading ? (
-              <div className="h-9 w-32 bg-[var(--muted)] animate-pulse rounded-lg" />
+              <div className="h-7 w-32 bg-[var(--muted)] animate-pulse rounded-lg" />
             ) : (
-              <Select
-                value={phpVersion}
-                options={(phpVersions || ["8.2", "8.1"]).map((v) => ({
-                  value: v,
-                  label: `PHP ${v}`,
-                }))}
-                onChange={handlePhpChange}
-              />
-            )}
-            {switchPHPMutation.isPending && (
-              <span className="text-xs text-[var(--muted-foreground)] animate-pulse">
-                Switching...
-              </span>
+              (phpVersions || []).map((v) => (
+                <span
+                  key={v}
+                  className="px-2.5 py-1 rounded-md text-xs font-mono bg-[var(--muted)] text-[var(--foreground)]"
+                >
+                  PHP {v}
+                </span>
+              ))
             )}
           </div>
         </SettingsRow>
@@ -214,7 +168,7 @@ export default function Settings() {
       {/* Server Settings */}
       <SettingsSection
         title="Server"
-        description="Nginx and web server configuration"
+        description="Router ports and domains (set when SLD starts)"
         icon={<Server size={20} />}
       >
         <SettingsRow label="HTTP Port" description="Main port for HTTP traffic">

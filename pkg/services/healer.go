@@ -2,7 +2,6 @@ package services
 
 import (
 	"fmt"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -85,11 +84,11 @@ func (h *HealerService) analyze(entry LogEntryData) {
 		h.reportIssue(HealerIssue{
 			ID:          fmt.Sprintf("port-conflict-%s", port),
 			Title:       fmt.Sprintf("Port %s is Blocked", port),
-			Description: fmt.Sprintf("Another service is using port %s, preventing start.", port),
+			Description: fmt.Sprintf("Another program is using port %s. Stop it, or give SLD another port (SLD_HTTP_PORT / SLD_HTTPS_PORT in .env).", port),
 			Severity:    SeverityCritical,
 			Source:      entry.Source,
 			FixAction:   fmt.Sprintf("kill_port_%s", port),
-			CanAutoFix:  true,
+			CanAutoFix:  false,
 		})
 		return
 	}
@@ -102,11 +101,11 @@ func (h *HealerService) analyze(entry LogEntryData) {
 			h.reportIssue(HealerIssue{
 				ID:          "missing-ext-gd",
 				Title:       "Missing PHP Extension: GD",
-				Description: "Your code requires the GD image library.",
+				Description: "Your code requires the GD image library. SLD's PHP images include it: start the project with SLD instead of a host PHP.",
 				Severity:    SeverityWarning,
 				Source:      entry.Source,
 				FixAction:   "install_ext_gd",
-				CanAutoFix:  true, // If we have sudo
+				CanAutoFix:  false,
 			})
 		}
 		// Add more common ones (curl, mbstring, etc)
@@ -164,59 +163,21 @@ func (h *HealerService) GetActiveIssues() []HealerIssue {
 	return list
 }
 
-// ResolveIssue executes the fix
+// ResolveIssue dismisses an issue. Fixes are never applied automatically:
+// SLD runs in a container and does not change the host (killing processes,
+// installing packages); each issue's description says what to do.
 func (h *HealerService) ResolveIssue(issueID string) error {
-	h.mu.RLock()
-	issue, ok := h.activeIssues[issueID]
-	h.mu.RUnlock()
-
+	h.mu.Lock()
+	_, ok := h.activeIssues[issueID]
+	delete(h.activeIssues, issueID)
+	h.mu.Unlock()
 	if !ok {
 		return fmt.Errorf("issue not found or already resolved")
 	}
-
-	fmt.Printf("[HEALER] Attempting to fix: %s\n", issue.Title)
-
-	var err error
-	switch {
-	case strings.HasPrefix(issue.FixAction, "kill_port_"):
-		port := strings.TrimPrefix(issue.FixAction, "kill_port_")
-		err = h.killProcessOnPort(port)
-	case issue.FixAction == "install_ext_gd":
-		err = h.installPackage("php-gd")
-	case issue.FixAction == "fix_permissions_generic":
-		// No-op or guide user
-		return fmt.Errorf("automatic permission fix not yet implemented for safety")
-	default:
-		return fmt.Errorf("unknown fix action: %s", issue.FixAction)
-	}
-
-	if err != nil {
-		return err
-	}
-
-	// Mark resolved
-	h.mu.Lock()
-	delete(h.activeIssues, issueID)
-	h.mu.Unlock()
 
 	h.Bus.Publish(events.Event{
 		Type:    events.HealerIssueResolved,
 		Payload: issueID,
 	})
-
 	return nil
-}
-
-func (h *HealerService) killProcessOnPort(port string) error {
-	// fuser -k 80/tcp
-	cmd := exec.Command("fuser", "-k", fmt.Sprintf("%s/tcp", port))
-	// Might need sudo if we are not root (daemon usually is root or has caps)
-	return cmd.Run()
-}
-
-func (h *HealerService) installPackage(pkg string) error {
-	// Assumes apt-get for now (User's OS is Linux)
-	// DEBIAN_FRONTEND=noninteractive
-	cmd := exec.Command("apt-get", "install", "-y", pkg)
-	return cmd.Run()
 }

@@ -143,6 +143,6 @@ func PrintScan(base string, results []ScanResult, write bool) {
 		}
 	}
 	if !write {
-		fmt.Println("\nRun 'sld v2 scan --write' to create .sld/config.yaml for projects marked \"new\" (existing configs are never changed).")
+		fmt.Println("\nRun 'sld scan --write' to create .sld/config.yaml for projects marked \"new\" (existing configs are never changed).")
 	}
 }

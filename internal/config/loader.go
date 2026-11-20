@@ -402,7 +402,7 @@ func ResolvePHPConstraint(constraint string) (string, error) {
 			}
 		}
 		if best == "" {
-			return "", fmt.Errorf("project requires PHP %s, but SLD V2 only supports PHP %s. Please upgrade project dependencies", c, strings.Join(SupportedPHPVersions, ", "))
+			return "", fmt.Errorf("project requires PHP %s, but SLD only supports PHP %s. Please upgrade project dependencies", c, strings.Join(SupportedPHPVersions, ", "))
 		}
 		return best, nil
 	}
@@ -431,7 +431,7 @@ func ResolvePHPConstraint(constraint string) (string, error) {
 				return v, nil
 			}
 		}
-		return "", fmt.Errorf("project requires PHP %s, but SLD V2 only supports PHP %s", c, strings.Join(SupportedPHPVersions, ", "))
+		return "", fmt.Errorf("project requires PHP %s, but SLD only supports PHP %s", c, strings.Join(SupportedPHPVersions, ", "))
 	}
 
 	// Greater-than / range expressions
@@ -447,7 +447,7 @@ func ResolvePHPConstraint(constraint string) (string, error) {
 
 	// Explicit check for legacy/unsupported versions (< 8.0, ^7.4, etc.)
 	if strings.Contains(c, "7.") || strings.Contains(c, "5.") || strings.HasPrefix(c, "<8") || strings.HasPrefix(c, "< 8") {
-		return "", fmt.Errorf("project requires PHP %s, but SLD V2 only supports PHP 8.1, 8.2, 8.3, 8.4. Please upgrade project dependencies", c)
+		return "", fmt.Errorf("project requires PHP %s, but SLD only supports PHP 8.1, 8.2, 8.3, 8.4. Please upgrade project dependencies", c)
 	}
 
 	return "", fmt.Errorf("unable to resolve PHP constraint %q to supported SLD versions (%s)", c, strings.Join(SupportedPHPVersions, ", "))

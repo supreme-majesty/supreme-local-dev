@@ -28,20 +28,28 @@ func lazyRunner() (*Runner, error) {
 	return runner, nil
 }
 
-// RegisterCommands adds V2 Docker-backed subcommands to the root cobra command.
-// These coexist with the legacy V1 host-based commands.
+// RegisterCommands adds the project commands (init, start, stop, ...) to the
+// root command, and again under "sld v2" for scripts written before they
+// moved to the top level.
 func RegisterCommands(rootCmd *cobra.Command) {
+	addCommands(rootCmd)
 	v2Cmd := &cobra.Command{
-		Use:   "v2",
-		Short: "SLD V2 Docker-backed commands",
-		Long:  "Docker-native project management commands for SLD V2. These use per-project containers instead of host-installed services.",
+		Use:    "v2",
+		Short:  "Same commands as the top level (kept for older scripts)",
+		Hidden: true,
 	}
+	addCommands(v2Cmd)
+	rootCmd.AddCommand(v2Cmd)
+}
 
-	// --- sld v2 init ---
+func addCommands(parent *cobra.Command) {
+	v2Cmd := parent // historical name: these were "sld ..." commands
+
+	// --- sld init ---
 	v2Cmd.AddCommand(&cobra.Command{
 		Use:   "init",
-		Short: "Initialize SLD V2 (create global network and start router)",
-		Long: `Performs first-time SLD V2 setup:
+		Short: "Initialize SLD (create global network and start router)",
+		Long: `Performs first-time SLD setup:
   1. Validates Docker Engine connectivity
   2. Checks host port 80/443 availability
   3. Creates the sld-global bridge network and SLD's local CA
@@ -55,7 +63,7 @@ func RegisterCommands(rootCmd *cobra.Command) {
 		},
 	})
 
-	// --- sld v2 start ---
+	// --- sld start ---
 	v2Cmd.AddCommand(&cobra.Command{
 		Use:   "start [path]",
 		Short: "Start Docker containers for the current project",
@@ -75,7 +83,7 @@ containers for the project in dependency order with health verification.`,
 		},
 	})
 
-	// --- sld v2 stop ---
+	// --- sld stop ---
 	v2Cmd.AddCommand(&cobra.Command{
 		Use:   "stop [path]",
 		Short: "Stop and remove Docker containers for the current project (preserves volumes)",
@@ -92,7 +100,7 @@ containers for the project in dependency order with health verification.`,
 		},
 	})
 
-	// --- sld v2 destroy ---
+	// --- sld destroy ---
 	var destroyVolumes bool
 	var destroyYes bool
 	destroyCmd := &cobra.Command{
@@ -114,7 +122,7 @@ containers for the project in dependency order with health verification.`,
 	destroyCmd.Flags().BoolVarP(&destroyYes, "yes", "y", false, "Skip interactive confirmation prompt")
 	v2Cmd.AddCommand(destroyCmd)
 
-	// --- sld v2 restart ---
+	// --- sld restart ---
 	v2Cmd.AddCommand(&cobra.Command{
 		Use:   "restart [path]",
 		Short: "Restart Docker containers for the current project",
@@ -135,7 +143,7 @@ containers for the project in dependency order with health verification.`,
 		},
 	})
 
-	// --- sld v2 status ---
+	// --- sld status ---
 	var statusAll bool
 	var statusJSON bool
 	statusCmd := &cobra.Command{
@@ -153,11 +161,11 @@ containers for the project in dependency order with health verification.`,
 			return runner.Status(context.Background(), projectRoot, statusAll, statusJSON)
 		},
 	}
-	statusCmd.Flags().BoolVar(&statusAll, "all", false, "Show status of all SLD V2 managed projects")
+	statusCmd.Flags().BoolVar(&statusAll, "all", false, "Show status of all SLD-managed projects")
 	statusCmd.Flags().BoolVar(&statusJSON, "json", false, "Output status as JSON")
 	v2Cmd.AddCommand(statusCmd)
 
-	// --- sld v2 inspect ---
+	// --- sld inspect ---
 	v2Cmd.AddCommand(&cobra.Command{
 		Use:   "inspect [path]",
 		Short: "Output detailed JSON representation of the project's Docker state",
@@ -174,14 +182,14 @@ containers for the project in dependency order with health verification.`,
 		},
 	})
 
-	// --- sld v2 secure ---
+	// --- sld secure ---
 	v2Cmd.AddCommand(&cobra.Command{
 		Use:   "secure",
 		Short: "Create SLD's local CA and router certificate, reload the router, and show how to trust the CA",
 		Long: `Ensures SLD's local certificate authority exists (reusing mkcert's CA when SLD
 runs on a host with mkcert installed), refreshes the router's default certificate,
 and recreates the router. Projects with 'domain.tls: true' get their own
-certificate on 'sld v2 start'.`,
+certificate on 'sld start'.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			runner, err := lazyRunner()
 			if err != nil {
@@ -192,7 +200,7 @@ certificate on 'sld v2 start'.`,
 		},
 	})
 
-	// --- sld v2 config ---
+	// --- sld config ---
 	configCmd := &cobra.Command{
 		Use:   "config",
 		Short: "Validate or inspect .sld/config.yaml",
@@ -232,7 +240,7 @@ certificate on 'sld v2 start'.`,
 	})
 	v2Cmd.AddCommand(configCmd)
 
-	// --- sld v2 doctor ---
+	// --- sld doctor ---
 	v2Cmd.AddCommand(&cobra.Command{
 		Use:   "doctor",
 		Short: "Check Docker environment health, ports, TLS, and DNS",
@@ -245,7 +253,7 @@ certificate on 'sld v2 start'.`,
 		},
 	})
 
-	// --- sld v2 init-project ---
+	// --- sld init-project ---
 	var initRuntime string
 	var initDryRun bool
 	initProjectCmd := &cobra.Command{
@@ -267,7 +275,7 @@ it needs, and writes .sld/config.yaml.`,
 	initProjectCmd.Flags().BoolVar(&initDryRun, "dry-run", false, "Print the detected configuration without writing it")
 	v2Cmd.AddCommand(initProjectCmd)
 
-	// --- sld v2 scan ---
+	// --- sld scan ---
 	var scanWrite bool
 	scanCmd := &cobra.Command{
 		Use:   "scan [dir]",
@@ -294,7 +302,7 @@ one; existing configs are never changed.`,
 	scanCmd.Flags().BoolVar(&scanWrite, "write", false, "Create .sld/config.yaml for detected projects that have none")
 	v2Cmd.AddCommand(scanCmd)
 
-	// --- sld v2 logs ---
+	// --- sld logs ---
 	var followLogs bool
 	var tailLogs string
 	logsCmd := &cobra.Command{
@@ -322,7 +330,7 @@ Optionally specify a service: php, nginx, db, redis, mailpit, node.`,
 	logsCmd.Flags().StringVarP(&tailLogs, "tail", "n", "100", "Number of lines to show from the end of the logs")
 	v2Cmd.AddCommand(logsCmd)
 
-	// --- sld v2 open ---
+	// --- sld open ---
 	v2Cmd.AddCommand(&cobra.Command{
 		Use:   "open [path]",
 		Short: "Open project domain in your default browser",
@@ -339,10 +347,10 @@ Optionally specify a service: php, nginx, db, redis, mailpit, node.`,
 		},
 	})
 
-	// --- sld v2 update ---
+	// --- sld update ---
 	v2Cmd.AddCommand(&cobra.Command{
 		Use:   "update",
-		Short: "Pull the latest SLD V2 Docker images from GHCR",
+		Short: "Pull the latest SLD Docker images from GHCR",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			runner, err := lazyRunner()
 			if err != nil {
@@ -352,7 +360,7 @@ Optionally specify a service: php, nginx, db, redis, mailpit, node.`,
 		},
 	})
 
-	// --- sld v2 migrate-v1 (backward-compatible alias) ---
+	// --- sld migrate-v1 (backward-compatible alias) ---
 	v2Cmd.AddCommand(&cobra.Command{
 		Use:   "migrate-v1 [path]",
 		Short: "Migrate a project from legacy SLD V1 (host) to V2 (Docker)",
@@ -369,7 +377,7 @@ Optionally specify a service: php, nginx, db, redis, mailpit, node.`,
 		},
 	})
 
-	// --- sld v2 legacy ---
+	// --- sld legacy ---
 	legacyCmd := &cobra.Command{
 		Use:   "legacy",
 		Short: "Inspect, migrate, or remove legacy SLD V1 host setup",
@@ -415,7 +423,6 @@ Optionally specify a service: php, nginx, db, redis, mailpit, node.`,
 	// Exec, shell, and passthrough commands
 	RegisterExecCommands(v2Cmd)
 
-	rootCmd.AddCommand(v2Cmd)
 }
 
 // resolveProjectRoot determines the project root from args or current directory.

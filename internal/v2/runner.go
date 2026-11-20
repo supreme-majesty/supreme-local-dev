@@ -32,7 +32,7 @@ import (
 	"github.com/supreme-majesty/supreme-local-dev/internal/tls"
 )
 
-// Runner provides the high-level CLI command implementations for SLD V2.
+// Runner provides the high-level CLI command implementations for SLD.
 type Runner struct {
 	orch *orchestrate.Orchestrator
 	out  io.Writer // progress output (nil = stdout); the API captures it per job
@@ -80,9 +80,10 @@ func (r *Runner) identity(projectRoot string) (*project.Identity, error) {
 	return id, nil
 }
 
-// manageHostsFile reports whether SLD should edit the hosts file for domain:
-// never from inside a container, and never for *.localhost names.
-func (r *Runner) manageHostsFile(domain string) bool {
+// checkHostsFile reports whether SLD should check the hosts file for domain:
+// *.localhost names resolve on their own, and a container cannot see the
+// host's hosts file.
+func (r *Runner) checkHostsFile(domain string) bool {
 	return domain != "" && !r.env().InContainer() && !config.IsAutoResolvingDomain(domain)
 }
 
@@ -92,7 +93,7 @@ func (r *Runner) manageHostsFile(domain string) bool {
 // 3. Creates the sld-global network and starts the Traefik router
 // 4. Configures OS DNS resolver helper where applicable
 func (r *Runner) Init(ctx context.Context) error {
-	fmt.Fprintln(r.w(), "[SLD] Initializing SLD V2...")
+	fmt.Fprintln(r.w(), "[SLD] Initializing SLD...")
 
 	// 1. Check Docker
 	fmt.Fprintln(r.w(), "[SLD] Checking Docker Engine connectivity...")
@@ -126,20 +127,17 @@ func (r *Runner) Init(ctx context.Context) error {
 		fmt.Fprintf(r.w(), "[SLD] Router ports %d (http) / %d (https) are saved and used by later commands.\n", p, r.env().HTTPSPort())
 	}
 
-	// 4. Platform DNS resolver setup — only needed for TLDs browsers do not
-	// resolve on their own, and impossible from inside a container.
-	tld := config.DefaultTLD()
-	if r.manageHostsFile("sld." + tld) {
-		if err := dns.EnsureResolver(tld); err != nil {
-			fmt.Fprintf(r.w(), "[SLD] ⚠️  DNS resolver setup skipped: %v\n", err)
-		}
+	// 4. Domains: *.localhost needs nothing; other TLDs need hosts entries,
+	// which SLD suggests per project on start (it never edits the hosts file).
+	if tld := config.DefaultTLD(); r.checkHostsFile("sld." + tld) {
+		fmt.Fprintf(r.w(), "[SLD] Domains end in .%s, which does not resolve by itself: 'sld start' prints the hosts lines to add.\n", tld)
 	}
 
 	r.printTrustHint()
 
 	fmt.Fprintln(r.w())
 	fmt.Fprintln(r.w(), "[SLD] Initialization complete. SLD is ready. 🚀")
-	fmt.Fprintln(r.w(), "[SLD] Run 'sld v2 start' inside a project directory to begin.")
+	fmt.Fprintln(r.w(), "[SLD] Run 'sld start' inside a project directory to begin.")
 	return nil
 }
 
@@ -224,7 +222,7 @@ func (r *Runner) Start(ctx context.Context, projectRoot string) error {
 	for _, app := range cfg.Apps {
 		switch app.Runtime {
 		case config.RuntimeNode, config.RuntimePython, config.RuntimeRuby, config.RuntimeGo:
-			fmt.Fprintf(r.w(), "[SLD] ℹ️  %s may still be installing dependencies — follow with: sld v2 logs %s -f\n", app.Name, app.Name)
+			fmt.Fprintf(r.w(), "[SLD] ℹ️  %s may still be installing dependencies — follow with: sld logs %s -f\n", app.Name, app.Name)
 		}
 	}
 
@@ -232,17 +230,12 @@ func (r *Runner) Start(ctx context.Context, projectRoot string) error {
 }
 
 func (r *Runner) ensureProjectDomainDNS(domain string) {
-	if !r.manageHostsFile(domain) {
+	if !r.checkHostsFile(domain) || !dns.NeedsHostsEntry(domain) {
 		return
 	}
-	added, err := dns.EnsureDomain(domain)
-	if err != nil {
-		fmt.Fprintf(r.w(), "[SLD] ⚠️  DNS notice: %v\n", err)
-		return
-	}
-	if added {
-		fmt.Fprintf(r.w(), "[SLD] ✅ Added hosts entry: 127.0.0.1 %s\n", domain)
-	}
+	fmt.Fprintf(r.w(), "[SLD] ⚠️  %s does not resolve yet. Add this line to %s (needs admin rights):\n", domain, dns.HostsFilePath())
+	fmt.Fprintf(r.w(), "        %s\n", dns.HostsLine(domain))
+	fmt.Fprintln(r.w(), "      or use a .localhost domain, which needs no setup.")
 }
 
 // Stop stops and removes all containers for the project at the given path (preserving volumes & network).
@@ -304,14 +297,6 @@ func (r *Runner) Destroy(ctx context.Context, projectRoot string, removeVolumes,
 		return fmt.Errorf("failed to destroy project: %w", err)
 	}
 
-	// Best-effort cleanup of SLD-managed hosts entry
-	if cfg, _, err := loadProjectConfig(projectRoot); err == nil && r.manageHostsFile(cfg.Domain.Name) {
-		_ = dns.RemoveHostsEntry(cfg.Domain.Name)
-		if cfg.Services.Mailpit.Enabled {
-			_ = dns.RemoveHostsEntry("mail." + cfg.Domain.Name)
-		}
-	}
-
 	if removeVolumes {
 		fmt.Fprintln(r.w(), "[SLD] ✅ Project containers, network, and volumes destroyed.")
 	} else {
@@ -356,7 +341,7 @@ func (r *Runner) Status(ctx context.Context, projectRoot string, allProjects, as
 
 	if len(containers) == 0 {
 		fmt.Fprintln(r.w(), "No containers running for this project.")
-		fmt.Fprintln(r.w(), "Run 'sld v2 start' to launch the development environment.")
+		fmt.Fprintln(r.w(), "Run 'sld start' to launch the development environment.")
 		return nil
 	}
 
@@ -411,7 +396,7 @@ func (r *Runner) statusAll(ctx context.Context, asJSON bool) error {
 	}
 
 	if len(globalContainers) == 0 && len(projectIDs) == 0 {
-		fmt.Fprintln(r.w(), "No SLD V2 containers found.")
+		fmt.Fprintln(r.w(), "No SLD containers found.")
 		return nil
 	}
 
@@ -525,7 +510,7 @@ func (r *Runner) Secure(ctx context.Context) error {
 	}
 
 	r.printTrustHint()
-	fmt.Fprintln(r.w(), "[SLD] Set 'domain.tls: true' in .sld/config.yaml and run 'sld v2 start' to serve HTTPS.")
+	fmt.Fprintln(r.w(), "[SLD] Set 'domain.tls: true' in .sld/config.yaml and run 'sld start' to serve HTTPS.")
 	return nil
 }
 
@@ -570,7 +555,7 @@ func ConfigValidate(projectRoot string) error {
 	}
 	fmt.Fprintf(os.Stdout, "[SLD] ✅ Configuration is valid (%s — %s, domain %s)\n", cfg.Name, cfg.Describe(), cfg.Domain.Name)
 	if cfg.SourceVersion == 1 {
-		fmt.Fprintln(os.Stdout, "[SLD] ℹ️  This is a version 1 file; run 'sld v2 config migrate' to rewrite it as version 2.")
+		fmt.Fprintln(os.Stdout, "[SLD] ℹ️  This is a version 1 file; run 'sld config migrate' to rewrite it as version 2.")
 	}
 	if err := orchestrate.CheckEngineSupport(cfg); err != nil {
 		fmt.Fprintf(os.Stdout, "[SLD] ⚠️  Valid, but cannot be started yet: %v\n", err)
@@ -618,7 +603,7 @@ func ConfigMigrate(projectRoot string) error {
 	}
 
 	fmt.Fprintf(os.Stdout, "[SLD] ✅ Migrated .sld/config.yaml to version 2 (original saved as %s)\n", backupPath)
-	fmt.Fprintln(os.Stdout, "[SLD] Containers will be recreated once on the next 'sld v2 start'; data volumes are kept.")
+	fmt.Fprintln(os.Stdout, "[SLD] Containers will be recreated once on the next 'sld start'; data volumes are kept.")
 	return nil
 }
 
@@ -677,7 +662,7 @@ func (r *Runner) Doctor(ctx context.Context) error {
 			}
 		}
 		if !routerFound {
-			fmt.Fprintln(r.w(), "❌ Router not found (run 'sld v2 init')")
+			fmt.Fprintln(r.w(), "❌ Router not found (run 'sld init')")
 		}
 	}
 
@@ -689,7 +674,7 @@ func (r *Runner) Doctor(ctx context.Context) error {
 	case routerRunning:
 		fmt.Fprintln(r.w(), "✅ Bound by sld-router")
 	case r.env().InContainer():
-		fmt.Fprintln(r.w(), "ℹ️  Cannot probe host ports from a container; Docker reports conflicts on 'sld v2 init'")
+		fmt.Fprintln(r.w(), "ℹ️  Cannot probe host ports from a container; Docker reports conflicts on 'sld init'")
 	default:
 		var busy []string
 		for _, p := range []int{httpPort, httpsPort} {
@@ -713,7 +698,7 @@ func (r *Runner) Doctor(ctx context.Context) error {
 	} else if certMgr.HasCA() {
 		fmt.Fprintf(r.w(), "✅ Ready (%s) — trust it once for HTTPS\n", certMgr.CACertPath())
 	} else {
-		fmt.Fprintln(r.w(), "⚠️  Not generated yet (run 'sld v2 init' or 'sld v2 secure')")
+		fmt.Fprintln(r.w(), "⚠️  Not generated yet (run 'sld init' or 'sld secure')")
 	}
 
 	// 5. DNS Resolution
@@ -774,7 +759,7 @@ func (r *Runner) Logs(ctx context.Context, projectRoot, service string, follow b
 	}
 
 	if len(containers) == 0 {
-		return fmt.Errorf("no containers running for project %s. Run 'sld v2 start' first", identity.Slug)
+		return fmt.Errorf("no containers running for project %s. Run 'sld start' first", identity.Slug)
 	}
 
 	// Accept an app name or a service; include stopped containers so the logs
@@ -845,9 +830,9 @@ func openBrowserURL(url string) error {
 	return exec.Command(cmd, args...).Start()
 }
 
-// Update pulls the latest SLD V2 Docker images from GHCR and recreates the global router if running.
+// Update pulls the latest SLD Docker images from GHCR and recreates the global router if running.
 func (r *Runner) Update(ctx context.Context) error {
-	fmt.Fprintln(r.w(), "[SLD] Updating SLD V2 Docker images from GHCR...")
+	fmt.Fprintln(r.w(), "[SLD] Updating SLD Docker images from GHCR...")
 
 	images := []string{
 		fmt.Sprintf("%s/sld-router:%s", orchestrate.ImageRegistry, orchestrate.RouterImageTag),
@@ -874,7 +859,7 @@ func (r *Runner) Update(ctx context.Context) error {
 		}
 	}
 
-	fmt.Fprintln(r.w(), "[SLD] ✅ SLD V2 images updated successfully.")
+	fmt.Fprintln(r.w(), "[SLD] ✅ SLD images updated successfully.")
 	return nil
 }
 
@@ -1012,7 +997,7 @@ func (r *Runner) LegacyMigrate(ctx context.Context, projectRoot string, execute 
 	if dumpFile != "" && r.orch != nil && r.orch.Engine() != nil && r.orch.Engine().Ping(ctx) == nil {
 		fmt.Fprintln(r.w(), "\n[SLD] Step 3: Starting V2 containers and importing SQL backup...")
 		if err := r.Start(ctx, projectRoot); err != nil {
-			fmt.Fprintf(r.w(), "  ⚠️  Could not auto-start V2 stack for import (%v). Import manually after 'sld v2 start'.\n", err)
+			fmt.Fprintf(r.w(), "  ⚠️  Could not auto-start V2 stack for import (%v). Import manually after 'sld start'.\n", err)
 		} else if identity, idErr := r.identity(projectRoot); idErr == nil {
 			if err := r.importSQLDump(ctx, projectRoot, identity, cfg, dumpFile); err != nil {
 				fmt.Fprintf(r.w(), "  ⚠️  Automatic SQL import failed: %v\n", err)
@@ -1023,7 +1008,7 @@ func (r *Runner) LegacyMigrate(ctx context.Context, projectRoot string, execute 
 	}
 
 	fmt.Fprintln(r.w(), "\n[SLD] Migration complete! 🎉")
-	fmt.Fprintln(r.w(), "To manage this project, run: sld v2 start | status | logs")
+	fmt.Fprintln(r.w(), "To manage this project, run: sld start | status | logs")
 	return nil
 }
 
@@ -1113,7 +1098,7 @@ func (r *Runner) LegacyRemove(ctx context.Context, skipConfirm bool) error {
 		fmt.Fprintln(r.w(), "[SLD] ℹ️  No sld-daemon.service unit found.")
 	}
 
-	fmt.Fprintln(r.w(), "\n[SLD] Note: SLD V2 never invokes OS package managers automatically.")
+	fmt.Fprintln(r.w(), "\n[SLD] Note: SLD never invokes OS package managers automatically.")
 	fmt.Fprintln(r.w(), "If you wish to remove host V1 packages manually (Ubuntu/Debian):")
 	fmt.Fprintln(r.w(), "  sudo apt remove nginx php-fpm dnsmasq")
 	return nil
@@ -1172,7 +1157,7 @@ func loadProjectConfig(projectRoot string) (*config.Config, []byte, error) {
 		if os.IsNotExist(err) {
 			return nil, nil, fmt.Errorf(
 				"no .sld/config.yaml found at %s\n"+
-					"Create one or run 'sld v2 init-project' to auto-detect your framework", projectRoot)
+					"Create one or run 'sld init-project' to auto-detect your framework", projectRoot)
 		}
 		return nil, nil, fmt.Errorf("failed to read config: %w", err)
 	}

@@ -13,7 +13,6 @@ sld-linux
 sld-mac
 sld-win.exe
 main
-debug-env
 .sld-test-bin
 *.exe
 *.test
