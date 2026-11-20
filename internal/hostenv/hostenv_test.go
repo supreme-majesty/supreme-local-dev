@@ -257,3 +257,23 @@ func TestMirrorMount(t *testing.T) {
 		t.Error("volume-backed paths cannot be mirrored")
 	}
 }
+
+func TestRouterPortsArePersisted(t *testing.T) {
+	t.Setenv(envHTTPPort, "8888")
+	t.Setenv(envHTTPSPort, "8443")
+	env := Host(t.TempDir())
+	if err := env.SaveRouterPorts(); err != nil {
+		t.Fatal(err)
+	}
+	// A later command without the variables keeps the saved ports...
+	t.Setenv(envHTTPPort, "")
+	t.Setenv(envHTTPSPort, "")
+	if env.HTTPPort() != 8888 || env.HTTPSPort() != 8443 {
+		t.Errorf("saved ports not used: %d/%d", env.HTTPPort(), env.HTTPSPort())
+	}
+	// ...and an explicit variable still wins.
+	t.Setenv(envHTTPPort, "9090")
+	if env.HTTPPort() != 9090 {
+		t.Errorf("env should override saved port, got %d", env.HTTPPort())
+	}
+}

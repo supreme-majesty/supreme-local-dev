@@ -62,6 +62,9 @@ func (p *proj) note(format string, args ...any) {
 // itself is not an app (a monorepo with backend/, frontend/, ...), each
 // first-level sub-directory is detected as its own app with `path:` set.
 func Project(root string, opts Options) (*Result, error) {
+	if abs, err := filepath.Abs(root); err == nil {
+		root = abs // "." must be named after the folder it refers to
+	}
 	name := ProjectName(root)
 	cfg := &config.Config{
 		Version: config.CurrentVersion,

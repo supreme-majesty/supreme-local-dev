@@ -106,6 +106,12 @@ func (r *Runner) Init(ctx context.Context) error {
 		return fmt.Errorf("failed to initialize global infrastructure: %w", err)
 	}
 	fmt.Println("[SLD] ✅ Global router is running on sld-global network.")
+	if err := r.env().SaveRouterPorts(); err != nil {
+		fmt.Printf("[SLD] ⚠️  could not remember router ports: %v\n", err)
+	}
+	if p := r.env().HTTPPort(); p != 80 {
+		fmt.Printf("[SLD] Router ports %d (http) / %d (https) are saved and used by later commands.\n", p, r.env().HTTPSPort())
+	}
 
 	// 4. Platform DNS resolver setup — only needed for TLDs browsers do not
 	// resolve on their own, and impossible from inside a container.
@@ -507,14 +513,17 @@ func (r *Runner) printTrustHint() {
 	fmt.Println()
 	fmt.Println("[SLD] HTTPS: trust SLD's local CA once so browsers accept project certificates.")
 	if env.InContainer() {
-		name := env.ContainerID()
-		if len(name) > 12 {
-			name = name[:12]
+		// Read the certificate from SLD's data volume: the CLI container may be
+		// short-lived (`docker run --rm`), so `docker cp` from it is unreliable.
+		if m, err := env.MountFor(caPath, "/ca.crt", true); err == nil && m.Type == reconcile.MountTypeVolume {
+			fmt.Printf("  1. Copy it out:  docker run --rm -v %s:/data:ro alpine cat /data/%s > sld-ca.crt\n", m.Source, m.Subpath)
+		} else {
+			name := env.ContainerID()
+			if len(name) > 12 {
+				name = name[:12]
+			}
+			fmt.Printf("  1. Copy it out:  docker cp %s:%s sld-ca.crt\n", name, caPath)
 		}
-		if name == "" {
-			name = "<sld-container>"
-		}
-		fmt.Printf("  1. Copy it out:  docker cp %s:%s sld-ca.crt\n", name, caPath)
 		caPath = "sld-ca.crt"
 	} else {
 		fmt.Printf("  CA certificate:  %s\n", caPath)

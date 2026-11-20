@@ -24,6 +24,9 @@ func InitProject(projectRoot string) error {
 
 // InitProjectWith is InitProject with options.
 func InitProjectWith(projectRoot string, opts InitOptions) error {
+	if abs, err := filepath.Abs(projectRoot); err == nil {
+		projectRoot = abs
+	}
 	configDir := filepath.Join(projectRoot, ".sld")
 	configPath := filepath.Join(configDir, "config.yaml")
 

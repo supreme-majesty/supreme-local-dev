@@ -11,6 +11,7 @@ package hostenv
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -143,11 +144,42 @@ func (e *Env) BindHost() string { return e.bindHost }
 // Mounts returns the SLD container's mounts (nil on the host).
 func (e *Env) Mounts() []Mount { return append([]Mount(nil), e.mounts...) }
 
-// HTTPPort is the host port the router serves HTTP on (SLD_HTTP_PORT, default 80).
-func (e *Env) HTTPPort() int { return portFromEnv(envHTTPPort, 80) }
+// HTTPPort is the host port the router serves HTTP on: SLD_HTTP_PORT, then the
+// port saved by `sld init` (see SaveRouterPorts), then 80.
+func (e *Env) HTTPPort() int { return portFromEnv(envHTTPPort, e.savedPorts().HTTP, 80) }
 
-// HTTPSPort is the host port the router serves HTTPS on (SLD_HTTPS_PORT, default 443).
-func (e *Env) HTTPSPort() int { return portFromEnv(envHTTPSPort, 443) }
+// HTTPSPort is the host port the router serves HTTPS on: SLD_HTTPS_PORT, then
+// the saved port, then 443.
+func (e *Env) HTTPSPort() int { return portFromEnv(envHTTPSPort, e.savedPorts().HTTPS, 443) }
+
+// RouterPorts are the router's host ports, remembered between commands so a
+// later command without SLD_HTTP_PORT does not move the router back to 80.
+type RouterPorts struct {
+	HTTP  int `json:"http_port"`
+	HTTPS int `json:"https_port"`
+}
+
+func (e *Env) routerPortsFile() string { return filepath.Join(e.dataDir, "router.json") }
+
+func (e *Env) savedPorts() RouterPorts {
+	var p RouterPorts
+	if data, err := os.ReadFile(e.routerPortsFile()); err == nil {
+		_ = json.Unmarshal(data, &p)
+	}
+	return p
+}
+
+// SaveRouterPorts remembers the router's current host ports.
+func (e *Env) SaveRouterPorts() error {
+	data, err := json.Marshal(RouterPorts{HTTP: e.HTTPPort(), HTTPS: e.HTTPSPort()})
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(e.dataDir, 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(e.routerPortsFile(), data, 0o644)
+}
 
 // SiteURL builds the browser URL for a domain, adding the router port when it
 // is not the scheme's default.
@@ -299,11 +331,14 @@ func DefaultDataDir() string {
 	return filepath.Join(home, ".sld")
 }
 
-func portFromEnv(name string, fallback int) int {
+func portFromEnv(name string, saved, fallback int) int {
 	if v := strings.TrimSpace(os.Getenv(name)); v != "" {
 		if p, err := strconv.Atoi(v); err == nil && p > 0 && p < 65536 {
 			return p
 		}
+	}
+	if saved > 0 && saved < 65536 {
+		return saved
 	}
 	return fallback
 }
