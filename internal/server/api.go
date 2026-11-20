@@ -22,6 +22,7 @@ import (
 	"github.com/supreme-majesty/supreme-local-dev/internal/docker"
 	"github.com/supreme-majesty/supreme-local-dev/internal/hostenv"
 	"github.com/supreme-majesty/supreme-local-dev/internal/orchestrate"
+	appruntime "github.com/supreme-majesty/supreme-local-dev/internal/runtime"
 	"github.com/supreme-majesty/supreme-local-dev/internal/tls"
 	v2 "github.com/supreme-majesty/supreme-local-dev/internal/v2"
 )
@@ -111,6 +112,7 @@ type ProjectView struct {
 	JobID      string       `json:"job_id,omitempty"` // running operation, if any
 	Autostart  bool         `json:"autostart"`        // starts whenever SLD starts
 	Services   []ServiceRef `json:"services,omitempty"`
+	Dockerized bool         `json:"dockerized"` // own compose file or Dockerfile, set up in SLD, or has containers
 }
 
 // AppView is one app of a project with its URL.
@@ -191,6 +193,15 @@ func (s *Server) view(ctx context.Context, r v2.ScanResult) ProjectView {
 			}
 			sort.Slice(v.Services, func(i, j int) bool { return v.Services[i].Name < v.Services[j].Name })
 		}
+	}
+	v.Dockerized = v.Configured || v.Containers > 0
+	for _, a := range r.AppList {
+		if a.Runtime == config.RuntimeCompose || a.Runtime == config.RuntimeDockerfile {
+			v.Dockerized = true
+		}
+	}
+	if !v.Dockerized {
+		v.Dockerized = hasDockerFiles(r.Root)
 	}
 	if v.Configured && v.Containers > 0 {
 		switch {
@@ -508,4 +519,14 @@ func (s *Server) handleCACert(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/x-x509-ca-cert")
 	w.Header().Set("Content-Disposition", `attachment; filename="sld-ca.crt"`)
 	http.ServeFile(w, r, certMgr.CACertPath())
+}
+
+// hasDockerFiles reports whether the project folder has its own compose file
+// or Dockerfile.
+func hasDockerFiles(root string) bool {
+	if len(appruntime.DefaultComposeFiles(root)) > 0 {
+		return true
+	}
+	_, err := os.Stat(filepath.Join(root, "Dockerfile"))
+	return err == nil
 }

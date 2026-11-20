@@ -230,3 +230,37 @@ func TestProjectEnv(t *testing.T) {
 		t.Fatalf("restore of unknown id: %d %s", rec.Code, rec.Body)
 	}
 }
+
+func TestProjectsDockerizedFlag(t *testing.T) {
+	ws := t.TempDir()
+	writeTree(t, ws, map[string]string{
+		"blog/.git/HEAD":        "x", // set up in SLD
+		"blog/index.html":       "x",
+		"blog/.sld/config.yaml": "version: 2\napps:\n  web: {runtime: static}\n",
+		"stack/.git/HEAD":       "x", // own compose file
+		"stack/compose.yaml":    "services:\n  web:\n    image: nginx\n    ports: [\"8080:80\"]\n",
+		"img/.git/HEAD":         "x", // own Dockerfile next to a detected stack
+		"img/package.json":      `{"scripts":{"dev":"vite"}}`,
+		"img/Dockerfile":        "FROM node:22\n",
+		"plain/.git/HEAD":       "x", // detected, not set up, no Docker files
+		"plain/package.json":    `{"scripts":{"dev":"vite"}}`,
+		"notes/.git/HEAD":       "x", // unknown stack
+		"notes/readme.txt":      "hi",
+	})
+	call := classicServer(t, ws, nil)
+	rec := call("GET", "/api/v2/projects", "")
+	var list []ProjectView
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+		t.Fatalf("projects: %d %s", rec.Code, rec.Body)
+	}
+	want := map[string]bool{"blog": true, "stack": true, "img": true, "plain": false, "notes": false}
+	for _, p := range list {
+		if w, ok := want[p.Name]; ok && p.Dockerized != w {
+			t.Errorf("%s: dockerized = %v, want %v", p.Name, p.Dockerized, w)
+		}
+		delete(want, p.Name)
+	}
+	if len(want) > 0 {
+		t.Errorf("missing projects: %v", want)
+	}
+}

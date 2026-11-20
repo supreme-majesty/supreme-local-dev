@@ -46,7 +46,23 @@ export default function ProjectsV2() {
   const { success, error: toastError } = useToast();
   const [filter, setFilter] = useState<Filter>("all");
   const [search, setSearch] = useState("");
-  const [job, setJob] = useState<{ id: string; title: string } | null>(null);
+  const [showOthers, setShowOthers] = useState(() => {
+    try {
+      return localStorage.getItem("sld.projects.showOthers") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggleOthers = () =>
+    setShowOthers((v) => {
+      try {
+        localStorage.setItem("sld.projects.showOthers", v ? "0" : "1");
+      } catch {
+        /* storage unavailable */
+      }
+      return !v;
+    });
+  const [job,setJob] = useState<{ id: string; title: string } | null>(null);
   const [logsFor, setLogsFor] = useState<ProjectView | null>(null);
   const [confirmDestroy, setConfirmDestroy] = useState<ProjectView | null>(null);
 
@@ -56,9 +72,16 @@ export default function ProjectsV2() {
     refetchInterval: job ? 3000 : 15000,
   });
 
+  // Only dockerized projects are listed unless the user asks for the other folders.
+  const base = useMemo(
+    () => (projects ?? []).filter((p) => showOthers || p.dockerized),
+    [projects, showOthers],
+  );
+  const hiddenCount = (projects ?? []).filter((p) => !p.dockerized).length;
+
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return (projects ?? []).filter((p) => {
+    return base.filter((p) => {
       if (q && !`${p.name} ${p.folder}`.toLowerCase().includes(q)) return false;
       switch (filter) {
         case "running":
@@ -71,17 +94,17 @@ export default function ProjectsV2() {
           return true;
       }
     });
-  }, [projects, filter, search]);
+  }, [base, filter, search]);
 
   const counts = useMemo(() => {
-    const list = projects ?? [];
+    const list = base;
     return {
       all: list.length,
       running: list.filter((p) => p.status === "running" || p.status === "partial").length,
       configured: list.filter((p) => p.configured).length,
       "not-configured": list.filter((p) => p.status === "not-configured").length,
     };
-  }, [projects]);
+  }, [base]);
 
   const run = async (project: ProjectView, action: ProjectAction, body?: { remove_volumes?: boolean }) => {
     try {
@@ -110,7 +133,8 @@ export default function ProjectsV2() {
         <div>
           <h1 className="text-2xl font-semibold text-[var(--foreground)]">Projects</h1>
           <p className="text-sm text-[var(--muted-foreground)]">
-            Every project found in your workspace. Set one up once, then start and stop it from here.
+            Projects that run in Docker: with their own compose file or Dockerfile, or set up in SLD. Start and stop
+            them from here.
           </p>
         </div>
         <Button variant="secondary" onClick={() => v2.projects(true).then(() => refetch())} loading={isFetching}>
@@ -133,6 +157,15 @@ export default function ProjectsV2() {
             {{ all: "All", running: "Running", configured: "Set up", "not-configured": "Not set up" }[f]} ({counts[f]})
           </button>
         ))}
+        {hiddenCount > 0 && (
+          <button
+            onClick={toggleOthers}
+            title="Folders that have no Docker files and are not set up in SLD yet"
+            className="h-8 px-3 rounded-full text-xs border border-dashed border-[var(--border)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+          >
+            {showOthers ? `Hide ${hiddenCount} not in Docker` : `Show ${hiddenCount} not in Docker`}
+          </button>
+        )}
         <div className="relative ml-auto">
           <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]" />
           <input
@@ -159,8 +192,10 @@ export default function ProjectsV2() {
       {error && <p className="text-sm text-red-400">Could not load projects: {(error as Error).message}</p>}
       {!isLoading && !error && visible.length === 0 && (
         <div className="rounded-lg border border-dashed border-[var(--border)] p-8 text-center text-sm text-[var(--muted-foreground)]">
-          {projects?.length
+          {base.length
             ? "No projects match this filter."
+            : hiddenCount > 0
+              ? `None of the ${hiddenCount} folders found runs in Docker yet. Use “Show ${hiddenCount} not in Docker” to set one up.`
             : "No projects found. Mount your projects folder into the SLD container (for example -v ~/Projects:/workspace) and rescan."}
         </div>
       )}
