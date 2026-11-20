@@ -36,7 +36,7 @@ export interface ProjectView {
   job_id?: string;
   autostart?: boolean;
   services?: ServiceRef[];
-  /** Has its own compose file or Dockerfile, is set up in SLD, or already has containers. */
+  /** Has its own compose file or Dockerfile, or SLD already runs containers for it. */
   dockerized: boolean;
 }
 

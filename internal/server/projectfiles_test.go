@@ -234,7 +234,7 @@ func TestProjectEnv(t *testing.T) {
 func TestProjectsDockerizedFlag(t *testing.T) {
 	ws := t.TempDir()
 	writeTree(t, ws, map[string]string{
-		"blog/.git/HEAD":        "x", // set up in SLD
+		"blog/.git/HEAD":        "x", // set up in SLD but never started, no Docker files
 		"blog/index.html":       "x",
 		"blog/.sld/config.yaml": "version: 2\napps:\n  web: {runtime: static}\n",
 		"stack/.git/HEAD":       "x", // own compose file
@@ -253,7 +253,7 @@ func TestProjectsDockerizedFlag(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
 		t.Fatalf("projects: %d %s", rec.Code, rec.Body)
 	}
-	want := map[string]bool{"blog": true, "stack": true, "img": true, "plain": false, "notes": false}
+	want := map[string]bool{"blog": false, "stack": true, "img": true, "plain": false, "notes": false}
 	for _, p := range list {
 		if w, ok := want[p.Name]; ok && p.Dockerized != w {
 			t.Errorf("%s: dockerized = %v, want %v", p.Name, p.Dockerized, w)

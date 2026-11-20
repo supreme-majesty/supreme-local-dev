@@ -112,7 +112,7 @@ type ProjectView struct {
 	JobID      string       `json:"job_id,omitempty"` // running operation, if any
 	Autostart  bool         `json:"autostart"`        // starts whenever SLD starts
 	Services   []ServiceRef `json:"services,omitempty"`
-	Dockerized bool         `json:"dockerized"` // own compose file or Dockerfile, set up in SLD, or has containers
+	Dockerized bool         `json:"dockerized"` // own compose file or Dockerfile, or has containers
 }
 
 // AppView is one app of a project with its URL.
@@ -194,7 +194,10 @@ func (s *Server) view(ctx context.Context, r v2.ScanResult) ProjectView {
 			sort.Slice(v.Services, func(i, j int) bool { return v.Services[i].Name < v.Services[j].Name })
 		}
 	}
-	v.Dockerized = v.Configured || v.Containers > 0
+	// Having an SLD config is not enough: auto setup writes one for every
+	// detected folder. Dockerized means the project brings its own Docker files
+	// or SLD has actually created containers for it.
+	v.Dockerized = v.Containers > 0
 	for _, a := range r.AppList {
 		if a.Runtime == config.RuntimeCompose || a.Runtime == config.RuntimeDockerfile {
 			v.Dockerized = true

@@ -133,8 +133,8 @@ export default function ProjectsV2() {
         <div>
           <h1 className="text-2xl font-semibold text-[var(--foreground)]">Projects</h1>
           <p className="text-sm text-[var(--muted-foreground)]">
-            Projects that run in Docker: with their own compose file or Dockerfile, or set up in SLD. Start and stop
-            them from here.
+            Projects that run in Docker: with their own compose file or Dockerfile, or already running in SLD
+            containers. Start and stop them from here.
           </p>
         </div>
         <Button variant="secondary" onClick={() => v2.projects(true).then(() => refetch())} loading={isFetching}>
@@ -160,7 +160,7 @@ export default function ProjectsV2() {
         {hiddenCount > 0 && (
           <button
             onClick={toggleOthers}
-            title="Folders that have no Docker files and are not set up in SLD yet"
+            title="Folders without their own Docker files that SLD has not run in containers yet"
             className="h-8 px-3 rounded-full text-xs border border-dashed border-[var(--border)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
           >
             {showOthers ? `Hide ${hiddenCount} not in Docker` : `Show ${hiddenCount} not in Docker`}
