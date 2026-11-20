@@ -26,6 +26,10 @@ type Settings struct {
 	Running map[string]bool `json:"running,omitempty"`
 	// SiteMeta holds the tags and category set on the Sites page, by domain.
 	SiteMeta map[string]SiteMeta `json:"site_meta,omitempty"`
+	// Parked lists folders (container paths) whose projects are detected even
+	// without Docker files: a project folder itself (linked) or a folder of
+	// projects (parked).
+	Parked []string `json:"parked,omitempty"`
 }
 
 // SiteMeta is how a project is labelled on the Sites page.
@@ -84,6 +88,7 @@ func (st *settingsStore) copyLocked() Settings {
 	for k, v := range st.s.Running {
 		c.Running[k] = v
 	}
+	c.Parked = append([]string(nil), st.s.Parked...)
 	c.SiteMeta = make(map[string]SiteMeta, len(st.s.SiteMeta))
 	for k, v := range st.s.SiteMeta {
 		c.SiteMeta[k] = SiteMeta{Tags: append([]string(nil), v.Tags...), Category: v.Category}

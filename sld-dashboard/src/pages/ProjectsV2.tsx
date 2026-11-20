@@ -4,6 +4,8 @@ import {
   AlertTriangle,
   ExternalLink,
   FileText,
+  Folder,
+  Link2,
   Play,
   Power,
   RefreshCw,
@@ -13,6 +15,7 @@ import {
   SlidersHorizontal,
   Square,
   Trash2,
+  X,
 } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { ApiError, v2, type JobView, type ProjectAction, type ProjectView } from "@/api/v2";
@@ -46,23 +49,8 @@ export default function ProjectsV2() {
   const { success, error: toastError } = useToast();
   const [filter, setFilter] = useState<Filter>("all");
   const [search, setSearch] = useState("");
-  const [showOthers, setShowOthers] = useState(() => {
-    try {
-      return localStorage.getItem("sld.projects.showOthers") === "1";
-    } catch {
-      return false;
-    }
-  });
-  const toggleOthers = () =>
-    setShowOthers((v) => {
-      try {
-        localStorage.setItem("sld.projects.showOthers", v ? "0" : "1");
-      } catch {
-        /* storage unavailable */
-      }
-      return !v;
-    });
-  const [job,setJob] = useState<{ id: string; title: string } | null>(null);
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [job, setJob] = useState<{ id: string; title: string } | null>(null);
   const [logsFor, setLogsFor] = useState<ProjectView | null>(null);
   const [confirmDestroy, setConfirmDestroy] = useState<ProjectView | null>(null);
 
@@ -72,12 +60,8 @@ export default function ProjectsV2() {
     refetchInterval: job ? 3000 : 15000,
   });
 
-  // Only dockerized projects are listed unless the user asks for the other folders.
-  const base = useMemo(
-    () => (projects ?? []).filter((p) => showOthers || p.dockerized),
-    [projects, showOthers],
-  );
-  const hiddenCount = (projects ?? []).filter((p) => !p.dockerized).length;
+  // SLD only detects dockerized and parked/linked projects, so everything it returns is listed.
+  const base = useMemo(() => projects ?? [], [projects]);
 
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -133,14 +117,30 @@ export default function ProjectsV2() {
         <div>
           <h1 className="text-2xl font-semibold text-[var(--foreground)]">Projects</h1>
           <p className="text-sm text-[var(--muted-foreground)]">
-            Projects that run in Docker: with their own compose file or Dockerfile, or already running in SLD
-            containers. Start and stop them from here.
+            Dockerized projects (their own compose file or Dockerfile, or already running in SLD containers) and
+            the folders you parked or linked. Start and stop them from here.
           </p>
         </div>
-        <Button variant="secondary" onClick={() => v2.projects(true).then(() => refetch())} loading={isFetching}>
-          <RefreshCw size={16} /> Rescan
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="secondary" onClick={() => setLinkOpen(true)}>
+            <Link2 size={16} /> Park / link folder
+          </Button>
+          <Button variant="secondary" onClick={() => v2.projects(true).then(() => refetch())} loading={isFetching}>
+            <RefreshCw size={16} /> Rescan
+          </Button>
+        </div>
       </div>
+
+      {linkOpen && (
+        <LinkFolderDialog
+          onClose={() => setLinkOpen(false)}
+          onLinked={(message) => {
+            setLinkOpen(false);
+            success("Folder added", message);
+            v2.projects(true).then(() => refetch());
+          }}
+        />
+      )}
 
       <div className="flex flex-wrap items-center gap-2">
         {(["all", "running", "configured", "not-configured"] as Filter[]).map((f) => (
@@ -157,15 +157,6 @@ export default function ProjectsV2() {
             {{ all: "All", running: "Running", configured: "Set up", "not-configured": "Not set up" }[f]} ({counts[f]})
           </button>
         ))}
-        {hiddenCount > 0 && (
-          <button
-            onClick={toggleOthers}
-            title="Folders without their own Docker files that SLD has not run in containers yet"
-            className="h-8 px-3 rounded-full text-xs border border-dashed border-[var(--border)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-          >
-            {showOthers ? `Hide ${hiddenCount} not in Docker` : `Show ${hiddenCount} not in Docker`}
-          </button>
-        )}
         <div className="relative ml-auto">
           <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]" />
           <input
@@ -194,9 +185,7 @@ export default function ProjectsV2() {
         <div className="rounded-lg border border-dashed border-[var(--border)] p-8 text-center text-sm text-[var(--muted-foreground)]">
           {base.length
             ? "No projects match this filter."
-            : hiddenCount > 0
-              ? `None of the ${hiddenCount} folders found runs in Docker yet. Use “Show ${hiddenCount} not in Docker” to set one up.`
-            : "No projects found. Mount your projects folder into the SLD container (for example -v ~/Projects:/workspace) and rescan."}
+            : "No dockerized projects found. Mount your projects folder into the SLD container (for example -v ~/Projects:/workspace), or park/link a folder of projects without Docker files."}
         </div>
       )}
 
@@ -218,6 +207,18 @@ export default function ProjectsV2() {
                 queryClient.invalidateQueries({ queryKey: ["v2", "projects"] });
               } catch (e) {
                 toastError("Could not change auto start", (e as Error).message);
+              }
+            }}
+            onUnlink={async () => {
+              try {
+                const res = await v2.setLinked(p.id, false);
+                success(
+                  res.removed && res.removed !== p.folder ? `Unparked ${res.removed}` : `Unlinked ${p.name}`,
+                  p.dockerized ? undefined : "It is no longer detected because it has no Docker files.",
+                );
+                queryClient.invalidateQueries({ queryKey: ["v2", "projects"] });
+              } catch (e) {
+                toastError("Could not unlink", (e as Error).message);
               }
             }}
           />
@@ -246,6 +247,7 @@ function ProjectRow({
   onLogs,
   onShowJob,
   onAutostart,
+  onUnlink,
 }: {
   project: ProjectView;
   busy: boolean;
@@ -253,6 +255,7 @@ function ProjectRow({
   onLogs: () => void;
   onShowJob: () => void;
   onAutostart: (enabled: boolean) => void;
+  onUnlink: () => void;
 }) {
   const navigate = useNavigate();
   const style = statusStyle[p.status];
@@ -287,6 +290,22 @@ function ProjectRow({
               >
                 <Power size={11} /> Auto start {p.autostart ? "on" : "off"}
               </button>
+            )}
+            {p.parked_in && (
+              <span
+                className="inline-flex items-center gap-1 text-[11px] pl-2 pr-1 py-0.5 rounded-full border border-violet-500/30 bg-violet-500/10 text-violet-300"
+                title={p.parked_in === p.folder ? "Linked folder" : `Parked through ${p.parked_in}`}
+              >
+                <Link2 size={11} /> {p.parked_in === p.folder ? "Linked" : `Parked in ${p.parked_in}`}
+                <button
+                  onClick={onUnlink}
+                  className="rounded-full p-0.5 hover:bg-violet-500/20"
+                  title={p.parked_in === p.folder ? "Unlink" : `Unpark ${p.parked_in} (all projects in it)`}
+                  aria-label="Unlink"
+                >
+                  <X size={11} />
+                </button>
+              </span>
             )}
             {busy && (
               <button onClick={onShowJob} className="text-[11px] text-blue-400 hover:underline">
@@ -425,6 +444,140 @@ function DestroyDialog({
           </Button>
           <Button variant="danger" disabled={!confirmed} onClick={() => onConfirm(removeVolumes)}>
             {removeVolumes ? "Remove and delete data" : "Remove containers"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Picks a folder inside a workspace and parks it (a project, or a folder of projects). */
+function LinkFolderDialog({ onClose, onLinked }: { onClose: () => void; onLinked: (message: string) => void }) {
+  const queryClient = useQueryClient();
+  const { error: toastError } = useToast();
+  const system = useQuery({ queryKey: ["v2", "system"], queryFn: () => v2.system() });
+  const parked = useQuery({ queryKey: ["v2", "parked"], queryFn: () => v2.parked() });
+  const workspaces = system.data?.workspaces ?? [];
+  const [root, setRoot] = useState<string | null>(null);
+  const [rel, setRel] = useState<string[]>([]);
+  const [saving, setSaving] = useState(false);
+  const ws = root ?? workspaces[0] ?? "";
+  const cwd = [ws, ...rel].join("/");
+
+  const dirs = useQuery({
+    queryKey: ["dirs", cwd],
+    queryFn: () => v2.directories(cwd),
+    enabled: Boolean(ws),
+  });
+
+  const submit = async () => {
+    setSaving(true);
+    try {
+      const message = await v2.park(cwd);
+      queryClient.invalidateQueries({ queryKey: ["v2", "parked"] });
+      onLinked(message);
+    } catch (e) {
+      toastError("Could not add the folder", (e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const remove = async (path: string) => {
+    try {
+      await v2.removeParked(path);
+      queryClient.invalidateQueries({ queryKey: ["v2", "parked"] });
+      queryClient.invalidateQueries({ queryKey: ["v2", "projects"] });
+    } catch (e) {
+      toastError("Could not remove the folder", (e as Error).message);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true">
+      <div className="w-full max-w-lg rounded-xl border border-[var(--border)] bg-[var(--card)] p-6 space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold text-[var(--foreground)]">Park or link a folder</h2>
+          <p className="mt-1 text-sm text-[var(--muted-foreground)]">
+            SLD only detects dockerized projects on its own. Choose a project folder to link it, or a folder of projects
+            to park all of them, so they are detected even without Docker files.
+          </p>
+        </div>
+
+        {workspaces.length > 1 && (
+          <select
+            value={ws}
+            onChange={(e) => {
+              setRoot(e.target.value);
+              setRel([]);
+            }}
+            className="h-9 w-full rounded-md border border-[var(--border)] bg-[var(--background)] px-2 text-sm text-[var(--foreground)]"
+            aria-label="Workspace"
+          >
+            {workspaces.map((w) => (
+              <option key={w} value={w}>
+                {w}
+              </option>
+            ))}
+          </select>
+        )}
+
+        <div className="rounded-md border border-[var(--border)]">
+          <div className="flex flex-wrap items-center gap-1 border-b border-[var(--border)] px-3 py-2 text-xs">
+            <button className="text-blue-400 hover:underline" onClick={() => setRel([])}>
+              {ws || "workspace"}
+            </button>
+            {rel.map((part, i) => (
+              <span key={i} className="flex items-center gap-1">
+                <span className="text-[var(--muted-foreground)]">/</span>
+                <button className="text-blue-400 hover:underline" onClick={() => setRel(rel.slice(0, i + 1))}>
+                  {part}
+                </button>
+              </span>
+            ))}
+          </div>
+          <div className="max-h-64 overflow-y-auto py-1 text-sm">
+            {dirs.isLoading && <p className="px-3 py-2 text-xs text-[var(--muted-foreground)]">Loading…</p>}
+            {dirs.error && <p className="px-3 py-2 text-xs text-red-400">{(dirs.error as Error).message}</p>}
+            {dirs.data?.length === 0 && <p className="px-3 py-2 text-xs text-[var(--muted-foreground)]">No sub-folders.</p>}
+            {dirs.data?.map((d) => (
+              <button
+                key={d}
+                onClick={() => setRel([...rel, d])}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[var(--foreground)] hover:bg-[var(--card-hover)]"
+              >
+                <Folder size={14} className="text-blue-400" /> {d}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {parked.data && parked.data.length > 0 && (
+          <div>
+            <p className="mb-1 text-xs font-medium text-[var(--muted-foreground)]">Parked and linked folders</p>
+            <ul className="space-y-1">
+              {parked.data.map((p) => (
+                <li key={p.path} className="flex items-center justify-between gap-2 text-xs">
+                  <span className="truncate font-mono text-[var(--foreground)]">{p.folder}</span>
+                  <button
+                    onClick={() => remove(p.path)}
+                    className="rounded p-1 text-[var(--muted-foreground)] hover:bg-[var(--card-hover)] hover:text-red-400"
+                    title="Remove"
+                  >
+                    <X size={12} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button onClick={submit} disabled={rel.length === 0} loading={saving} title={rel.length === 0 ? "Choose a folder inside the workspace" : undefined}>
+            <Link2 size={14} /> Park / link {rel.length ? rel[rel.length - 1] : "folder"}
           </Button>
         </div>
       </div>

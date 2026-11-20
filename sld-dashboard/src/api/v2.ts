@@ -38,6 +38,8 @@ export interface ProjectView {
   services?: ServiceRef[];
   /** Has its own compose file or Dockerfile, or SLD already runs containers for it. */
   dockerized: boolean;
+  /** The parked/linked folder that makes SLD detect it (relative to its workspace), if any. */
+  parked_in?: string;
 }
 
 export interface AutomationSettings {
@@ -163,6 +165,33 @@ export const v2 = {
       method: "POST",
       body: JSON.stringify({ enabled }),
     }),
+
+  // Parked and linked folders: projects in them are detected even without Docker files.
+  parked: () => request<{ path: string; folder: string }[]>("/parked"),
+  removeParked: (path: string) =>
+    request<{ removed: string }>("/parked/remove", { method: "POST", body: JSON.stringify({ path }) }),
+  setLinked: (id: string, linked: boolean) =>
+    request<{ linked: boolean; removed?: string }>(`/projects/${encodeURIComponent(id)}/link`, {
+      method: "POST",
+      body: JSON.stringify({ linked }),
+    }),
+  /** Parks a folder (a project, or a folder of projects), given as a path inside the SLD container. */
+  async park(path: string): Promise<string> {
+    const res = await fetch("/api/park", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new ApiError(body.error || res.statusText, res.status);
+    return body.message || "";
+  },
+  async directories(path: string): Promise<string[]> {
+    const res = await fetch(`/api/system/directories?path=${encodeURIComponent(path)}`);
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new ApiError(body.error || res.statusText, res.status);
+    return body as string[];
+  },
 
   // Project detail: config, files and env. Paths are relative to the project folder.
   saveConfig: (id: string, config: string) =>

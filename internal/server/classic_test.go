@@ -15,13 +15,24 @@ import (
 	"github.com/supreme-majesty/supreme-local-dev/internal/reconcile"
 )
 
+// classicServer parks ws, so its fixtures (which have no Docker files) are detected.
 func classicServer(t *testing.T, ws string, containers []*reconcile.ActualContainer) func(method, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	return testServer(t, ws, containers, true)
+}
+
+func testServer(t *testing.T, ws string, containers []*reconcile.ActualContainer, parkWorkspace bool) func(method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	t.Setenv("SLD_TLD", "")
 	t.Setenv("SLD_HTTP_PORT", "8888")
 	a, token := newAuth(t)
 	mux := http.NewServeMux()
 	srv := New(Options{Engine: &fakeEngine{containers: containers}, Env: hostenv.Host(t.TempDir()), Auth: a, Workspaces: []string{ws}, Version: "test"})
+	if parkWorkspace {
+		if err := srv.park(ws); err != nil {
+			t.Fatal(err)
+		}
+	}
 	srv.Register(mux)
 	h := a.Middleware(mux)
 	return func(method, path, body string) *httptest.ResponseRecorder {

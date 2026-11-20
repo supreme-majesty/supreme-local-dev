@@ -231,36 +231,121 @@ func TestProjectEnv(t *testing.T) {
 	}
 }
 
-func TestProjectsDockerizedFlag(t *testing.T) {
+func TestDetectsOnlyDockerizedAndParkedProjects(t *testing.T) {
 	ws := t.TempDir()
 	writeTree(t, ws, map[string]string{
-		"blog/.git/HEAD":        "x", // set up in SLD but never started, no Docker files
-		"blog/index.html":       "x",
-		"blog/.sld/config.yaml": "version: 2\napps:\n  web: {runtime: static}\n",
-		"stack/.git/HEAD":       "x", // own compose file
-		"stack/compose.yaml":    "services:\n  web:\n    image: nginx\n    ports: [\"8080:80\"]\n",
-		"img/.git/HEAD":         "x", // own Dockerfile next to a detected stack
-		"img/package.json":      `{"scripts":{"dev":"vite"}}`,
-		"img/Dockerfile":        "FROM node:22\n",
-		"plain/.git/HEAD":       "x", // detected, not set up, no Docker files
-		"plain/package.json":    `{"scripts":{"dev":"vite"}}`,
-		"notes/.git/HEAD":       "x", // unknown stack
-		"notes/readme.txt":      "hi",
+		"stack/.git/HEAD":                   "x", // own compose file
+		"stack/compose.yaml":                "services:\n  web:\n    image: nginx\n    ports: [\"8080:80\"]\n",
+		"img/.git/HEAD":                     "x", // own Dockerfile next to a detected stack
+		"img/package.json":                  `{"scripts":{"dev":"vite"}}`,
+		"img/Dockerfile":                    "FROM node:22\n",
+		"mono/.git/HEAD":                    "x", // compose stack in a sub-folder
+		"mono/backend/docker-compose.yml":   "services:\n  app:\n    image: nginx\n",
+		"blog/.git/HEAD":                    "x", // has an SLD config but no Docker files
+		"blog/index.html":                   "x",
+		"blog/.sld/config.yaml":             "version: 2\napps:\n  web: {runtime: static}\n",
+		"plain/.git/HEAD":                   "x", // detected stack, no Docker files
+		"plain/package.json":                `{"scripts":{"dev":"vite"}}`,
+		"plugins/a/.git/HEAD":               "x",
+		"plugins/a/package.json":            `{"scripts":{"dev":"vite"}}`,
+		"plugins/b/.git/HEAD":               "x",
+		"plugins/b/index.php":               "<?php",
+		"notes/.git/HEAD":                   "x", // unknown stack
+		"notes/readme.txt":                  "hi",
+		"stack/node_modules/x/compose.yaml": "ignored",
 	})
-	call := classicServer(t, ws, nil)
-	rec := call("GET", "/api/v2/projects", "")
-	var list []ProjectView
-	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
-		t.Fatalf("projects: %d %s", rec.Code, rec.Body)
-	}
-	want := map[string]bool{"blog": false, "stack": true, "img": true, "plain": false, "notes": false}
-	for _, p := range list {
-		if w, ok := want[p.Name]; ok && p.Dockerized != w {
-			t.Errorf("%s: dockerized = %v, want %v", p.Name, p.Dockerized, w)
+	call := testServer(t, ws, nil, false)
+	names := func() map[string]ProjectView {
+		t.Helper()
+		rec := call("GET", "/api/v2/projects?refresh=1", "")
+		var list []ProjectView
+		if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+			t.Fatalf("projects: %d %s", rec.Code, rec.Body)
 		}
-		delete(want, p.Name)
+		out := map[string]ProjectView{}
+		for _, p := range list {
+			out[p.Name] = p
+		}
+		return out
 	}
-	if len(want) > 0 {
-		t.Errorf("missing projects: %v", want)
+	same := func(got map[string]ProjectView, want ...string) {
+		t.Helper()
+		if len(got) != len(want) {
+			t.Fatalf("projects = %v, want %v", keys(got), want)
+		}
+		for _, n := range want {
+			if _, ok := got[n]; !ok {
+				t.Fatalf("projects = %v, want %v", keys(got), want)
+			}
+		}
 	}
+
+	// Auto setup must not write configs into folders that are not detected.
+	if rec := call("PUT", "/api/v2/settings", `{"auto_setup":true}`); rec.Code != 200 {
+		t.Fatalf("settings: %d %s", rec.Code, rec.Body)
+	}
+	got := names()
+	same(got, "stack", "img", "mono")
+	for _, n := range []string{"stack", "img", "mono"} {
+		if !got[n].Dockerized {
+			t.Errorf("%s should be dockerized", n)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(ws, "plain", ".sld", "config.yaml")); err == nil {
+		t.Error("auto setup wrote a config into a folder that is not detected")
+	}
+	if rec := call("GET", "/api/sites", ""); strings.Contains(rec.Body.String(), `"blog"`) {
+		t.Errorf("classic sites should not list blog: %s", rec.Body)
+	}
+
+	// Linking one project and parking a folder of projects.
+	if rec := call("POST", "/api/link", `{"path":`+q(filepath.Join(ws, "plain"))+`}`); rec.Code != 200 {
+		t.Fatalf("link: %d %s", rec.Code, rec.Body)
+	}
+	if rec := call("POST", "/api/park", `{"path":`+q(filepath.Join(ws, "plugins"))+`}`); rec.Code != 200 {
+		t.Fatalf("park: %d %s", rec.Code, rec.Body)
+	}
+	got = names()
+	same(got, "stack", "img", "mono", "plain", "a", "b")
+	if got["plain"].ParkedIn != "plain" || got["a"].ParkedIn != "plugins" || got["plain"].Dockerized {
+		t.Fatalf("parked info: plain=%+v a=%+v", got["plain"], got["a"])
+	}
+
+	// Unlinking removes the entry that covers the project.
+	if rec := call("POST", "/api/v2/projects/"+got["plain"].ID+"/link", `{"linked":false}`); rec.Code != 200 {
+		t.Fatalf("unlink: %d %s", rec.Code, rec.Body)
+	}
+	rec := call("POST", "/api/v2/projects/"+got["a"].ID+"/link", `{"linked":false}`)
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"removed":"plugins"`) {
+		t.Fatalf("unpark through a project: %d %s", rec.Code, rec.Body)
+	}
+	same(names(), "stack", "img", "mono")
+	if rec := call("POST", "/api/v2/projects/"+got["stack"].ID+"/link", `{"linked":false}`); rec.Code != 409 {
+		t.Fatalf("unlink of a project that is not linked: %d %s", rec.Code, rec.Body)
+	}
+
+	// Parked folders can be listed and removed directly.
+	if rec := call("POST", "/api/park", `{"path":`+q(filepath.Join(ws, "plugins"))+`}`); rec.Code != 200 {
+		t.Fatalf("park: %d %s", rec.Code, rec.Body)
+	}
+	if rec := call("GET", "/api/v2/parked", ""); !strings.Contains(rec.Body.String(), `"folder":"plugins"`) {
+		t.Fatalf("parked list: %s", rec.Body)
+	}
+	if rec := call("POST", "/api/v2/parked/remove", `{"path":`+q(filepath.Join(ws, "plugins"))+`}`); rec.Code != 200 {
+		t.Fatalf("remove parked: %d %s", rec.Code, rec.Body)
+	}
+	same(names(), "stack", "img", "mono")
+}
+
+func keys(m map[string]ProjectView) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
+
+func q(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
 }

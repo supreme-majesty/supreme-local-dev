@@ -210,6 +210,9 @@ func setIgnored(dir string, ignore bool) error {
 	if ignore {
 		return os.WriteFile(marker, []byte("# Hidden from SLD. Delete this file to show the project again.\n"), 0o644)
 	}
+	if _, err := os.Lstat(marker); errors.Is(err, os.ErrNotExist) {
+		return nil // nothing to remove (also on read-only mounts)
+	}
 	if err := os.Remove(marker); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
@@ -228,6 +231,15 @@ func (s *Server) handleUnlink(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, res := range results {
 		if res.Name == req.Name {
+			// A parked/linked project is unlinked; any other project is hidden.
+			if removed, err := s.unpark(res.Root); err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			} else if removed != "" {
+				s.invalidateScan()
+				writeJSON(w, http.StatusOK, map[string]any{"success": true})
+				return
+			}
 			if err := setIgnored(res.Root, true); err != nil {
 				writeError(w, http.StatusInternalServerError, err.Error())
 				return
@@ -240,9 +252,9 @@ func (s *Server) handleUnlink(w http.ResponseWriter, r *http.Request) {
 	writeError(w, http.StatusNotFound, "no project named "+req.Name)
 }
 
-// handlePark covers V1's park and link: every folder in a workspace is
-// already a project, so a path inside it only needs a rescan (and is shown
-// again if it was hidden).
+// handlePark covers V1's park and link: the folder (one project, or a folder
+// of projects) is recorded as parked so its projects are detected even
+// without Docker files, and shown again if it was hidden.
 func (s *Server) handlePark(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Path string `json:"path"`
@@ -257,11 +269,15 @@ func (s *Server) handlePark(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if err := s.park(path); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	if _, err := s.scan(true); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "message": "Projects in this folder are listed on the Projects page"})
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "message": "Projects in this folder are now detected and listed on the Projects page"})
 }
 
 func (s *Server) handleSecure(w http.ResponseWriter, r *http.Request) {
@@ -462,12 +478,12 @@ func (s *Server) doctor(ctx context.Context) []healthCheck {
 	}
 
 	for _, ws := range s.opts.Workspaces {
-		results, err := v2.Scan(ws, false)
+		results, err := v2.ScanWith(ws, v2.ScanOptions{Keep: s.keepProject()})
 		switch {
 		case err != nil:
 			add("Workspace "+ws, "fail", err.Error())
 		case len(results) == 0:
-			add("Workspace "+ws, "warn", "No projects found: mount the folder that holds your projects")
+			add("Workspace "+ws, "warn", "No dockerized, parked or linked projects found: mount the folder that holds your projects, or park/link one from Projects")
 		default:
 			add("Workspace "+ws, "pass", fmt.Sprintf("%d project(s) found", len(results)))
 		}

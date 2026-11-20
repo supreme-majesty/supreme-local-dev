@@ -22,7 +22,6 @@ import (
 	"github.com/supreme-majesty/supreme-local-dev/internal/docker"
 	"github.com/supreme-majesty/supreme-local-dev/internal/hostenv"
 	"github.com/supreme-majesty/supreme-local-dev/internal/orchestrate"
-	appruntime "github.com/supreme-majesty/supreme-local-dev/internal/runtime"
 	"github.com/supreme-majesty/supreme-local-dev/internal/tls"
 	v2 "github.com/supreme-majesty/supreme-local-dev/internal/v2"
 )
@@ -85,6 +84,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	s.registerShare(mux)
 	s.registerCreate(mux)
 	s.registerProjectFiles(mux)
+	s.registerParking(mux)
 }
 
 // newRunner creates a runner whose output goes to w. Each job gets its own
@@ -112,7 +112,8 @@ type ProjectView struct {
 	JobID      string       `json:"job_id,omitempty"` // running operation, if any
 	Autostart  bool         `json:"autostart"`        // starts whenever SLD starts
 	Services   []ServiceRef `json:"services,omitempty"`
-	Dockerized bool         `json:"dockerized"` // own compose file or Dockerfile, or has containers
+	Dockerized bool         `json:"dockerized"`          // own compose file or Dockerfile, or has containers
+	ParkedIn   string       `json:"parked_in,omitempty"` // parked/linked folder that covers it, relative to its workspace
 }
 
 // AppView is one app of a project with its URL.
@@ -139,10 +140,11 @@ func (s *Server) scan(force bool) ([]v2.ScanResult, error) {
 		}
 		return out, nil
 	}
+	keep := s.keepProject() // only dockerized and parked/linked projects are detected
 	var all []v2.ScanResult
 	for _, ws := range s.opts.Workspaces {
 		// With auto setup on, newly found projects get their config written now.
-		results, err := v2.Scan(ws, s.settings.Get().AutoSetup)
+		results, err := v2.ScanWith(ws, v2.ScanOptions{Write: s.settings.Get().AutoSetup, Keep: keep})
 		if err != nil {
 			return nil, fmt.Errorf("scanning %s: %w", ws, err)
 		}
@@ -197,14 +199,9 @@ func (s *Server) view(ctx context.Context, r v2.ScanResult) ProjectView {
 	// Having an SLD config is not enough: auto setup writes one for every
 	// detected folder. Dockerized means the project brings its own Docker files
 	// or SLD has actually created containers for it.
-	v.Dockerized = v.Containers > 0
-	for _, a := range r.AppList {
-		if a.Runtime == config.RuntimeCompose || a.Runtime == config.RuntimeDockerfile {
-			v.Dockerized = true
-		}
-	}
-	if !v.Dockerized {
-		v.Dockerized = hasDockerFiles(r.Root)
+	v.Dockerized = v.Containers > 0 || dockerizedApps(r.AppList) || v2.HasDockerFiles(r.Root)
+	if p := parkedIn(s.settings.Get().Parked, r.Root); p != "" {
+		v.ParkedIn = s.relFolder(p)
 	}
 	if v.Configured && v.Containers > 0 {
 		switch {
@@ -522,14 +519,4 @@ func (s *Server) handleCACert(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/x-x509-ca-cert")
 	w.Header().Set("Content-Disposition", `attachment; filename="sld-ca.crt"`)
 	http.ServeFile(w, r, certMgr.CACertPath())
-}
-
-// hasDockerFiles reports whether the project folder has its own compose file
-// or Dockerfile.
-func hasDockerFiles(root string) bool {
-	if len(appruntime.DefaultComposeFiles(root)) > 0 {
-		return true
-	}
-	_, err := os.Stat(filepath.Join(root, "Dockerfile"))
-	return err == nil
 }

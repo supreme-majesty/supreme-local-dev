@@ -491,6 +491,9 @@ func TestAutomationAPI(t *testing.T) {
 	a, token := newAuth(t)
 	mux := http.NewServeMux()
 	srv := New(Options{Engine: &fakeEngine{}, Env: env, Auth: a, Workspaces: []string{ws}})
+	if err := srv.park(ws); err != nil { // the fixtures have no Docker files
+		t.Fatal(err)
+	}
 	srv.Register(mux)
 	h := a.Middleware(mux)
 	call := func(method, path, body string) *httptest.ResponseRecorder {

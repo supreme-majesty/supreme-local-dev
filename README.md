@@ -23,7 +23,7 @@ docker run -d --name sld --restart unless-stopped \
 docker logs sld        # copy the admin token printed on first start
 ```
 
-Open **http://localhost:2025**, paste the token, and you will see every project found in `~/Projects`.
+Open **http://localhost:2025**, paste the token, and you will see the dockerized projects found in `~/Projects` (see Projects below for which ones).
 
 - **Windows (PowerShell):** use your folder path, e.g. `-v "C:\Users\me\Projects:/workspace"`. For speed, keep projects in the WSL filesystem (`\\wsl$\Ubuntu\home\me\Projects`) and run the command from WSL; projects on `C:\` work but file access is slower.
 - **macOS:** the projects folder must be shared with Docker Desktop (*Settings → Resources → File sharing*; your home folder is shared by default). VirtioFS (the default file-sharing mode) is the fastest.
@@ -55,7 +55,7 @@ If another project already uses 3306 or 6379, set `MYSQL_PORT` / `REDIS_PORT` in
 
 ## Using the dashboard
 
-- **Projects** — every project in the workspace: git repositories, folders with their own compose stack, or with an SLD config. Group folders such as `laravel-builds/` are searched inside.
+- **Projects** — the dockerized projects in the workspace (a compose file or Dockerfile of their own, also in a sub-folder such as `backend/`, or containers SLD already runs for them) plus the folders you park or link with **Park / link folder**. Other folders are not detected: they are not listed and auto setup never writes a config into them. Group folders such as `laravel-builds/` are searched inside; parking a group folder detects every project in it.
   - **Set up** writes the project's `.sld/config.yaml` (detected automatically; review it in the repo).
   - **Start / Stop / Restart** run in the background; their output streams into a console.
   - **Logs** follows any container of the project.

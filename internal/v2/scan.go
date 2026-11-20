@@ -10,6 +10,7 @@ import (
 
 	"github.com/supreme-majesty/supreme-local-dev/internal/config"
 	"github.com/supreme-majesty/supreme-local-dev/internal/detect"
+	appruntime "github.com/supreme-majesty/supreme-local-dev/internal/runtime"
 )
 
 // ScanResult describes one project found by Scan.
@@ -28,6 +29,22 @@ type ScanResult struct {
 // creates .sld/config.yaml for projects that do not have one yet. Existing
 // configs are never overwritten.
 func Scan(dir string, write bool) ([]ScanResult, error) {
+	return ScanWith(dir, ScanOptions{Write: write})
+}
+
+// ScanOptions tune ScanWith.
+type ScanOptions struct {
+	// Write creates .sld/config.yaml for detected projects that lack one.
+	Write bool
+	// Keep, when set, decides which projects are reported (and written). It
+	// sees the project folder and its apps (empty when the stack is unknown).
+	Keep func(root string, apps []AppInfo) bool
+}
+
+// ScanWith is Scan with options.
+func ScanWith(dir string, opts ScanOptions) ([]ScanResult, error) {
+	write := opts.Write
+	keep := func(r ScanResult) bool { return opts.Keep == nil || opts.Keep(r.Root, r.AppList) }
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, err
@@ -46,7 +63,9 @@ func Scan(dir string, write bool) ([]ScanResult, error) {
 				res.fill(cfg)
 				res.Status = "configured"
 			}
-			results = append(results, res)
+			if keep(res) {
+				results = append(results, res)
+			}
 			continue
 		}
 
@@ -54,7 +73,9 @@ func Scan(dir string, write bool) ([]ScanResult, error) {
 		if errors.Is(err, detect.ErrNothingDetected) {
 			res.Name = filepath.Base(root)
 			res.Status = "undetected"
-			results = append(results, res)
+			if keep(res) {
+				results = append(results, res)
+			}
 			continue
 		}
 		if err != nil {
@@ -69,7 +90,9 @@ func Scan(dir string, write bool) ([]ScanResult, error) {
 			res.Name = detected.Config.Name
 			res.Status = "undetected"
 			res.Problems = append(res.Problems, err.Error())
-			results = append(results, res)
+			if keep(res) {
+				results = append(results, res)
+			}
 			continue
 		}
 		res.fill(cfg)
@@ -77,6 +100,9 @@ func Scan(dir string, write bool) ([]ScanResult, error) {
 			if strings.Contains(n, "⚠️") {
 				res.Problems = append(res.Problems, strings.TrimSpace(strings.ReplaceAll(n, "⚠️", "")))
 			}
+		}
+		if !keep(res) {
+			continue // not reported, and no config is written for it
 		}
 		res.Status = "new"
 		if write {
@@ -145,4 +171,40 @@ func PrintScan(base string, results []ScanResult, write bool) {
 	if !write {
 		fmt.Println("\nRun 'sld scan --write' to create .sld/config.yaml for projects marked \"new\" (existing configs are never changed).")
 	}
+}
+
+// dockerFileSkip are folders never searched for Docker files.
+var dockerFileSkip = map[string]bool{"node_modules": true, "vendor": true, "venv": true, ".venv": true, "dist": true, "build": true, "target": true}
+
+// HasDockerFiles reports whether root has its own compose file or Dockerfile,
+// at its top level or in a sub-folder up to two levels down (stacks such as
+// sunport-apps/backend/compose.yaml).
+func HasDockerFiles(root string) bool {
+	var look func(dir string, depth int) bool
+	look = func(dir string, depth int) bool {
+		if len(appruntime.DefaultComposeFiles(dir)) > 0 {
+			return true
+		}
+		if _, err := os.Stat(filepath.Join(dir, "Dockerfile")); err == nil {
+			return true
+		}
+		if depth >= 2 {
+			return false
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return false
+		}
+		for _, e := range entries {
+			name := e.Name()
+			if !e.IsDir() || strings.HasPrefix(name, ".") || dockerFileSkip[strings.ToLower(name)] {
+				continue
+			}
+			if look(filepath.Join(dir, name), depth+1) {
+				return true
+			}
+		}
+		return false
+	}
+	return look(root, 0)
 }

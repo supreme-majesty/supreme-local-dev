@@ -42,12 +42,11 @@ export default function Share() {
   const tunnels = useMemo(() => tunnelsQuery.data ?? [], [tunnelsQuery.data]);
 
   const projects = useMemo(() => {
-    const list = (projectsQuery.data ?? []).filter(
-      (p) => p.dockerized || tunnels.some((t) => t.site_name === p.name),
-    );
+    // SLD only detects dockerized and parked/linked projects.
+    const list = projectsQuery.data ?? [];
     // Running projects (the ones that can be shared) first.
     return [...list].sort((a, b) => Number(isUp(b)) - Number(isUp(a)) || a.name.localeCompare(b.name));
-  }, [projectsQuery.data, tunnels]);
+  }, [projectsQuery.data]);
 
   // Tunnels whose project is no longer found (renamed, removed, ignored).
   const orphans = tunnels.filter((t) => !(projectsQuery.data ?? []).some((p) => p.name === t.site_name));
