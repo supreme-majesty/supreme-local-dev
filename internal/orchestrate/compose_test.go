@@ -1,12 +1,16 @@
 package orchestrate
 
 import (
+	"context"
+	"slices"
 	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/supreme-majesty/supreme-local-dev/internal/config"
 	"github.com/supreme-majesty/supreme-local-dev/internal/project"
+	"github.com/supreme-majesty/supreme-local-dev/internal/reconcile"
 	appruntime "github.com/supreme-majesty/supreme-local-dev/internal/runtime"
 )
 
@@ -91,5 +95,40 @@ func TestMergeComposeStacks(t *testing.T) {
 	merged := mergeComposeStacks([]*appruntime.ComposeStack{a, b, c})
 	if len(merged) != 2 || len(merged[0].Routes) != 2 || !merged[0].KeepPorts {
 		t.Errorf("merge result: %+v", merged)
+	}
+}
+
+// TestStartProject_LeavesComposeContainersAlone guards against SLD removing
+// containers owned by a project's compose stack as "obsolete".
+func TestStartProject_LeavesComposeContainersAlone(t *testing.T) {
+	engine := newMockEngine()
+	orch, projectRoot := containerOrchestrator(t, engine)
+	id, err := orch.Env().ProjectIdentity(projectRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine.containers["swiftsms-app-1"] = &reconcile.ActualContainer{
+		ID: "compose-app", Name: "swiftsms-app-1", State: "running",
+		Labels: map[string]string{"com.supreme.sld.project": id.ID, "com.supreme.sld.runtime": "compose"},
+	}
+	engine.containers["sld-old-leftover"] = &reconcile.ActualContainer{
+		ID: "leftover", Name: "sld-old-leftover", State: "exited",
+		Labels: map[string]string{"com.supreme.sld.project": id.ID},
+	}
+	spec := &ProjectSpec{
+		Identity:    id,
+		Config:      &config.Config{Version: 2, Name: "shop", Apps: config.Apps{{Name: "web", Runtime: config.RuntimeStatic, WebRoot: "."}}, Domain: config.DomainConfig{Name: "shop.localhost"}},
+		ProjectRoot: projectRoot,
+	}
+	if err := orch.StartProject(context.Background(), spec); err != nil {
+		t.Fatalf("StartProject: %v", err)
+	}
+	for _, removed := range engine.removedIDs {
+		if removed == "compose-app" {
+			t.Fatal("StartProject removed a compose-managed container")
+		}
+	}
+	if !slices.Contains(engine.removedIDs, "leftover") {
+		t.Error("obsolete SLD containers should still be removed")
 	}
 }

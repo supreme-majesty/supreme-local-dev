@@ -129,6 +129,17 @@ func resolveTarget(containers []*reconcile.ActualContainer, cfg *config.Config, 
 	return pickContainer(containers, cfg, target, true)
 }
 
+// ResolveContainer finds a project container by app name or service (empty =
+// the main app). includeStopped also considers stopped containers (for logs).
+func ResolveContainer(containers []*reconcile.ActualContainer, cfg *config.Config, target string, includeStopped bool) (*reconcile.ActualContainer, error) {
+	return pickContainer(containers, cfg, target, !includeStopped)
+}
+
+// LoadProjectConfig reads and validates a project's .sld/config.yaml.
+func LoadProjectConfig(projectRoot string) (*config.Config, []byte, error) {
+	return loadProjectConfig(projectRoot)
+}
+
 // pickContainer is resolveTarget with the option to consider stopped containers (for logs).
 func pickContainer(containers []*reconcile.ActualContainer, cfg *config.Config, target string, runningOnly bool) (*reconcile.ActualContainer, error) {
 	running := make([]*reconcile.ActualContainer, 0, len(containers))

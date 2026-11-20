@@ -31,7 +31,9 @@ func NewServer(port int) *Server {
 	return &Server{Port: port}
 }
 
-func (s *Server) Start() error {
+// Mux builds the API and dashboard routes without starting a listener, so
+// `sld serve` can add its own routes and middleware around them.
+func (s *Server) Mux() *http.ServeMux {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/api/state", s.handleState)
@@ -190,6 +192,11 @@ func (s *Server) Start() error {
 		fileServer.ServeHTTP(w, r)
 	})
 
+	return mux
+}
+
+func (s *Server) Start() error {
+	mux := s.Mux()
 	fmt.Printf("SLD Daemon listening on port %d...\n", s.Port)
 	return http.ListenAndServe(fmt.Sprintf(":%d", s.Port), s.corsMiddleware(mux))
 }

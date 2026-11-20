@@ -17,7 +17,9 @@ type ScanResult struct {
 	Root     string
 	Name     string
 	Domains  []string
-	Apps     string
+	Apps     string // summary, e.g. "web (php 8.3), api (python 3.13)"
+	AppList  []AppInfo
+	TLS      bool
 	Status   string // "configured", "new", "written", "undetected"
 	Problems []string
 }
@@ -94,9 +96,21 @@ func Scan(dir string, write bool) ([]ScanResult, error) {
 func (r *ScanResult) fill(cfg *config.Config) {
 	r.Name = cfg.Name
 	r.Apps = cfg.Describe()
+	r.TLS = cfg.Domain.TLS
 	for _, app := range cfg.Apps {
 		r.Domains = append(r.Domains, app.Domain)
+		r.AppList = append(r.AppList, AppInfo{Name: app.Name, Runtime: app.Runtime, Version: app.Version, Domain: app.Domain, Path: app.Path, Service: app.Service})
 	}
+}
+
+// AppInfo summarises one app of a scanned project.
+type AppInfo struct {
+	Name    string `json:"name"`
+	Runtime string `json:"runtime"`
+	Version string `json:"version,omitempty"`
+	Domain  string `json:"domain"`
+	Path    string `json:"path,omitempty"`
+	Service string `json:"service,omitempty"`
 }
 
 // PrintScan prints scan results as a table.

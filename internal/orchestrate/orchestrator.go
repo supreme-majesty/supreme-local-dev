@@ -275,6 +275,11 @@ func (o *Orchestrator) StartProject(ctx context.Context, spec *ProjectSpec) erro
 	}
 	actualMap := make(map[string]*reconcile.ActualContainer, len(actual))
 	for _, a := range actual {
+		// Compose-managed containers carry the project label too, but docker
+		// compose owns them: never treat them as obsolete SLD containers.
+		if a.Labels[docker.LabelRuntime] == "compose" {
+			continue
+		}
 		actualMap[a.Name] = a
 	}
 	for _, p := range reconcile.ComputeContainerPlan(plan.containers, actualMap) {

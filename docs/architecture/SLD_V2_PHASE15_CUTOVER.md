@@ -352,7 +352,35 @@ Follow-ups:
 - `start` returns a few seconds before Traefik picks up new containers.
 - Projects not yet started under SLD keep binding their own ports and can still block the router's port 80.
 
-### M5 — Control plane rebuild (`sld serve`) *(7–10 days)*
+### M5 — Control plane rebuild (`sld serve`) *(7–10 days)* — backend implemented 2026-11-20
+
+What landed:
+- **`sld serve`** (`cmd/sld/serve.go`) mounts the existing routes (dashboard files, `/api/db/*` database manager, WebSocket) through the new `api.Server.Mux()`, plus `/api/v2` from `internal/server`. Everything sits behind the auth middleware. It listens on `:2025` / `SLD_LISTEN` and scans `SLD_WORKSPACES` (default `/workspace` in the image).
+- **Auth (`internal/server/auth.go`):**
+  - The admin token is printed once on first start and only its SHA-256 is stored in `<data>/auth.json`. `SLD_ADMIN_TOKEN` and `--reset-token` are supported.
+  - Browsers get an HttpOnly, SameSite=Strict session cookie; scripts use `Authorization: Bearer`.
+  - Host allow-list (localhost, `*.localhost`, `SLD_ALLOWED_HOSTS`) against DNS rebinding.
+  - Cookie writes need `X-SLD-Request` and a local Origin.
+  - Static dashboard files and `/api/health` are public.
+- **API (`internal/server/api.go`):**
+  - `GET /api/v2/projects`: scan plus live status (running/partial/stopped/not-configured/undetected) and URLs.
+  - `GET /api/v2/projects/{id}`: detail including the config YAML.
+  - `POST /api/v2/projects/{id}/setup|start|stop|restart|destroy`: background jobs, one per project, with `remove_volumes` for destroy.
+  - `GET /api/v2/jobs/{id}` and `/events` (SSE, resumable with `offset`).
+  - `GET /api/v2/projects/{id}/logs?target=&tail=&follow=1`.
+  - `GET /api/v2/system`, `POST /api/v2/system/init`, `GET /api/v2/system/ca.crt`.
+- **Runner output** goes to a per-job writer (`Runner.SetOutput`), so job output is captured instead of printed to the server's stdout.
+
+Fix found during the live test: `StartProject` treated compose-managed containers as obsolete SLD containers and **removed them on every start**, so compose rebuilt the stack each time. They are now skipped, with a regression test added.
+
+Verified live with `sld serve` in a container against the real workspace:
+- Auth gates: public health/static, 401 without sign-in, 403 for a foreign Host, 403 for a cookie POST without the CSRF header.
+- Cookie sign-in; 17 projects listed (SLD's repo excluded via `.sldignore`), with swiftsms `running`.
+- A start job streamed over SSE, logs were read per app, and a second start left all 5 swiftsms containers untouched.
+
+Next (M6): the dashboard's sign-in screen and Projects/Setup pages on `/api/v2`, sending `X-SLD-Request` on writes.
+
+Original scope:
 - Auth (D2), registry (D3), and replacing the V1 internals of each API group:
 
 | API group | Plan |
