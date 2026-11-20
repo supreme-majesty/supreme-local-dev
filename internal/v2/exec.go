@@ -6,11 +6,12 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"runtime"
+	goruntime "runtime"
 	"strings"
 
 	"github.com/moby/term"
 	"github.com/spf13/cobra"
+	"github.com/supreme-majesty/supreme-local-dev/internal/config"
 	"github.com/supreme-majesty/supreme-local-dev/internal/docker"
 	"github.com/supreme-majesty/supreme-local-dev/internal/reconcile"
 )
@@ -20,141 +21,174 @@ func RegisterExecCommands(v2Cmd *cobra.Command) {
 	// --- sld v2 shell ---
 	var shellService string
 	shellCmd := &cobra.Command{
-		Use:   "shell [service|path]",
-		Short: "Open an interactive shell in a project container (default: php)",
+		Use:   "shell [app|service|path]",
+		Short: "Open an interactive shell in a project container (default: the main app)",
 		Long: `Opens an interactive shell inside a running project container.
-By default connects to the PHP container. Pass --service (e.g. --service db, --service nginx)
-or specify a service name directly (php, nginx, db, redis, mailpit, node).`,
+By default connects to the project's main app (for PHP apps, the PHP container).
+Name an app from .sld/config.yaml or a service (php, nginx, db, redis, mailpit)
+as an argument or with --service.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			projectRoot, err := os.Getwd()
 			if err != nil {
 				return err
 			}
-			svc := shellService
+			target := shellService
 			if len(args) > 0 {
-				if isKnownService(args[0]) {
-					svc = args[0]
-				} else {
+				if info, err := os.Stat(args[0]); err == nil && info.IsDir() {
 					projectRoot = args[0]
+				} else {
+					target = args[0]
 				}
 			}
-			shellBin := []string{"bash"}
-			if svc != docker.ServicePHP {
-				shellBin = []string{"sh"}
-			}
-			return execInService(projectRoot, svc, shellBin)
+			return execInService(projectRoot, target, nil)
 		},
 	}
-	shellCmd.Flags().StringVarP(&shellService, "service", "s", docker.ServicePHP, "Target service container (php, nginx, db, redis, mailpit, node)")
+	shellCmd.Flags().StringVarP(&shellService, "service", "s", "", "App name or service (php, nginx, db, redis, mailpit)")
 	v2Cmd.AddCommand(shellCmd)
 
 	// --- sld v2 exec ---
-	var execService string
-	execCmd := &cobra.Command{
-		Use:                "exec [command...]",
-		Short:              "Execute a command inside a project container (default: php)",
+	v2Cmd.AddCommand(&cobra.Command{
+		Use:                "exec [--service <app|service>] <command...>",
+		Short:              "Execute a command inside a project container (default: the main app)",
 		DisableFlagParsing: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 0 {
-				return fmt.Errorf("usage: sld v2 exec [--service <svc>] <command> [args...]")
+			target, cmdArgs := "", args
+			switch {
+			case len(cmdArgs) >= 3 && (cmdArgs[0] == "--service" || cmdArgs[0] == "-s"):
+				target, cmdArgs = cmdArgs[1], cmdArgs[2:]
+			case len(cmdArgs) >= 2 && strings.HasPrefix(cmdArgs[0], "--service="):
+				target, cmdArgs = strings.TrimPrefix(cmdArgs[0], "--service="), cmdArgs[1:]
 			}
-			svc := docker.ServicePHP
-			cmdArgs := args
-			// Support optional leading --service / -s flag while keeping DisableFlagParsing for passthrough flags
-			if len(cmdArgs) >= 3 && (cmdArgs[0] == "--service" || cmdArgs[0] == "-s") {
-				svc = cmdArgs[1]
-				cmdArgs = cmdArgs[2:]
-			} else if len(cmdArgs) >= 2 && strings.HasPrefix(cmdArgs[0], "--service=") {
-				svc = strings.TrimPrefix(cmdArgs[0], "--service=")
-				cmdArgs = cmdArgs[1:]
-			} else if len(cmdArgs) >= 2 && isKnownService(cmdArgs[0]) && cmdArgs[0] != "php" {
-				// Allow "sld v2 exec db mysql ..." shorthand (keep "php" as command if someone runs "exec php -v")
-				svc = cmdArgs[0]
-				cmdArgs = cmdArgs[1:]
+			if len(cmdArgs) == 0 {
+				return fmt.Errorf("usage: sld v2 exec [--service <app|service>] <command> [args...]")
 			}
-			_ = execService
 			cwd, err := os.Getwd()
 			if err != nil {
 				return err
 			}
-			return execInService(cwd, svc, cmdArgs)
+			return execInService(cwd, target, cmdArgs)
 		},
+	})
+
+	// Tool passthroughs run in the first container of the matching runtime.
+	for _, tool := range []struct {
+		use, short, service string
+		prefix              []string
+	}{
+		{"php", "Run PHP CLI in the project's PHP container", docker.ServicePHP, []string{"php"}},
+		{"composer", "Run Composer in the project's PHP container", docker.ServicePHP, []string{"composer"}},
+		{"artisan", "Run Laravel Artisan in the project's PHP container", docker.ServicePHP, []string{"php", "artisan"}},
+		{"python", "Run Python in the project's Python app", config.RuntimePython, []string{"python"}},
+		{"pip", "Run pip in the project's Python app", config.RuntimePython, []string{"pip"}},
+		{"bundle", "Run Bundler in the project's Ruby app", config.RuntimeRuby, []string{"bundle"}},
+		{"rails", "Run Rails in the project's Ruby app", config.RuntimeRuby, []string{"bundle", "exec", "rails"}},
+		{"go", "Run the Go toolchain in the project's Go app", config.RuntimeGo, []string{"go"}},
+	} {
+		tool := tool
+		v2Cmd.AddCommand(&cobra.Command{
+			Use:                tool.use + " [args...]",
+			Short:              tool.short,
+			DisableFlagParsing: true,
+			RunE: func(cmd *cobra.Command, args []string) error {
+				cwd, err := os.Getwd()
+				if err != nil {
+					return err
+				}
+				return execInService(cwd, tool.service, append(append([]string{}, tool.prefix...), args...))
+			},
+		})
 	}
-	v2Cmd.AddCommand(execCmd)
 
-	// --- sld v2 php ---
-	v2Cmd.AddCommand(&cobra.Command{
-		Use:                "php [args...]",
-		Short:              "Run PHP CLI inside the project PHP container",
-		DisableFlagParsing: true,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cwd, err := os.Getwd()
-			if err != nil {
-				return err
-			}
-			return execInService(cwd, docker.ServicePHP, append([]string{"php"}, args...))
-		},
-	})
-
-	// --- sld v2 composer ---
-	v2Cmd.AddCommand(&cobra.Command{
-		Use:                "composer [args...]",
-		Short:              "Run Composer inside the PHP container",
-		DisableFlagParsing: true,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cwd, err := os.Getwd()
-			if err != nil {
-				return err
-			}
-			return execInService(cwd, docker.ServicePHP, append([]string{"composer"}, args...))
-		},
-	})
-
-	// --- sld v2 artisan ---
-	v2Cmd.AddCommand(&cobra.Command{
-		Use:                "artisan [args...]",
-		Short:              "Run Laravel Artisan inside the PHP container",
-		DisableFlagParsing: true,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cwd, err := os.Getwd()
-			if err != nil {
-				return err
-			}
-			return execInService(cwd, docker.ServicePHP, append([]string{"php", "artisan"}, args...))
-		},
-	})
-
-	// --- sld v2 npm ---
-	v2Cmd.AddCommand(&cobra.Command{
-		Use:                "npm [args...]",
-		Short:              "Run npm via an ephemeral Node container",
-		DisableFlagParsing: true,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cwd, err := os.Getwd()
-			if err != nil {
-				return err
-			}
-			return execInNode(cwd, append([]string{"npm"}, args...))
-		},
-	})
-}
-
-func isKnownService(s string) bool {
-	switch strings.ToLower(s) {
-	case docker.ServicePHP, docker.ServiceNginx, docker.ServiceDB, docker.ServiceRedis, docker.ServiceNode, "mailpit":
-		return true
-	default:
-		return false
+	// --- sld v2 npm / npx ---
+	for _, tool := range []string{"npm", "npx"} {
+		tool := tool
+		v2Cmd.AddCommand(&cobra.Command{
+			Use:                tool + " [args...]",
+			Short:              "Run " + tool + " in the project's Node app (or a temporary Node container)",
+			DisableFlagParsing: true,
+			RunE: func(cmd *cobra.Command, args []string) error {
+				cwd, err := os.Getwd()
+				if err != nil {
+					return err
+				}
+				return execNodeTool(cwd, append([]string{tool}, args...))
+			},
+		})
 	}
 }
 
-// execInService executes a command inside the specified project service
-// container through the Docker API and exits with the command's exit code.
-func execInService(projectRoot, service string, command []string) error {
-	if service == "" {
-		service = docker.ServicePHP
+// langServices are app containers whose main process runs as the developer's
+// UID; commands exec'd into them do the same so created files are not root-owned.
+var langServices = map[string]bool{
+	config.RuntimeNode: true, config.RuntimePython: true, config.RuntimeRuby: true, config.RuntimeGo: true,
+}
+
+// resolveTarget picks the running container for an app name or service.
+// An empty target means the project's main app.
+func resolveTarget(containers []*reconcile.ActualContainer, cfg *config.Config, target string) (*reconcile.ActualContainer, error) {
+	return pickContainer(containers, cfg, target, true)
+}
+
+// pickContainer is resolveTarget with the option to consider stopped containers (for logs).
+func pickContainer(containers []*reconcile.ActualContainer, cfg *config.Config, target string, runningOnly bool) (*reconcile.ActualContainer, error) {
+	running := make([]*reconcile.ActualContainer, 0, len(containers))
+	for _, c := range containers {
+		if !runningOnly || c.State == "running" {
+			running = append(running, c)
+		}
 	}
 
+	if target == "" && cfg != nil {
+		if primary := cfg.PrimaryApp(); primary != nil {
+			target = primary.Name
+		}
+	}
+
+	// 1. App name: prefer the app's code container over its nginx sidecar.
+	var appMatch *reconcile.ActualContainer
+	for _, c := range running {
+		if c.Labels[docker.LabelApp] == target && target != "" {
+			if c.Service != docker.ServiceNginx {
+				return c, nil
+			}
+			appMatch = c
+		}
+	}
+	if appMatch != nil {
+		return appMatch, nil
+	}
+	// 2. Service / runtime name (php, nginx, db, redis, mailpit, node, ...).
+	for _, c := range running {
+		if strings.EqualFold(c.Service, target) {
+			return c, nil
+		}
+	}
+	// 3. Projects started before apps had labels: fall back to the PHP container.
+	if target == "" {
+		for _, c := range running {
+			if c.Service == docker.ServicePHP {
+				return c, nil
+			}
+		}
+	}
+
+	var available []string
+	for _, c := range running {
+		name := c.Service
+		if app := c.Labels[docker.LabelApp]; app != "" {
+			name = app + " (" + c.Service + ")"
+		}
+		available = append(available, name)
+	}
+	if len(available) == 0 {
+		return nil, fmt.Errorf("no containers are running for this project. Run 'sld v2 start' first")
+	}
+	return nil, fmt.Errorf("no running container for %q. Running: %s", target, strings.Join(available, ", "))
+}
+
+// execInService executes a command in a project container through the Docker
+// API and exits with the command's exit code. A nil command opens a shell.
+func execInService(projectRoot, target string, command []string) error {
 	runner, err := lazyRunner()
 	if err != nil {
 		return err
@@ -166,33 +200,67 @@ func execInService(projectRoot, service string, command []string) error {
 	if err != nil {
 		return err
 	}
+	cfg, _, _ := loadProjectConfig(projectRoot) // optional: only used to find the main app
 
 	containers, err := engine.ListProjectContainers(context.Background(), identity.ID)
 	if err != nil {
 		return fmt.Errorf("failed to list containers: %w", err)
 	}
-
-	targetName := ""
-	for _, c := range containers {
-		if strings.EqualFold(c.Service, service) && c.State == "running" {
-			targetName = c.Name
-			break
-		}
+	c, err := resolveTarget(containers, cfg, target)
+	if err != nil {
+		return err
 	}
-	if targetName == "" {
-		return fmt.Errorf("service container %q is not running for project %s.\n  Run 'sld v2 start' first", service, identity.Slug)
+
+	if command == nil {
+		command = []string{"sh"}
+		if c.Service == docker.ServicePHP {
+			command = []string{"bash"}
+		}
 	}
 
 	executor, ok := engine.(docker.Executor)
 	if !ok {
 		return fmt.Errorf("docker engine does not support exec")
 	}
+	user := ""
+	if langServices[c.Service] {
+		uid, gid := runner.orch.ProjectOwner(projectRoot)
+		user = uid + ":" + gid
+	}
 
-	fmt.Fprintf(os.Stderr, "[SLD] Executing in %s: %s\n", targetName, formatCommand(command))
+	fmt.Fprintf(os.Stderr, "[SLD] Executing in %s: %s\n", c.Name, formatCommand(command))
 	code, err := runAttached(command, func(ctx context.Context, opts docker.ExecOptions) (int, error) {
-		return executor.Exec(ctx, targetName, opts)
+		opts.User = user
+		return executor.Exec(ctx, c.Name, opts)
 	})
 	return exitWith(code, err)
+}
+
+// execNodeTool runs npm/npx inside a running Node app (where node_modules
+// lives in its dependency volume), or in a temporary Node container.
+func execNodeTool(projectRoot string, command []string) error {
+	runner, err := lazyRunner()
+	if err != nil {
+		return err
+	}
+	engine := runner.orch.Engine()
+
+	identity, err := runner.identity(projectRoot)
+	if err != nil {
+		engine.Close()
+		return err
+	}
+	containers, err := engine.ListProjectContainers(context.Background(), identity.ID)
+	if err == nil {
+		for _, c := range containers {
+			if c.Service == config.RuntimeNode && c.State == "running" {
+				engine.Close()
+				return execInService(projectRoot, c.Labels[docker.LabelApp], command)
+			}
+		}
+	}
+	engine.Close()
+	return execInNode(projectRoot, command)
 }
 
 // execInNode runs a command in an ephemeral Node container mounted to the project.
@@ -209,7 +277,7 @@ func execInNode(projectRoot string, command []string) error {
 		return err
 	}
 
-	nodeVersion := "22"
+	nodeVersion := config.DefaultVersions[config.RuntimeNode]
 	if cfg, _, err := loadProjectConfig(projectRoot); err == nil {
 		nodeVersion = cfg.NodeVersion()
 	}
@@ -228,7 +296,7 @@ func execInNode(projectRoot string, command []string) error {
 	}
 	// Preserve the developer's UID/GID on Linux so node_modules and build
 	// output are not root-owned (Docker Desktop maps ownership itself).
-	if runtime.GOOS == "linux" {
+	if goruntime.GOOS == "linux" {
 		uid, gid := runner.orch.ProjectOwner(projectRoot)
 		desired.User = uid + ":" + gid
 	}

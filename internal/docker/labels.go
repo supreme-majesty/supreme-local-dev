@@ -14,6 +14,9 @@ const (
 	LabelConfigHash   = "com.supreme.sld.config-hash"
 	LabelService      = "com.supreme.sld.service"
 	LabelResourceType = "com.supreme.sld.resource-type"
+	LabelApp          = "com.supreme.sld.app"      // app name from .sld/config.yaml (app containers only)
+	LabelRuntime      = "com.supreme.sld.runtime"  // app runtime, e.g. php, node (app containers only)
+	LabelImageID      = "com.supreme.sld.image-id" // built image ID (dockerfile runtime), so rebuilds recreate the container
 
 	// Value Constants
 	CurrentVersion = "2"

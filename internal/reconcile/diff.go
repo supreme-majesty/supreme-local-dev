@@ -57,6 +57,9 @@ type DesiredContainer struct {
 	ExtraHosts  []string
 	Labels      map[string]string
 	Healthcheck *HealthcheckConfig
+	// SkipHealthWait starts the container without blocking on its healthcheck
+	// (dev servers may spend minutes installing dependencies first).
+	SkipHealthWait bool
 }
 
 // ActualContainer represents the current state of a container in Docker.

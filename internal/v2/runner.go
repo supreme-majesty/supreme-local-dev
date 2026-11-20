@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -18,6 +17,7 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/pkg/stdcopy"
 	"gopkg.in/yaml.v3"
 
 	"github.com/supreme-majesty/supreme-local-dev/internal/config"
@@ -167,14 +167,14 @@ func (r *Runner) Start(ctx context.Context, projectRoot string) error {
 
 	// 6. Start project
 	fmt.Println("[SLD] Starting containers...")
+	r.orch.SetBuildLog(os.Stdout)
 	if err := r.orch.StartProject(ctx, spec); err != nil {
 		return fmt.Errorf("failed to start project: %w", err)
 	}
 
-	// 7. Ensure local DNS resolution for project domain (and Mailpit subdomain if enabled)
-	r.ensureProjectDomainDNS(cfg.Domain.Name)
-	if cfg.Services.Mailpit.Enabled {
-		r.ensureProjectDomainDNS("mail." + cfg.Domain.Name)
+	// 7. Ensure local DNS resolution for every served host name
+	for _, host := range cfg.Hostnames() {
+		r.ensureProjectDomainDNS(host)
 	}
 
 	elapsed := time.Since(startTime)
@@ -182,9 +182,17 @@ func (r *Runner) Start(ctx context.Context, projectRoot string) error {
 	fmt.Printf("[SLD] ✅ Project is running! (%.1fs)\n", elapsed.Seconds())
 
 	env := r.env()
-	fmt.Printf("🚀 Access your site at: %s\n", env.SiteURL(cfg.Domain.Name, cfg.Domain.TLS))
+	for _, app := range cfg.Apps {
+		fmt.Printf("🚀 %-10s %s\n", app.Name, env.SiteURL(app.Domain, cfg.Domain.TLS))
+	}
 	if cfg.Services.Mailpit.Enabled {
-		fmt.Printf("📬 Mailpit inbox at:    %s\n", env.SiteURL("mail."+cfg.Domain.Name, false))
+		fmt.Printf("📬 %-10s %s\n", "mailpit", env.SiteURL("mail."+cfg.Domain.Name, cfg.Domain.TLS))
+	}
+	for _, app := range cfg.Apps {
+		switch app.Runtime {
+		case config.RuntimeNode, config.RuntimePython, config.RuntimeRuby, config.RuntimeGo:
+			fmt.Printf("[SLD] ℹ️  %s may still be installing dependencies — follow with: sld v2 logs %s -f\n", app.Name, app.Name)
+		}
 	}
 
 	return nil
@@ -726,31 +734,12 @@ func (r *Runner) Logs(ctx context.Context, projectRoot, service string, follow b
 		return fmt.Errorf("no containers running for project %s. Run 'sld v2 start' first", identity.Slug)
 	}
 
-	var targetContainer *reconcile.ActualContainer
-	if service != "" {
-		for _, c := range containers {
-			if strings.EqualFold(c.Service, service) || strings.Contains(strings.ToLower(c.Name), strings.ToLower(service)) {
-				targetContainer = c
-				break
-			}
-		}
-		if targetContainer == nil {
-			var available []string
-			for _, c := range containers {
-				available = append(available, c.Service)
-			}
-			return fmt.Errorf("service %q not found. Available services: %s", service, strings.Join(available, ", "))
-		}
-	} else {
-		for _, c := range containers {
-			if c.Service == docker.ServicePHP {
-				targetContainer = c
-				break
-			}
-		}
-		if targetContainer == nil {
-			targetContainer = containers[0]
-		}
+	// Accept an app name or a service; include stopped containers so the logs
+	// of a crashed dev server can still be read.
+	cfg, _, _ := loadProjectConfig(projectRoot)
+	targetContainer, err := pickContainer(containers, cfg, service, false)
+	if err != nil {
+		return err
 	}
 
 	if tail == "" {
@@ -771,7 +760,8 @@ func (r *Runner) Logs(ctx context.Context, projectRoot, service string, follow b
 	}
 	defer reader.Close()
 
-	_, err = io.Copy(os.Stdout, reader)
+	// SLD containers run without a TTY, so the stream is multiplexed stdout/stderr.
+	_, err = stdcopy.StdCopy(os.Stdout, os.Stderr, reader)
 	return err
 }
 

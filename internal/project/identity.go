@@ -182,3 +182,28 @@ func (i *Identity) DBVolumeName() string {
 func (i *Identity) RedisVolumeName() string {
 	return fmt.Sprintf("sld-%s-redis-data", i.ID)
 }
+
+// AppContainerName names a container belonging to an app: sld-<id>-<app> or,
+// for apps with several containers, sld-<id>-<app>-<role> (e.g. role "php").
+func (i *Identity) AppContainerName(app, role string) string {
+	if role == "" {
+		return fmt.Sprintf("sld-%s-%s", i.ID, app)
+	}
+	return fmt.Sprintf("sld-%s-%s-%s", i.ID, app, role)
+}
+
+// AppDepsVolumeName names the dependency cache volume of an app
+// (node_modules, Python venv, Ruby gems, Go module cache).
+func (i *Identity) AppDepsVolumeName(app string) string {
+	return fmt.Sprintf("sld-%s-%s-deps", i.ID, app)
+}
+
+// AppImageTag is the local image tag for an app built from a Dockerfile.
+func (i *Identity) AppImageTag(app string) string {
+	return fmt.Sprintf("sld-%s-%s:dev", i.ID, app)
+}
+
+// MailpitContainerName names the project's Mailpit container.
+func (i *Identity) MailpitContainerName() string {
+	return fmt.Sprintf("sld-%s-mailpit", i.ID)
+}

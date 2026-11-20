@@ -229,8 +229,8 @@ func TestBuildDesiredContainers_MinimalConfig(t *testing.T) {
 
 	// Verify PHP container
 	php := containers[0]
-	if php.Name != identity.PHPContainerName() {
-		t.Errorf("expected PHP name %s, got %s", identity.PHPContainerName(), php.Name)
+	if want := identity.AppContainerName("web", "php"); php.Name != want {
+		t.Errorf("expected PHP name %s, got %s", want, php.Name)
 	}
 	if php.Image != "ghcr.io/supreme-majesty/sld-php:8.3" {
 		t.Errorf("unexpected PHP image: %s", php.Image)
@@ -238,8 +238,8 @@ func TestBuildDesiredContainers_MinimalConfig(t *testing.T) {
 
 	// Verify Nginx container
 	nginx := containers[1]
-	if nginx.Name != identity.NginxContainerName() {
-		t.Errorf("expected Nginx name %s, got %s", identity.NginxContainerName(), nginx.Name)
+	if want := identity.AppContainerName("web", "nginx"); nginx.Name != want {
+		t.Errorf("expected Nginx name %s, got %s", want, nginx.Name)
 	}
 }
 
@@ -403,8 +403,9 @@ func TestBuildDesiredContainers_DependencyOrderAndSpecs(t *testing.T) {
 	if node.WorkingDir != "/app" {
 		t.Errorf("Node WorkingDir = %q, want /app", node.WorkingDir)
 	}
-	if len(node.Cmd) != 3 || node.Cmd[0] != "sh" || node.Cmd[1] != "-c" || node.Cmd[2] != "npm run dev -- --host" {
-		t.Errorf("Node Cmd = %v, want [sh -c 'npm run dev -- --host']", node.Cmd)
+	// The dev server command is passed through the environment, never spliced into the script.
+	if node.Environment["SLD_COMMAND"] != "npm run dev -- --host" || len(node.Cmd) != 3 || node.Cmd[0] != "sh" {
+		t.Errorf("Node command = %q, Cmd = %v", node.Environment["SLD_COMMAND"], node.Cmd)
 	}
 }
 

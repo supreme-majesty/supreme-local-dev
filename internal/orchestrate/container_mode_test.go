@@ -13,6 +13,7 @@ import (
 	"github.com/supreme-majesty/supreme-local-dev/internal/hostenv"
 	"github.com/supreme-majesty/supreme-local-dev/internal/project"
 	"github.com/supreme-majesty/supreme-local-dev/internal/reconcile"
+	appruntime "github.com/supreme-majesty/supreme-local-dev/internal/runtime"
 )
 
 // TestMain keeps tests that use the default host environment from writing
@@ -273,33 +274,22 @@ environment:
 		t.Fatalf("MigrateV1: %v", err)
 	}
 
+	root := t.TempDir() // shared, so both builds read the same generated DB password
 	build := func(data []byte) []*reconcile.DesiredContainer {
 		cfg, err := config.LoadFromBytes(data, "shop")
 		if err != nil {
 			t.Fatalf("LoadFromBytes: %v\n%s", err, data)
 		}
-		root := t.TempDir()
 		orch := NewOrchestrator(newMockEngine())
 		orch.SetEnv(hostenv.Host(t.TempDir()))
 		containers, err := orch.buildDesiredContainers(&ProjectSpec{
 			Identity:    &project.Identity{ID: "shop-1234abcd", Slug: "shop", Hash: "1234abcd", CanonicalPath: "/p/shop"},
 			Config:      cfg,
-			ConfigHash:  "same", // the file hash differs by design; compare everything else
+			ConfigHash:  "same", // the file hash differs by design; container hashes must not
 			ProjectRoot: root,
 		})
 		if err != nil {
 			t.Fatalf("buildDesiredContainers: %v", err)
-		}
-		// Project root (temp dir) and generated DB password differ per call.
-		for _, c := range containers {
-			for i := range c.Mounts {
-				c.Mounts[i].Source = "<root>"
-			}
-			for k := range c.Environment {
-				if strings.Contains(k, "PASSWORD") {
-					c.Environment[k] = "<secret>"
-				}
-			}
 		}
 		return containers
 	}
@@ -319,5 +309,44 @@ environment:
 	}
 	if got := strings.Join(names, ","); got != "db,redis,mailpit,php,nginx,node" {
 		t.Errorf("service order = %s", got)
+	}
+}
+
+func TestFileRoutes_WrittenAndRemovedPerProject(t *testing.T) {
+	orch := NewOrchestrator(newMockEngine())
+	orch.SetEnv(hostenv.Host(t.TempDir()))
+	certMgr, err := orch.CertManager()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := certMgr.TraefikDir()
+	routes := []*appruntime.FileRoute{
+		{Name: "shop-1234abcd", Hosts: []string{"shop.localhost"}, URL: "http://host.docker.internal:3000"},
+		{Name: "shop-1234abcd-api", Hosts: []string{"api.shop.localhost"}, URL: "http://host.docker.internal:8000"},
+	}
+	if err := orch.writeFileRoutes("shop-1234abcd", routes); err != nil {
+		t.Fatal(err)
+	}
+	// Another project's route must survive this project's cleanup.
+	other := filepath.Join(dir, "route-shopx-99999999.yml")
+	if err := os.WriteFile(other, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"route-shop-1234abcd.yml", "route-shop-1234abcd-api.yml"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Errorf("%s not written: %v", name, err)
+		}
+	}
+	if err := orch.writeFileRoutes("shop-1234abcd", nil); err != nil {
+		t.Fatal(err)
+	}
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "route-shop-1234abcd") {
+			t.Errorf("stale route left behind: %s", e.Name())
+		}
+	}
+	if _, err := os.Stat(other); err != nil {
+		t.Error("another project's route was removed")
 	}
 }

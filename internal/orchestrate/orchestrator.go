@@ -6,7 +6,9 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -18,6 +20,7 @@ import (
 	"github.com/supreme-majesty/supreme-local-dev/internal/hostenv"
 	"github.com/supreme-majesty/supreme-local-dev/internal/project"
 	"github.com/supreme-majesty/supreme-local-dev/internal/reconcile"
+	appruntime "github.com/supreme-majesty/supreme-local-dev/internal/runtime"
 	"github.com/supreme-majesty/supreme-local-dev/internal/secret"
 	"github.com/supreme-majesty/supreme-local-dev/internal/tls"
 )
@@ -33,12 +36,17 @@ const (
 	// Default image tags
 	RouterImageTag = "2"
 	NginxImageTag  = "1"
+
+	// Third-party images used for built-in services and runtimes.
+	StaticImage  = "nginx:1.27-alpine"
+	MailpitImage = "axllent/mailpit:v1.31.2"
 )
 
 // Orchestrator manages the lifecycle of Docker containers for SLD projects.
 type Orchestrator struct {
 	engine             docker.EngineClient
 	env                *hostenv.Env
+	buildLog           io.Writer // image build output (nil = discard)
 	healthTimeout      time.Duration
 	healthPollInterval time.Duration
 }
@@ -72,6 +80,9 @@ func (o *Orchestrator) SetEnv(env *hostenv.Env) {
 	}
 	o.env = env
 }
+
+// SetBuildLog sets where image build output is written (nil discards it).
+func (o *Orchestrator) SetBuildLog(w io.Writer) { o.buildLog = w }
 
 // CertManager returns the TLS manager for SLD's data directory.
 func (o *Orchestrator) CertManager() (*tls.Manager, error) {
@@ -151,6 +162,8 @@ func (o *Orchestrator) EnsureGlobalInfra(ctx context.Context) error {
 			o.env.PublishPort(o.env.HTTPSPort(), "443"),
 		},
 		Networks: []string{GlobalNetwork},
+		// Lets file routes (proxy runtime) reach processes on the host.
+		ExtraHosts: []string{"host.docker.internal:host-gateway"},
 		// The Docker socket path is resolved on the Docker host, which is what Traefik needs.
 		Volumes: []string{"/var/run/docker.sock:/var/run/docker.sock:ro"},
 		Mounts:  []reconcile.Mount{certMount, dynMount},
@@ -200,7 +213,8 @@ func (o *Orchestrator) RecreateRouter(ctx context.Context) error {
 	return o.EnsureGlobalInfra(ctx)
 }
 
-// StartProject starts all containers defined by the project spec.
+// StartProject reconciles a project's containers, image builds and routes
+// with its configuration.
 func (o *Orchestrator) StartProject(ctx context.Context, spec *ProjectSpec) error {
 	id := spec.Identity
 
@@ -213,14 +227,11 @@ func (o *Orchestrator) StartProject(ctx context.Context, spec *ProjectSpec) erro
 	if err != nil {
 		return fmt.Errorf("failed to build network labels: %w", err)
 	}
-
-	projectNetID, err := o.engine.EnsureNetwork(ctx, id.NetworkName(), netLabels)
-	if err != nil {
+	if _, err := o.engine.EnsureNetwork(ctx, id.NetworkName(), netLabels); err != nil {
 		return fmt.Errorf("failed to ensure project network: %w", err)
 	}
-	_ = projectNetID
 
-	// 1b. Per-project TLS certificate (browsers reject *.localhost / *.test wildcards).
+	// 2. Per-project TLS certificate (browsers reject *.localhost / *.test wildcards).
 	if spec.Config.Domain.TLS {
 		certMgr, err := o.CertManager()
 		if err != nil {
@@ -231,44 +242,58 @@ func (o *Orchestrator) StartProject(ctx context.Context, spec *ProjectSpec) erro
 		}
 	}
 
-	// 2. Build desired container specs (ordered by dependency: DB/Redis/Mailpit -> PHP -> Nginx -> Node)
-	desired, err := o.buildDesiredContainers(spec)
+	// 3. Plan services and apps
+	plan, err := o.planProject(spec)
 	if err != nil {
 		return fmt.Errorf("failed to build desired state: %w", err)
 	}
 
-	// 3. Ensure volumes
-	if err := o.ensureProjectVolumes(ctx, spec); err != nil {
+	// 4. Build images for dockerfile apps. The image ID becomes a label so a
+	// rebuilt image changes the container's spec hash and recreates it.
+	for _, b := range plan.builds {
+		imageID, err := o.buildImage(ctx, b)
+		if err != nil {
+			return fmt.Errorf("app %q: %w", b.App, err)
+		}
+		for _, c := range plan.containers {
+			if c.Labels[docker.LabelApp] == b.App && c.Image == b.Tag {
+				c.Labels[docker.LabelImageID] = imageID
+				finalizeContainer(c)
+			}
+		}
+	}
+
+	// 5. Volumes
+	if err := o.ensureVolumes(ctx, spec, plan.volumes); err != nil {
 		return fmt.Errorf("failed to ensure volumes: %w", err)
 	}
 
-	// 4. Get current actual state
+	// 6. Reconcile containers in dependency order
 	actual, err := o.engine.ListProjectContainers(ctx, id.ID)
 	if err != nil {
 		return fmt.Errorf("failed to list existing containers: %w", err)
 	}
-
-	actualMap := make(map[string]*reconcile.ActualContainer)
+	actualMap := make(map[string]*reconcile.ActualContainer, len(actual))
 	for _, a := range actual {
 		actualMap[a.Name] = a
 	}
-
-	// 5. Compute and apply plan in dependency order, verifying health checks
-	plan := reconcile.ComputeContainerPlan(desired, actualMap)
-
-	for _, p := range plan {
+	for _, p := range reconcile.ComputeContainerPlan(plan.containers, actualMap) {
 		containerID, err := o.applyPlan(ctx, p)
 		if err != nil {
 			return fmt.Errorf("failed to apply plan for %s: %w", p.ResourceName, err)
 		}
-		if containerID != "" && (p.Action == reconcile.ActionCreate || p.Action == reconcile.ActionStart || p.Action == reconcile.ActionRecreate) {
+		if containerID == "" || p.Desired == nil || p.Desired.SkipHealthWait {
+			continue
+		}
+		if p.Action == reconcile.ActionCreate || p.Action == reconcile.ActionStart || p.Action == reconcile.ActionRecreate {
 			if err := o.waitForHealthy(ctx, containerID, p.ResourceName); err != nil {
 				return err
 			}
 		}
 	}
 
-	return nil
+	// 7. File-based routes (proxy runtime), replacing any from a previous start.
+	return o.writeFileRoutes(id.ID, plan.routes)
 }
 
 // DestroyProject tears down all containers, the project network, and optionally persistent volumes.
@@ -308,7 +333,7 @@ func (o *Orchestrator) DestroyProject(ctx context.Context, identity *project.Ide
 	return nil
 }
 
-// StopProject stops and removes all containers for a project.
+// StopProject stops and removes all containers and routes of a project.
 func (o *Orchestrator) StopProject(ctx context.Context, projectID string) error {
 	containers, err := o.engine.ListProjectContainers(ctx, projectID)
 	if err != nil {
@@ -326,7 +351,7 @@ func (o *Orchestrator) StopProject(ctx context.Context, projectID string) error 
 		}
 	}
 
-	return nil
+	return o.writeFileRoutes(projectID, nil)
 }
 
 // ProjectStatus returns the current state of all containers belonging to a project.
@@ -334,256 +359,198 @@ func (o *Orchestrator) ProjectStatus(ctx context.Context, projectID string) ([]*
 	return o.engine.ListProjectContainers(ctx, projectID)
 }
 
-// buildDesiredContainers produces the full list of desired containers for a project
-// in strict startup dependency order: auxiliary services (DB, Redis, Mailpit) -> PHP -> Nginx -> Node.
-func (o *Orchestrator) buildDesiredContainers(spec *ProjectSpec) ([]*reconcile.DesiredContainer, error) {
-	var containers []*reconcile.DesiredContainer
-	cfg := spec.Config
-
-	phpApp, nodeApp, err := engineApps(cfg)
-	if err != nil {
-		return nil, err
-	}
-	if cfg.Services.Database.Shared != "" {
-		return nil, fmt.Errorf("services.database.shared: shared database servers are not available in this SLD version yet; use 'type' for a dedicated database container")
-	}
-
-	// --- Database Container ---
-	if cfg.Services.Database.Type != "" {
-		dbDesired, err := o.buildDatabase(spec)
-		if err != nil {
-			return nil, err
-		}
-		containers = append(containers, dbDesired)
-	}
-
-	// --- Redis Container ---
-	if cfg.Services.Redis.Enabled {
-		redisDesired, err := o.buildRedis(spec)
-		if err != nil {
-			return nil, err
-		}
-		containers = append(containers, redisDesired)
-	}
-
-	// --- Mailpit Container ---
-	if cfg.Services.Mailpit.Enabled {
-		mailpitDesired, err := o.buildMailpit(spec)
-		if err != nil {
-			return nil, err
-		}
-		containers = append(containers, mailpitDesired)
-	}
-
-	// --- PHP Container ---
-	phpDesired, err := o.buildPHP(spec, phpApp)
-	if err != nil {
-		return nil, err
-	}
-	containers = append(containers, phpDesired)
-
-	// --- Nginx Container ---
-	nginxDesired, err := o.buildNginx(spec, phpApp)
-	if err != nil {
-		return nil, err
-	}
-	containers = append(containers, nginxDesired)
-
-	// --- Node Dev Server Container ---
-	if nodeApp != nil {
-		nodeDesired, err := o.buildNode(spec, nodeApp)
-		if err != nil {
-			return nil, err
-		}
-		containers = append(containers, nodeDesired)
-	}
-
-	return containers, nil
+// projectPlan is everything needed to bring a project up.
+type projectPlan struct {
+	containers []*reconcile.DesiredContainer // in start order
+	volumes    []string                      // extra named volumes (dependency caches)
+	builds     []*appruntime.Build
+	routes     []*appruntime.FileRoute
 }
 
-// engineApps maps a project's apps onto the container layout this engine can
-// run: one PHP app (PHP-FPM + nginx) plus at most one Node dev server. Other
-// runtimes are valid configuration but need the runtime drivers (Phase 15 M3).
-// CheckEngineSupport reports whether this engine can start cfg (see engineApps).
+// CheckEngineSupport reports configuration this SLD version cannot start yet.
 func CheckEngineSupport(cfg *config.Config) error {
-	if _, _, err := engineApps(cfg); err != nil {
-		return err
-	}
 	if cfg.Services.Database.Shared != "" {
-		return fmt.Errorf("shared database servers are not available in this SLD version yet")
+		return fmt.Errorf("services.database.shared: shared database servers are not available in this SLD version yet; use 'type' for a dedicated database container")
 	}
 	return nil
 }
 
-func engineApps(cfg *config.Config) (php, node *config.App, err error) {
-	for i := range cfg.Apps {
-		app := &cfg.Apps[i]
-		switch {
-		case app.Runtime == config.RuntimePHP && php == nil:
-			php = app
-		case app.Runtime == config.RuntimeNode && node == nil:
-			node = app
-		default:
-			return nil, nil, fmt.Errorf("app %q (runtime %s) cannot run in this SLD version yet: "+
-				"the engine currently supports one php app plus one node dev server", app.Name, app.Runtime)
-		}
+// buildDesiredContainers returns the project's containers in start order:
+// services (database, Redis, Mailpit) first, then apps in config order.
+func (o *Orchestrator) buildDesiredContainers(spec *ProjectSpec) ([]*reconcile.DesiredContainer, error) {
+	plan, err := o.planProject(spec)
+	if err != nil {
+		return nil, err
 	}
-	if php == nil {
-		return nil, nil, fmt.Errorf("this SLD version needs a php app to start a project (other runtimes are coming with runtime drivers)")
-	}
-	return php, node, nil
+	return plan.containers, nil
 }
 
-// buildPHP creates the PHP-FPM container spec.
-func (o *Orchestrator) buildPHP(spec *ProjectSpec, app *config.App) (*reconcile.DesiredContainer, error) {
-	id := spec.Identity
+func (o *Orchestrator) planProject(spec *ProjectSpec) (*projectPlan, error) {
 	cfg := spec.Config
-
-	phpImage := fmt.Sprintf("%s/sld-php:%s", ImageRegistry, app.Version)
-
-	labels, err := docker.BuildContainerLabels(docker.LabelParams{
-		ProjectID:     id.ID,
-		CanonicalPath: id.CanonicalPath,
-		ConfigHash:    spec.ConfigHash,
-		Service:       docker.ServicePHP,
-	})
-	if err != nil {
+	if err := CheckEngineSupport(cfg); err != nil {
 		return nil, err
 	}
+	plan := &projectPlan{}
 
-	appMount, err := o.env.MountFor(spec.ProjectRoot, "/app", false)
-	if err != nil {
-		return nil, err
-	}
-
-	uid, gid := o.ProjectOwner(spec.ProjectRoot)
-	env := map[string]string{
-		"WWWUSER":  uid,
-		"WWWGROUP": gid,
-	}
-
-	// Xdebug
-	if app.Xdebug {
-		env["XDEBUG_MODE"] = "debug"
-	} else {
-		env["XDEBUG_MODE"] = "off"
-	}
-
-	// Inject user-defined environment variables
-	for k, v := range cfg.Environment {
-		env[k] = v
-	}
-
-	// If database configured, inject connection vars
+	// --- Services ---
 	if cfg.Services.Database.Type != "" {
-		dbPass, err := secret.GetOrGenerate(spec.ProjectRoot, "db_password", 16)
+		db, err := o.buildDatabase(spec)
+		if err != nil {
+			return nil, err
+		}
+		plan.containers = append(plan.containers, db)
+	}
+	if cfg.Services.Redis.Enabled {
+		redis, err := o.buildRedis(spec)
+		if err != nil {
+			return nil, err
+		}
+		plan.containers = append(plan.containers, redis)
+	}
+	if cfg.Services.Mailpit.Enabled {
+		mail, err := o.buildMailpit(spec)
+		if err != nil {
+			return nil, err
+		}
+		plan.containers = append(plan.containers, mail)
+	}
+
+	// --- Apps ---
+	serviceEnv, err := o.serviceEnv(spec)
+	if err != nil {
+		return nil, err
+	}
+	uid, gid := o.ProjectOwner(spec.ProjectRoot)
+	rctx := &appruntime.Context{
+		Identity:       spec.Identity,
+		Config:         cfg,
+		ProjectRoot:    spec.ProjectRoot,
+		Env:            o.env,
+		UID:            uid,
+		GID:            gid,
+		ProjectNetwork: spec.Identity.NetworkName(),
+		GlobalNetwork:  GlobalNetwork,
+		ServiceEnv:     serviceEnv,
+		PHPImage:       func(v string) string { return fmt.Sprintf("%s/sld-php:%s", ImageRegistry, v) },
+		NginxImage:     fmt.Sprintf("%s/sld-nginx:%s", ImageRegistry, NginxImageTag),
+		StaticImage:    StaticImage,
+	}
+	for i := range cfg.Apps {
+		appPlan, err := appruntime.PlanApp(rctx, &cfg.Apps[i])
+		if err != nil {
+			return nil, err
+		}
+		plan.containers = append(plan.containers, appPlan.Containers...)
+		plan.volumes = append(plan.volumes, appPlan.Volumes...)
+		if appPlan.Build != nil {
+			plan.builds = append(plan.builds, appPlan.Build)
+		}
+		if appPlan.Route != nil {
+			plan.routes = append(plan.routes, appPlan.Route)
+		}
+	}
+
+	for _, c := range plan.containers {
+		finalizeContainer(c)
+	}
+	return plan, nil
+}
+
+// finalizeContainer stamps a container with the hash of its own spec. A
+// container is recreated exactly when its spec changes, so editing one app
+// leaves the project's other containers running (ADR 0006).
+func finalizeContainer(c *reconcile.DesiredContainer) {
+	delete(c.Labels, docker.LabelConfigHash)
+	c.ConfigHash = specHash(c)
+	c.Labels[docker.LabelConfigHash] = c.ConfigHash
+}
+
+// serviceEnv returns the connection variables apps use to reach the project's
+// services, in both Laravel-style (DB_HOST, ...) and URL form (DATABASE_URL, ...).
+func (o *Orchestrator) serviceEnv(spec *ProjectSpec) (map[string]string, error) {
+	id, cfg := spec.Identity, spec.Config
+	env := map[string]string{}
+
+	if db := cfg.Services.Database; db.Type != "" {
+		pass, err := secret.GetOrGenerate(spec.ProjectRoot, "db_password", 16)
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate DB password: %w", err)
 		}
-
-		dbHost := id.DBContainerName()
-		dbName := cfg.Name
-		dbUser := cfg.Name
-
-		env["DB_CONNECTION"] = resolveDBConnection(cfg.Services.Database.Type)
-		env["DB_HOST"] = dbHost
-		env["DB_PORT"] = resolveDBPort(cfg.Services.Database.Type)
-		env["DB_DATABASE"] = dbName
-		env["DB_USERNAME"] = dbUser
-		env["DB_PASSWORD"] = dbPass
+		host, port, name, user := id.DBContainerName(), resolveDBPort(db.Type), cfg.Name, cfg.Name
+		env["DB_CONNECTION"] = resolveDBConnection(db.Type)
+		env["DB_HOST"] = host
+		env["DB_PORT"] = port
+		env["DB_DATABASE"] = name
+		env["DB_USERNAME"] = user
+		env["DB_PASSWORD"] = pass
+		scheme := "mysql"
+		if resolveDBConnection(db.Type) == "pgsql" {
+			scheme = "postgresql"
+		}
+		u := url.URL{Scheme: scheme, User: url.UserPassword(user, pass), Host: host + ":" + port, Path: "/" + name}
+		env["DATABASE_URL"] = u.String()
 	}
-
-	// Redis connection
 	if cfg.Services.Redis.Enabled {
 		env["REDIS_HOST"] = id.RedisContainerName()
 		env["REDIS_PORT"] = "6379"
-		env["CACHE_DRIVER"] = "redis"
-		env["SESSION_DRIVER"] = "redis"
+		env["REDIS_URL"] = "redis://" + id.RedisContainerName() + ":6379"
 	}
-
-	// Mail connection
 	if cfg.Services.Mailpit.Enabled {
 		env["MAIL_MAILER"] = "smtp"
-		env["MAIL_HOST"] = fmt.Sprintf("sld-%s-mailpit", id.ID)
+		env["MAIL_HOST"] = id.MailpitContainerName()
 		env["MAIL_PORT"] = "1025"
+		env["SMTP_HOST"] = id.MailpitContainerName()
+		env["SMTP_PORT"] = "1025"
 	}
-
-	return &reconcile.DesiredContainer{
-		Name:        id.PHPContainerName(),
-		Service:     docker.ServicePHP,
-		Image:       phpImage,
-		ConfigHash:  spec.ConfigHash,
-		WorkingDir:  "/app",
-		Labels:      labels,
-		Environment: env,
-		Networks:    []string{id.NetworkName()},
-		ExtraHosts:  []string{"host.docker.internal:host-gateway"},
-		Mounts:      []reconcile.Mount{appMount},
-	}, nil
+	return env, nil
 }
 
-// buildNginx creates the Nginx sidecar container spec.
-func (o *Orchestrator) buildNginx(spec *ProjectSpec, app *config.App) (*reconcile.DesiredContainer, error) {
-	id := spec.Identity
-	cfg := spec.Config
-
-	nginxImage := fmt.Sprintf("%s/sld-nginx:%s", ImageRegistry, NginxImageTag)
-
-	labels, err := docker.BuildContainerLabels(docker.LabelParams{
-		ProjectID:     id.ID,
-		CanonicalPath: id.CanonicalPath,
-		ConfigHash:    spec.ConfigHash,
-		Service:       docker.ServiceNginx,
+// buildImage builds a dockerfile app's image, streaming the build log.
+func (o *Orchestrator) buildImage(ctx context.Context, b *appruntime.Build) (string, error) {
+	builder, ok := o.engine.(docker.Builder)
+	if !ok {
+		return "", fmt.Errorf("docker engine does not support image builds")
+	}
+	fmt.Printf("[SLD] Building image for app %q (%s)...\n", b.App, b.Tag)
+	return builder.BuildImage(ctx, docker.BuildOptions{
+		ContextDir: b.ContextDir,
+		Dockerfile: b.Dockerfile,
+		Target:     b.Target,
+		BuildArgs:  b.BuildArgs,
+		Tag:        b.Tag,
+		Output:     o.buildLog,
 	})
+}
+
+// writeFileRoutes replaces a project's Traefik file routes with routes.
+func (o *Orchestrator) writeFileRoutes(projectID string, routes []*appruntime.FileRoute) error {
+	certMgr, err := o.CertManager()
 	if err != nil {
-		return nil, err
+		return err
 	}
-
-	appMount, err := o.env.MountFor(spec.ProjectRoot, "/app", true)
+	dir := certMgr.TraefikDir()
+	// Files are route-<router>.yml; router names are "<id>" or "<id>-<app>".
+	belongs := func(name string) bool {
+		return name == "route-"+projectID+".yml" || strings.HasPrefix(name, "route-"+projectID+"-")
+	}
+	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("failed to read router config: %w", err)
 	}
-
-	// Traefik routing labels for dynamic discovery
-	domain := app.Domain
-	if domain == "" {
-		domain = cfg.Domain.Name
+	for _, e := range entries {
+		if belongs(e.Name()) {
+			if err := os.Remove(filepath.Join(dir, e.Name())); err != nil {
+				return fmt.Errorf("failed to remove stale route %s: %w", e.Name(), err)
+			}
+		}
 	}
-	if domain == "" {
-		domain = fmt.Sprintf("%s.%s", id.Slug, config.DefaultTLD())
+	for _, r := range routes {
+		path := filepath.Join(dir, "route-"+r.Name+".yml")
+		if err := os.WriteFile(path, []byte(appruntime.RenderFileRoute(r)), 0o644); err != nil {
+			return fmt.Errorf("failed to write route %s: %w", r.Name, err)
+		}
 	}
-	rule := hostRule(domain)
-	if app == cfg.PrimaryApp() {
-		rule = hostRule(append([]string{domain}, cfg.Domain.Aliases...)...)
-	}
-
-	labels["traefik.enable"] = "true"
-	labels["traefik.docker.network"] = GlobalNetwork
-	labels["traefik.http.routers."+id.ID+".rule"] = rule
-	labels["traefik.http.routers."+id.ID+".entrypoints"] = "web"
-	labels["traefik.http.services."+id.ID+".loadbalancer.server.port"] = "80"
-
-	if cfg.Domain.TLS {
-		labels["traefik.http.routers."+id.ID+"-secure.rule"] = rule
-		labels["traefik.http.routers."+id.ID+"-secure.entrypoints"] = "websecure"
-		labels["traefik.http.routers."+id.ID+"-secure.tls"] = "true"
-	}
-
-	env := map[string]string{
-		"WEB_ROOT": app.WebRoot,
-		"PHP_HOST": id.PHPContainerName(),
-	}
-
-	return &reconcile.DesiredContainer{
-		Name:        id.NginxContainerName(),
-		Service:     docker.ServiceNginx,
-		Image:       nginxImage,
-		ConfigHash:  spec.ConfigHash,
-		Labels:      labels,
-		Environment: env,
-		Networks:    []string{id.NetworkName(), GlobalNetwork},
-		Mounts:      []reconcile.Mount{appMount},
-	}, nil
+	return nil
 }
 
 // buildDatabase creates the database container spec (MySQL, MariaDB, or PostgreSQL).
@@ -667,95 +634,44 @@ func (o *Orchestrator) buildRedis(spec *ProjectSpec) (*reconcile.DesiredContaine
 	}, nil
 }
 
-// buildMailpit creates the Mailpit container spec.
+// buildMailpit creates the Mailpit container spec; its UI is served on mail.<domain>.
 func (o *Orchestrator) buildMailpit(spec *ProjectSpec) (*reconcile.DesiredContainer, error) {
 	id := spec.Identity
 
-	mailpitName := fmt.Sprintf("sld-%s-mailpit", id.ID)
 	labels, err := docker.BuildContainerLabels(docker.LabelParams{
 		ProjectID:     id.ID,
 		CanonicalPath: id.CanonicalPath,
-		ConfigHash:    spec.ConfigHash,
 		Service:       "mailpit",
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	// Expose Mailpit UI via Traefik
-	mailDomain := fmt.Sprintf("mail.%s", spec.Config.Domain.Name)
+	// App routers are "<id>-<app>" and app names start with a letter, so "--" cannot collide.
+	router := id.ID + "--mailpit"
+	rule := appruntime.HostRule("mail." + spec.Config.Domain.Name)
 	labels["traefik.enable"] = "true"
 	labels["traefik.docker.network"] = GlobalNetwork
-	labels["traefik.http.routers."+id.ID+"-mail.rule"] = fmt.Sprintf("Host(`%s`)", mailDomain)
-	labels["traefik.http.routers."+id.ID+"-mail.entrypoints"] = "web"
-	labels["traefik.http.services."+id.ID+"-mail.loadbalancer.server.port"] = "8025"
-
-	return &reconcile.DesiredContainer{
-		Name:       mailpitName,
-		Service:    "mailpit",
-		Image:      "axllent/mailpit:latest",
-		ConfigHash: spec.ConfigHash,
-		Labels:     labels,
-		Networks:   []string{id.NetworkName(), GlobalNetwork},
-	}, nil
-}
-
-// buildNode creates a managed Node dev server container spec.
-func (o *Orchestrator) buildNode(spec *ProjectSpec, app *config.App) (*reconcile.DesiredContainer, error) {
-	id := spec.Identity
-
-	nodeVersion := app.Version
-	if nodeVersion == "" {
-		nodeVersion = config.DefaultVersions[config.RuntimeNode]
-	}
-	nodeImage := fmt.Sprintf("node:%s-bookworm-slim", nodeVersion)
-
-	labels, err := docker.BuildContainerLabels(docker.LabelParams{
-		ProjectID:     id.ID,
-		CanonicalPath: id.CanonicalPath,
-		ConfigHash:    spec.ConfigHash,
-		Service:       docker.ServiceNode,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	var ports []string
-	if app.ExposePort > 0 {
-		ports = []string{o.env.PublishPort(app.ExposePort, strconv.Itoa(app.Port))}
-	}
-
-	appMount, err := o.env.MountFor(spec.ProjectRoot, "/app", false)
-	if err != nil {
-		return nil, err
-	}
-
-	nodeCmd := strings.TrimSpace(app.Command)
-	if nodeCmd == "" {
-		nodeCmd = "npm run dev"
-	}
-
-	env := map[string]string{
-		"SLD_NODE_CMD": nodeCmd,
+	labels["traefik.http.routers."+router+".rule"] = rule
+	labels["traefik.http.routers."+router+".entrypoints"] = "web"
+	labels["traefik.http.services."+router+".loadbalancer.server.port"] = "8025"
+	if spec.Config.Domain.TLS {
+		labels["traefik.http.routers."+router+"-secure.rule"] = rule
+		labels["traefik.http.routers."+router+"-secure.entrypoints"] = "websecure"
+		labels["traefik.http.routers."+router+"-secure.tls"] = "true"
 	}
 
 	return &reconcile.DesiredContainer{
-		Name:        id.NodeContainerName(),
-		Service:     docker.ServiceNode,
-		Image:       nodeImage,
-		ConfigHash:  spec.ConfigHash,
-		WorkingDir:  "/app",
-		Cmd:         []string{"sh", "-c", nodeCmd},
-		Labels:      labels,
-		Environment: env,
-		Ports:       ports,
-		Networks:    []string{id.NetworkName()},
-		Mounts:      []reconcile.Mount{appMount},
+		Name:     id.MailpitContainerName(),
+		Service:  "mailpit",
+		Image:    MailpitImage,
+		Labels:   labels,
+		Networks: []string{id.NetworkName(), GlobalNetwork},
 	}, nil
 }
 
-// ensureProjectVolumes creates required named volumes for the project.
-func (o *Orchestrator) ensureProjectVolumes(ctx context.Context, spec *ProjectSpec) error {
+// ensureVolumes creates the project's named volumes: database, Redis and app dependency caches.
+func (o *Orchestrator) ensureVolumes(ctx context.Context, spec *ProjectSpec, extra []string) error {
 	id := spec.Identity
 	cfg := spec.Config
 
@@ -768,20 +684,18 @@ func (o *Orchestrator) ensureProjectVolumes(ctx context.Context, spec *ProjectSp
 		return err
 	}
 
-	// Database volume
+	names := append([]string(nil), extra...)
 	if cfg.Services.Database.Type != "" {
-		if _, err := o.engine.EnsureVolume(ctx, id.DBVolumeName(), volLabels); err != nil {
-			return fmt.Errorf("failed to ensure DB volume: %w", err)
-		}
+		names = append(names, id.DBVolumeName())
 	}
-
-	// Redis volume
 	if cfg.Services.Redis.Enabled {
-		if _, err := o.engine.EnsureVolume(ctx, id.RedisVolumeName(), volLabels); err != nil {
-			return fmt.Errorf("failed to ensure Redis volume: %w", err)
+		names = append(names, id.RedisVolumeName())
+	}
+	for _, name := range names {
+		if _, err := o.engine.EnsureVolume(ctx, name, volLabels); err != nil {
+			return fmt.Errorf("failed to ensure volume %s: %w", name, err)
 		}
 	}
-
 	return nil
 }
 
@@ -963,17 +877,6 @@ func (o *Orchestrator) ProjectOwner(projectRoot string) (string, string) {
 // ProjectTLSHosts lists the host names a project's certificate must cover.
 func ProjectTLSHosts(cfg *config.Config) []string {
 	return cfg.Hostnames()
-}
-
-// hostRule builds a Traefik rule matching any of hosts.
-func hostRule(hosts ...string) string {
-	parts := make([]string, 0, len(hosts))
-	for _, h := range hosts {
-		if h != "" {
-			parts = append(parts, fmt.Sprintf("Host(`%s`)", h))
-		}
-	}
-	return strings.Join(parts, " || ")
 }
 
 // specHash fingerprints the parts of a container spec that require recreation.

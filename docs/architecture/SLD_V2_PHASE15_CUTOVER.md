@@ -260,12 +260,43 @@ What landed:
 - **Version 1 upgrade:** version 1 files are upgraded in memory (`runtime.php` → `apps.web`, `node.dev_server` → `apps.vite`, `node.version` → `tools.node`). `sld v2 config migrate` rewrites the file and keeps `config.v1.yaml.bak`, and `init-project` now writes version 2.
 - **Guard test:** a version 1 file and its migrated version 2 file produce identical container specs.
 
-Engine note: until M3, `start` runs one `php` app plus one `node` dev server, as before. Other runtimes and shared databases validate, but `config validate` warns that they cannot be started yet, and `start` explains why.
+Engine note (superseded by M3): until M3, `start` ran one `php` app plus one `node` dev server. Shared databases still validate but cannot be started until M5.
 
 Original scope:
 - `App` type, per-runtime validation, v1 upgrader, `config migrate`, golden tests.
 
-### M3 — Runtime drivers *(4–6 days)*
+### M3 — Runtime drivers *(4–6 days)* — implemented 2026-11-20
+
+What landed:
+- **`internal/runtime`:** one driver per runtime.
+  - `php`: PHP-FPM plus an nginx sidecar.
+  - `static`: stock `nginx:1.27-alpine`.
+  - `node`/`python`/`ruby`/`go`: dependencies install into a per-app volume when the lockfile changes, then the process drops from root to the developer's UID with `setpriv`. User commands are passed through environment variables and are never spliced into the script.
+  - `image`, `dockerfile`: built through the SDK, honouring `.dockerignore`. The image ID becomes a label, so a rebuild recreates the container.
+  - `proxy`: a Traefik file route to `host.docker.internal`, removed on stop.
+- **Container names** are `sld-<id>-<app>[-<role>]`. The primary app keeps the bare `<id>` router name, and the Mailpit router is `<id>--mailpit`.
+- **Per-container spec hash** (ADR 0006): editing or adding one app leaves the other containers running. This was verified live.
+- **Service URLs:** apps get `DATABASE_URL`, `REDIS_URL` and `SMTP_*` alongside the Laravel-style variables.
+- **CLI:**
+  - `exec`, `shell` and `logs` take app names, and `logs` reads stopped containers and splits stdout/stderr.
+  - New passthroughs: `python`, `pip`, `bundle`, `rails`, `go`, `npx`.
+  - `npm` runs inside the Node app when one is running, where `node_modules` lives.
+  - `start` prints one URL per app.
+
+Verified end to end on Docker Desktop 29.8 with SLD in a container:
+- `static`, `node` (healthy, `npm install` in its volume), `python` (venv), `dockerfile` (build argument applied) and `proxy` (to the dashboard on host port 2025) were all served on their own `*.localhost` names.
+- Processes and `exec` ran as UID 1000.
+- Adding two apps did not recreate the existing three.
+- `stop` removed the proxy route, and `destroy --volumes` removed the dependency volumes.
+
+Upgrade effect: existing projects are recreated once (new names and spec hashes). Database and Redis volumes are kept.
+
+Follow-ups:
+- `destroy` does not remove images built for `dockerfile` apps.
+- `bun` is not supported as a package manager yet.
+- Ruby `-slim` images lack build tools for native gems; detection (M4) should offer the full image.
+
+Original scope:
 - §5.2. The PHP driver must produce **identical** specs for upgraded v1 configs, so existing projects aren't recreated.
 - `static` template in `sld-nginx`.
 
