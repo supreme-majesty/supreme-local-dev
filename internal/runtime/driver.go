@@ -65,6 +65,7 @@ type AppPlan struct {
 	Volumes    []string // named volumes that must exist (dependency caches)
 	Build      *Build
 	Route      *FileRoute
+	Compose    *ComposeStack // compose runtime: the project's own stack
 }
 
 // Driver plans the containers for apps of one runtime.
@@ -82,6 +83,7 @@ var drivers = map[string]Driver{
 	config.RuntimeImage:      imageDriver{},
 	config.RuntimeDockerfile: imageDriver{build: true},
 	config.RuntimeProxy:      proxyDriver{},
+	config.RuntimeCompose:    composeDriver{},
 }
 
 // For returns the driver for a runtime.

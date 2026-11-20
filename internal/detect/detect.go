@@ -62,18 +62,18 @@ func (p *proj) note(format string, args ...any) {
 // itself is not an app (a monorepo with backend/, frontend/, ...), each
 // first-level sub-directory is detected as its own app with `path:` set.
 func Project(root string, opts Options) (*Result, error) {
-	name := filepath.Base(root)
+	name := ProjectName(root)
 	cfg := &config.Config{
 		Version: config.CurrentVersion,
 		Name:    name,
-		Domain:  config.DomainConfig{Name: fmt.Sprintf("%s.%s", project.Slugify(name), config.DefaultTLD())},
+		Domain:  config.DomainConfig{Name: fmt.Sprintf("%s.%s", project.DomainLabel(name), config.DefaultTLD())},
 	}
 	var notes []string
 
 	apps := detectDir(&proj{root: root, pkg: readPackageJSON(root), notes: &notes}, cfg)
 	if len(apps) == 0 {
 		apps = detectSubdirs(root, cfg, &notes)
-	} else {
+	} else if !isCompose(apps) {
 		detectServicesFromEnv(&proj{root: root, notes: &notes}, cfg)
 	}
 
@@ -101,7 +101,7 @@ func Project(root string, opts Options) (*Result, error) {
 // app; a Dockerfile or static files are fallbacks.
 func detectDir(p *proj, cfg *config.Config) []config.App {
 	for _, detector := range []func(*proj, *config.Config) []config.App{
-		detectPHP, detectNode, detectPython, detectRuby, detectGo,
+		detectCompose, detectPHP, detectNode, detectPython, detectRuby, detectGo,
 	} {
 		if found := detector(p, cfg); len(found) > 0 {
 			return found
@@ -153,7 +153,9 @@ func detectSubdirs(root string, cfg *config.Config, notes *[]string) []config.Ap
 		if len(found) == 0 {
 			continue
 		}
-		detectServicesFromEnv(p, cfg)
+		if !isCompose(found) {
+			detectServicesFromEnv(p, cfg)
+		}
 		base := appName(dir)
 		for _, app := range found {
 			name := base
@@ -654,4 +656,10 @@ func displayVersion(v string) string {
 		return "default"
 	}
 	return v
+}
+
+// isCompose reports whether apps come from a project's own compose stack,
+// which brings its own database and cache services.
+func isCompose(apps []config.App) bool {
+	return len(apps) > 0 && apps[0].Runtime == config.RuntimeCompose
 }

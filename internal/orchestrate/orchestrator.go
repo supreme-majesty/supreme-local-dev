@@ -292,7 +292,14 @@ func (o *Orchestrator) StartProject(ctx context.Context, spec *ProjectSpec) erro
 		}
 	}
 
-	// 7. File-based routes (proxy runtime), replacing any from a previous start.
+	// 7. The project's own compose stacks, with SLD's override.
+	for _, stack := range plan.composeStacks {
+		if err := o.upComposeStack(ctx, spec, stack); err != nil {
+			return err
+		}
+	}
+
+	// 8. File-based routes (proxy runtime), replacing any from a previous start.
 	return o.writeFileRoutes(id.ID, plan.routes)
 }
 
@@ -341,6 +348,10 @@ func (o *Orchestrator) StopProject(ctx context.Context, projectID string) error 
 	}
 
 	for _, c := range containers {
+		// Compose-managed containers are stopped through docker compose (StopComposeStacks).
+		if c.Labels[docker.LabelRuntime] == "compose" {
+			continue
+		}
 		if c.State == "running" {
 			if err := o.engine.StopContainer(ctx, c.ID, 10); err != nil {
 				return fmt.Errorf("failed to stop %s: %w", c.Name, err)
@@ -361,10 +372,11 @@ func (o *Orchestrator) ProjectStatus(ctx context.Context, projectID string) ([]*
 
 // projectPlan is everything needed to bring a project up.
 type projectPlan struct {
-	containers []*reconcile.DesiredContainer // in start order
-	volumes    []string                      // extra named volumes (dependency caches)
-	builds     []*appruntime.Build
-	routes     []*appruntime.FileRoute
+	containers    []*reconcile.DesiredContainer // in start order
+	volumes       []string                      // extra named volumes (dependency caches)
+	builds        []*appruntime.Build
+	routes        []*appruntime.FileRoute
+	composeStacks []*appruntime.ComposeStack // projects' own compose stacks
 }
 
 // CheckEngineSupport reports configuration this SLD version cannot start yet.
@@ -448,7 +460,12 @@ func (o *Orchestrator) planProject(spec *ProjectSpec) (*projectPlan, error) {
 		if appPlan.Route != nil {
 			plan.routes = append(plan.routes, appPlan.Route)
 		}
+		if appPlan.Compose != nil {
+			plan.composeStacks = append(plan.composeStacks, appPlan.Compose)
+		}
 	}
+
+	plan.composeStacks = mergeComposeStacks(plan.composeStacks)
 
 	for _, c := range plan.containers {
 		finalizeContainer(c)

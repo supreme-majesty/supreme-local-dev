@@ -207,3 +207,17 @@ func (i *Identity) AppImageTag(app string) string {
 func (i *Identity) MailpitContainerName() string {
 	return fmt.Sprintf("sld-%s-mailpit", i.ID)
 }
+
+// DomainLabel turns a project name into a DNS label (lowercase letters, digits
+// and hyphens, at most 63 characters). Unlike Slugify it is not shortened to
+// 20 characters, so domains keep the full project name.
+func DomainLabel(name string) string {
+	label := strings.Trim(multipleHyphensRegex.ReplaceAllString(nonAlphaNumericRegex.ReplaceAllString(strings.ToLower(name), "-"), "-"), "-")
+	if label == "" {
+		return "project"
+	}
+	if len(label) > 63 {
+		label = strings.Trim(label[:63], "-")
+	}
+	return label
+}

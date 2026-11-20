@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 	"github.com/supreme-majesty/supreme-local-dev/internal/docker"
@@ -265,6 +266,33 @@ it needs, and writes .sld/config.yaml.`,
 	initProjectCmd.Flags().StringVar(&initRuntime, "runtime", "", "Only keep apps of this runtime (php, node, python, ruby, go, dockerfile, static)")
 	initProjectCmd.Flags().BoolVar(&initDryRun, "dry-run", false, "Print the detected configuration without writing it")
 	v2Cmd.AddCommand(initProjectCmd)
+
+	// --- sld v2 scan ---
+	var scanWrite bool
+	scanCmd := &cobra.Command{
+		Use:   "scan [dir]",
+		Short: "Find every project under a folder and propose (or --write) its .sld/config.yaml",
+		Long: `Finds projects under a workspace folder (git repositories, folders with an SLD
+config, or with their own docker compose stack), detects each one's stack and
+shows the domain it will get. Group folders such as "laravel-builds" are searched
+inside. With --write, .sld/config.yaml is created for projects that do not have
+one; existing configs are never changed.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			dir := "."
+			if len(args) > 0 {
+				dir = args[0]
+			}
+			results, err := Scan(dir, scanWrite)
+			if err != nil {
+				return err
+			}
+			abs, _ := filepath.Abs(dir)
+			PrintScan(abs, results, scanWrite)
+			return nil
+		},
+	}
+	scanCmd.Flags().BoolVar(&scanWrite, "write", false, "Create .sld/config.yaml for detected projects that have none")
+	v2Cmd.AddCommand(scanCmd)
 
 	// --- sld v2 logs ---
 	var followLogs bool

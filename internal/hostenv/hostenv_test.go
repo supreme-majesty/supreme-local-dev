@@ -239,3 +239,21 @@ func TestRouterPortsAndSiteURL(t *testing.T) {
 		t.Errorf("invalid SLD_HTTP_PORT should fall back to 80, got %d", env.HTTPPort())
 	}
 }
+
+func TestMirrorMount(t *testing.T) {
+	env := containerEnv()
+	m, target, err := env.MirrorMount("/win/site", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Source != `C:\Users\dev\Code\site` || target != "/run/desktop/mnt/host/c/Users/dev/Code/site" || m.Target != target {
+		t.Errorf("windows mirror: source=%q target=%q", m.Source, target)
+	}
+	m, target, err = env.MirrorMount("/workspace/shop", true)
+	if err != nil || target != "/home/dev/Projects/shop" || m.Source != "/home/dev/Projects/shop" || !m.ReadOnly {
+		t.Errorf("linux mirror: %+v %q %v", m, target, err)
+	}
+	if _, _, err := env.MirrorMount("/data/x", false); err == nil {
+		t.Error("volume-backed paths cannot be mirrored")
+	}
+}

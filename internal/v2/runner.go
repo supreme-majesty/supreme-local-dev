@@ -233,6 +233,9 @@ func (r *Runner) Stop(ctx context.Context, projectRoot string) error {
 		}
 	}
 
+	if err := r.stopComposeStacks(ctx, projectRoot, identity, false, false); err != nil {
+		return err
+	}
 	if err := r.orch.StopProject(ctx, identity.ID); err != nil {
 		return fmt.Errorf("failed to stop project: %w", err)
 	}
@@ -249,7 +252,8 @@ func (r *Runner) Destroy(ctx context.Context, projectRoot string, removeVolumes,
 	}
 
 	if removeVolumes && !skipConfirm {
-		fmt.Printf("⚠️  This will permanently delete database and Redis volumes for %s (%s).\n", identity.Slug, identity.ID)
+		fmt.Printf("⚠️  This will permanently delete the data volumes of %s (%s): SLD databases and Redis,\n", identity.Slug, identity.ID)
+		fmt.Println("   and for compose apps every volume of the project's own stack (docker compose down --volumes).")
 		fmt.Print("Type 'yes' to confirm: ")
 		reader := bufio.NewReader(os.Stdin)
 		answer, _ := reader.ReadString('\n')
@@ -260,6 +264,9 @@ func (r *Runner) Destroy(ctx context.Context, projectRoot string, removeVolumes,
 	}
 
 	fmt.Printf("[SLD] Destroying project %s (%s)...\n", identity.Slug, identity.ID)
+	if err := r.stopComposeStacks(ctx, projectRoot, identity, true, removeVolumes); err != nil {
+		return err
+	}
 	if err := r.orch.DestroyProject(ctx, identity, removeVolumes); err != nil {
 		return fmt.Errorf("failed to destroy project: %w", err)
 	}
@@ -1173,4 +1180,28 @@ func printServicesSummary(cfg *config.Config) {
 	}
 
 	fmt.Printf("[SLD] Services: %s\n", strings.Join(services, " • "))
+}
+
+// stopComposeStacks stops or removes the project's own compose stacks, if its
+// config has compose apps. Projects without a readable config are skipped.
+func (r *Runner) stopComposeStacks(ctx context.Context, projectRoot string, identity *project.Identity, down, removeVolumes bool) error {
+	cfg, data, err := loadProjectConfig(projectRoot)
+	if err != nil || len(cfg.AppsByRuntime(config.RuntimeCompose)) == 0 {
+		return nil
+	}
+	absRoot, err := filepath.Abs(projectRoot)
+	if err != nil {
+		return err
+	}
+	verb := "Stopping"
+	if down {
+		verb = "Removing"
+	}
+	fmt.Printf("[SLD] %s compose stack(s) with docker compose...\n", verb)
+	return r.orch.StopComposeStacks(ctx, &orchestrate.ProjectSpec{
+		Identity:    identity,
+		Config:      cfg,
+		ConfigHash:  config.ComputeConfigHash(data),
+		ProjectRoot: absRoot,
+	}, down, removeVolumes)
 }

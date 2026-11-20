@@ -355,3 +355,28 @@ func containerIDFromMountinfo(sc *bufio.Scanner) string {
 	}
 	return ""
 }
+
+// MirrorMount mounts localPath into a helper container at the path the Docker
+// daemon itself uses for that directory, and returns that path. Tools that
+// pass host paths to the daemon (docker compose resolving `./src:/var/www`)
+// then produce paths the daemon can bind-mount:
+//
+//	Linux/macOS:            /home/me/app -> /home/me/app
+//	Windows Docker Desktop: C:\Users\me\app -> /run/desktop/mnt/host/c/Users/me/app
+func (e *Env) MirrorMount(localPath string, readOnly bool) (reconcile.Mount, string, error) {
+	hostPath, err := e.HostPath(localPath)
+	if err != nil {
+		return reconcile.Mount{}, "", err
+	}
+	target := MirrorPath(hostPath)
+	return reconcile.Mount{Type: reconcile.MountTypeBind, Source: hostPath, Target: target, ReadOnly: readOnly}, target, nil
+}
+
+// MirrorPath is the Linux path under which the Docker daemon sees hostPath.
+func MirrorPath(hostPath string) string {
+	norm := project.NormalizeHostPath(hostPath)
+	if len(norm) >= 2 && norm[1] == ':' {
+		return "/run/desktop/mnt/host/" + norm[:1] + norm[2:]
+	}
+	return norm
+}

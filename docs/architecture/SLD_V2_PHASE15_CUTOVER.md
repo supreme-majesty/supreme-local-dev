@@ -327,6 +327,31 @@ Follow-ups:
 Original scope:
 - §5.3 with fixtures per framework.
 
+### M4b — Existing Docker Compose projects — implemented 2026-11-20
+
+Decision (2026-11-20): projects that already have their own compose stack run **as-is** through it, not converted to SLD runtimes. A stack in a sub-folder is named after the main project folder (`sunport-apps/backend` → `sunport.localhost`).
+
+What landed:
+- **`runtime: compose`** (fields: `service`, `port`, `path`, `compose_files`, `keep_ports`). SLD runs the project's compose files plus a generated override kept in `<data>/compose/`, outside the repo. The override:
+  - removes every published host port, so stacks no longer collide on 80/3306/6379/... (`keep_ports: true` opts out);
+  - adds SLD labels to all services;
+  - joins the routed service(s) to `sld-global` with Traefik labels while keeping their own networks.
+  
+  The compose project name is unchanged, so existing volumes and data are reused.
+- **Compose runs in a `docker:27.5.1-cli` helper container.** The project is mounted at the path the daemon uses (`hostenv.MirrorMount`; `/run/desktop/mnt/host/c/...` on Docker Desktop for Windows), so relative bind mounts resolve to real host paths. Neither the host nor the SLD image needs a docker CLI.
+- **Lifecycle:** `stop` → `docker compose stop`; `destroy` → `docker compose down`, plus `--volumes` only with `--volumes` (the warning names the stack's volumes).
+- **Detection:** a compose file wins over framework detection. The web service(s) come from published ports; databases, caches, admin and backup tools are excluded, and nginx/web/app are ranked first. Project names come from the main folder, with generic folders (`backend`, `api`, ...) taking their parent's name and group suffixes (`-apps`, `-builds`, `-projects`) dropped. Domains are no longer cut to 20 characters.
+- **`sld v2 scan [dir] [--write]`** finds every project (git roots, SLD configs, compose stacks), searches group folders up to 3 levels deep, honours `.sldignore`, and never overwrites existing configs.
+- **PHP constraints:** `>=7.4` → 8.4, and `>=8.1 <8.4` → 8.3.
+
+Verified:
+- A read-only scan of `Documents/Development` found 18 projects. Each compose stack resolved to the service and port its running containers use today.
+- A live fixture (stack in `backend/`, relative bind mount, published ports) was served on `demo.localhost` from the bind-mounted folder, with ports removed, the project name kept and the database left unrouted; `stop` and `destroy` worked.
+
+Follow-ups:
+- `start` returns a few seconds before Traefik picks up new containers.
+- Projects not yet started under SLD keep binding their own ports and can still block the router's port 80.
+
 ### M5 — Control plane rebuild (`sld serve`) *(7–10 days)*
 - Auth (D2), registry (D3), and replacing the V1 internals of each API group:
 

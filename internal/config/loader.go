@@ -124,7 +124,7 @@ func ApplyDefaults(cfg *Config, defaultName string) {
 		}
 	}
 	if cfg.Domain.Name == "" {
-		cfg.Domain.Name = fmt.Sprintf("%s.%s", project.Slugify(cfg.Name), DefaultTLD())
+		cfg.Domain.Name = fmt.Sprintf("%s.%s", project.DomainLabel(cfg.Name), DefaultTLD())
 	}
 
 	for i := range cfg.Apps {
@@ -299,7 +299,10 @@ func validateApp(path string, app *App, fail func(string, ...any)) {
 	only(app.PackageManager != "", "package_manager", RuntimeNode)
 	only(app.Command != "", "command", RuntimeNode, RuntimePython, RuntimeRuby, RuntimeGo, RuntimeImage, RuntimeDockerfile)
 	only(app.Install != "", "install", RuntimeNode, RuntimePython, RuntimeRuby, RuntimeGo)
-	only(app.Port != 0, "port", RuntimeNode, RuntimePython, RuntimeRuby, RuntimeGo, RuntimeImage, RuntimeDockerfile, RuntimeProxy)
+	only(app.Port != 0, "port", RuntimeNode, RuntimePython, RuntimeRuby, RuntimeGo, RuntimeImage, RuntimeDockerfile, RuntimeProxy, RuntimeCompose)
+	only(app.Service != "", "service", RuntimeCompose)
+	only(len(app.ComposeFiles) > 0, "compose_files", RuntimeCompose)
+	only(app.KeepPorts, "keep_ports", RuntimeCompose)
 	only(app.Version != "", "version", RuntimePHP, RuntimeNode, RuntimePython, RuntimeRuby, RuntimeGo)
 
 	switch rt {
@@ -330,6 +333,18 @@ func validateApp(path string, app *App, fail func(string, ...any)) {
 	case RuntimeProxy:
 		if app.Port == 0 {
 			fail("%s.port: required for runtime proxy (the port your app listens on, on the host)", path)
+		}
+	case RuntimeCompose:
+		if app.Service == "" {
+			fail("%s.service: required for runtime compose (the service that serves HTTP, e.g. nginx)", path)
+		}
+		if app.Port == 0 {
+			fail("%s.port: required for runtime compose (the port the service listens on inside its container)", path)
+		}
+		for i, f := range app.ComposeFiles {
+			if filepath.IsAbs(f) || strings.HasPrefix(filepath.ToSlash(filepath.Clean(f)), "../") {
+				fail("%s.compose_files[%d]: %q must be a path inside the app directory", path, i, f)
+			}
 		}
 	}
 
@@ -399,6 +414,26 @@ func ResolvePHPConstraint(constraint string) (string, error) {
 		}
 	}
 
+	// ">=X.Y" (optionally with an upper bound) allows the newest supported
+	// version as long as that version is inside the range.
+	if m := minConstraint.FindStringSubmatch(c); m != nil {
+		minimum := m[1] + "." + m[2]
+		upper := "" // exclusive upper bound, e.g. "<8.4"
+		if u := maxConstraint.FindStringSubmatch(c); u != nil {
+			upper = u[1] + ".0"
+			if u[2] != "" {
+				upper = u[1] + "." + u[2]
+			}
+		}
+		for i := len(SupportedPHPVersions) - 1; i >= 0; i-- {
+			v := SupportedPHPVersions[i]
+			if !versionLess(v, minimum) && (upper == "" || versionLess(v, upper)) {
+				return v, nil
+			}
+		}
+		return "", fmt.Errorf("project requires PHP %s, but SLD V2 only supports PHP %s", c, strings.Join(SupportedPHPVersions, ", "))
+	}
+
 	// Greater-than / range expressions
 	if strings.Contains(c, ">=8.2") || strings.Contains(c, ">= 8.2") {
 		return "8.4", nil // highest supported compatible version
@@ -424,3 +459,16 @@ func ComputeConfigHash(data []byte) string {
 	hasher.Write(data)
 	return hex.EncodeToString(hasher.Sum(nil))
 }
+
+// versionLess compares "major.minor" versions numerically.
+func versionLess(a, b string) bool {
+	var amaj, amin, bmaj, bmin int
+	fmt.Sscanf(a, "%d.%d", &amaj, &amin)
+	fmt.Sscanf(b, "%d.%d", &bmaj, &bmin)
+	return amaj < bmaj || (amaj == bmaj && amin < bmin)
+}
+
+var (
+	minConstraint = regexp.MustCompile(`^>=\s*(\d+)\.(\d+)`)
+	maxConstraint = regexp.MustCompile(`<\s*(\d+)(?:\.(\d+))?`)
+)

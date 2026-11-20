@@ -22,12 +22,13 @@ const (
 	RuntimeImage      = "image"
 	RuntimeDockerfile = "dockerfile"
 	RuntimeProxy      = "proxy"
+	RuntimeCompose    = "compose" // the project's own docker compose stack
 )
 
 // Runtimes lists every supported runtime, in documentation order.
 var Runtimes = []string{
 	RuntimePHP, RuntimeStatic, RuntimeNode, RuntimePython, RuntimeRuby,
-	RuntimeGo, RuntimeImage, RuntimeDockerfile, RuntimeProxy,
+	RuntimeGo, RuntimeImage, RuntimeDockerfile, RuntimeProxy, RuntimeCompose,
 }
 
 // Config is the desired state of a project, defined in .sld/config.yaml.
@@ -75,6 +76,9 @@ type App struct {
 	BuildArgs      map[string]string `yaml:"build_args,omitempty"`      // dockerfile runtime
 	Domain         string            `yaml:"domain,omitempty"`          // default: root domain (first app) or <app>.<root domain>
 	Healthcheck    string            `yaml:"healthcheck,omitempty"`     // HTTP path checked for readiness, e.g. "/health"
+	Service        string            `yaml:"service,omitempty"`         // compose: the service that serves HTTP for this app
+	ComposeFiles   []string          `yaml:"compose_files,omitempty"`   // compose: files to use (default: compose.yaml + its override, like docker compose)
+	KeepPorts      bool              `yaml:"keep_ports,omitempty"`      // compose: keep the stack's published host ports (default: removed to avoid clashes)
 	Environment    map[string]string `yaml:"environment,omitempty"`     // app-specific variables (merged over project environment)
 }
 
