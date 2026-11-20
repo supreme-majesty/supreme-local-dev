@@ -45,4 +45,4 @@ HEALTHCHECK --interval=15s --timeout=3s --start-period=10s --retries=5 \
     CMD curl -fsS http://127.0.0.1:2025/api/health || exit 1
 
 ENTRYPOINT ["sld"]
-CMD ["daemon"]
+CMD ["serve"]

@@ -7,6 +7,9 @@ services:
       dockerfile: Dockerfile
     image: sld:local
     init: true
+    # The control plane: dashboard + API behind token auth. The admin token is
+    # printed once in `docker compose logs app` on first start.
+    command: ["serve"]
     security_opt:
       - no-new-privileges:true
     ports:
@@ -27,9 +30,15 @@ services:
       REDIS_PORT: "6379"
       MAIL_HOST: mailpit
       MAIL_PORT: "1025"
+      # Router host ports (keep 80/443 unless another project already uses them).
+      SLD_HTTP_PORT: ${SLD_HTTP_PORT:-80}
+      SLD_HTTPS_PORT: ${SLD_HTTPS_PORT:-443}
+      SLD_WORKSPACES: /workspace
     volumes:
       - sld-state:/home/sld/.sld
       - /var/run/docker.sock:/var/run/docker.sock
+      # Your projects folder (default: the folder that contains this repository).
+      - ${SLD_WORKSPACE:-..}:/workspace
     # Docker Desktop socket is root:root mode 660; join gid 0 so local container discovery works.
     group_add:
       - "0"
