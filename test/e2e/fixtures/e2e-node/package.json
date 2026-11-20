@@ -1,0 +1,5 @@
+{
+  "name": "e2e-node",
+  "private": true,
+  "scripts": { "dev": "node server.js" }
+}

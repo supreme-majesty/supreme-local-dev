@@ -1,0 +1,12 @@
+# Proves the compose runtime: a project's own stack in a sub-folder, a relative
+# bind mount, and a published host port that SLD must remove.
+name: e2e-compose-backend
+services:
+  web:
+    image: nginx:1.27-alpine
+    ports:
+      - "${E2E_WEB_PORT:-18099}:80"
+    volumes:
+      - ./html:/usr/share/nginx/html:ro
+  cache:
+    image: redis:7-alpine

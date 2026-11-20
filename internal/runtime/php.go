@@ -82,6 +82,14 @@ func (staticDriver) Plan(ctx *Context, app *config.App) (*AppPlan, error) {
 	if err != nil {
 		return nil, err
 	}
+	mounts := []reconcile.Mount{webRoot}
+	if ctx.StaticConfig != nil {
+		conf, err := ctx.StaticConfig()
+		if err != nil {
+			return nil, err
+		}
+		mounts = append(mounts, conf)
+	}
 	labels, err := appLabels(ctx, app, "web")
 	if err != nil {
 		return nil, err
@@ -93,6 +101,6 @@ func (staticDriver) Plan(ctx *Context, app *config.App) (*AppPlan, error) {
 		Image:    ctx.StaticImage,
 		Labels:   labels,
 		Networks: []string{ctx.ProjectNetwork, ctx.GlobalNetwork},
-		Mounts:   []reconcile.Mount{webRoot},
+		Mounts:   mounts,
 	}}}, nil
 }

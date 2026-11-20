@@ -273,7 +273,7 @@ func buildComposeOverride(spec *ProjectSpec, stack *appruntime.ComposeStack, res
 			for _, n := range existing {
 				add(nets, n, mapping())
 			}
-			add(nets, "sld-global", mapping())
+			add(nets, GlobalNetwork, mapping())
 			add(svc, "networks", nets)
 		}
 		add(services, name, svc)
@@ -285,7 +285,7 @@ func buildComposeOverride(spec *ProjectSpec, stack *appruntime.ComposeStack, res
 	add(external, "name", str(GlobalNetwork))
 	add(external, "external", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "true"})
 	networks := mapping()
-	add(networks, "sld-global", external)
+	add(networks, GlobalNetwork, external)
 	add(root, "networks", networks)
 
 	var buf bytes.Buffer

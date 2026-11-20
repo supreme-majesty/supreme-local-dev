@@ -451,7 +451,21 @@ Original scope:
 - Release workflow: image tags; drop `.deb`/`.pkg`/`.msi`, systemd units, `postinst`. Ship a final 2.2.x host binary for `legacy migrate` (D5).
 - Makefile: replace `park`/`link`/`daemon` targets with `docker-*` and `dev` targets.
 
-### M8 — Phase 14 E2E in container mode *(3 days)*
+### M8 — Phase 14 E2E in container mode *(3 days)* — implemented 2026-11-20
+
+What landed:
+- **`scripts/e2e.sh`** (`make e2e`) runs an SLD image with `serve` against `test/e2e/fixtures` (static, node, python, dockerfile, compose-in-a-subfolder, plus php with `E2E_PHP=1`). It drives everything through `/api/v2`: discovery → setup → start → request the domain through the router → destroy → no containers left. It also checks the auth gates, unprivileged app users, compose host-port removal and that static sites do not serve `.git`.
+- **Isolation:** the test runs beside a real SLD installation without touching it. The router and shared network names are configurable (`SLD_ROUTER_CONTAINER`, `SLD_GLOBAL_NETWORK`), and the test uses its own data volume.
+- **CI:** `.github/workflows/e2e.yml` builds the router, nginx, PHP 8.3 and SLD images and runs the suite with PHP on pushes and PRs. It is blocked, like every workflow, by the GitHub billing lock.
+
+Fixes found by the tests:
+- **Unused networks:** compose-only projects created an unused SLD project network. Docker Desktop's network address pool is small (~31), and this machine ran out ("all predefined address pools have been fully subnetted"). Project networks are now created only when SLD runs containers of its own, and leftovers are removed on start.
+- **Unreachable right after start:** a project could be "started" while Traefik had not yet picked it up (first request 404, sometimes for over a minute). `start` now waits, up to 90 s, until the router serves each domain (`Orchestrator.WaitForRoutes`).
+- **Hidden files served:** static sites served hidden files (`.git/`, `.sld/`) with stock nginx's config. They now use an SLD-managed config that refuses dotfiles, except `.well-known/`.
+
+Verified locally: 37/37 checks on two consecutive runs (without PHP: the SLD PHP images are not built on this machine).
+
+Original scope:
 - CI job: build the image, run it with a temp workspace, then for each fixture (Laravel, static, Next.js, Vite, FastAPI, Django, Rails, Go, Dockerfile, proxy) call the API to register, start, `curl` through the router, create a DB, run a query, stop and destroy.
 - Same suite on `ubuntu-latest` and on a Docker Desktop–style path layout (fixture for C1).
 - Gate for M9.

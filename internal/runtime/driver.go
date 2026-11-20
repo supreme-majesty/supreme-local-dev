@@ -38,6 +38,9 @@ type Context struct {
 	PHPImage    func(version string) string
 	NginxImage  string
 	StaticImage string
+	// StaticConfig returns a mount of the nginx config used by static apps (it
+	// refuses hidden files such as .git and .env).
+	StaticConfig func() (reconcile.Mount, error)
 }
 
 // Build describes an image to build from the project before containers start.

@@ -1,7 +1,7 @@
 .PHONY: build build-fast frontend run install update update-fast clean \
         restart refresh status park forget link unlink paths links logs daemon \
         docker-config docker-up docker-up-pg docker-app docker-stop docker-down docker-logs docker-build docker-ps docker-shell docker-clean \
-        docker-images docker-image-app docker-image-router docker-image-nginx docker-image-php \n        test serve docker-token
+        docker-images docker-image-app docker-image-router docker-image-nginx docker-image-php \n        test serve docker-token e2e
 
 BINARY_NAME=sld
 MAIN_PATH=./cmd/sld
@@ -54,6 +54,11 @@ install:
 # Run the engine tests
 test:
 	go test ./internal/...
+
+# End-to-end test of an SLD image against fixture projects (uses its own router
+# and network, so it can run next to a real SLD). Usage: make e2e [SLD_IMAGE=sld:local]
+e2e:
+	SLD_IMAGE=$(or $(SLD_IMAGE),sld:local) bash scripts/e2e.sh
 
 # Build and run the V2 control plane (dashboard + API with token auth) in the foreground
 serve: build

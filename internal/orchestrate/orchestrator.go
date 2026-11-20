@@ -29,10 +29,6 @@ const (
 	// Image Registry
 	ImageRegistry = "ghcr.io/supreme-majesty"
 
-	// Global Resources
-	GlobalNetwork   = "sld-global"
-	RouterContainer = "sld-router"
-
 	// Default image tags
 	RouterImageTag = "2"
 	NginxImageTag  = "1"
@@ -41,6 +37,20 @@ const (
 	StaticImage  = "nginx:1.27-alpine"
 	MailpitImage = "axllent/mailpit:v1.31.2"
 )
+
+// Shared resources. Overridable so a second SLD instance (such as the end-to-end
+// tests) can run beside a real one without taking over its router.
+var (
+	GlobalNetwork   = envOr("SLD_GLOBAL_NETWORK", "sld-global")
+	RouterContainer = envOr("SLD_ROUTER_CONTAINER", "sld-router")
+)
+
+func envOr(name, fallback string) string {
+	if v := strings.TrimSpace(os.Getenv(name)); v != "" {
+		return v
+	}
+	return fallback
+}
 
 // Orchestrator manages the lifecycle of Docker containers for SLD projects.
 type Orchestrator struct {
@@ -218,20 +228,33 @@ func (o *Orchestrator) RecreateRouter(ctx context.Context) error {
 func (o *Orchestrator) StartProject(ctx context.Context, spec *ProjectSpec) error {
 	id := spec.Identity
 
-	// 1. Ensure project network
-	netLabels, err := docker.BuildNetworkLabels(docker.LabelParams{
-		ProjectID:     id.ID,
-		CanonicalPath: id.CanonicalPath,
-		ConfigHash:    spec.ConfigHash,
-	})
+	// 1. Plan services and apps
+	plan, err := o.planProject(spec)
 	if err != nil {
-		return fmt.Errorf("failed to build network labels: %w", err)
-	}
-	if _, err := o.engine.EnsureNetwork(ctx, id.NetworkName(), netLabels); err != nil {
-		return fmt.Errorf("failed to ensure project network: %w", err)
+		return fmt.Errorf("failed to build desired state: %w", err)
 	}
 
-	// 2. Per-project TLS certificate (browsers reject *.localhost / *.test wildcards).
+	// 2. Project network — only when SLD runs containers of its own. Compose
+	// stacks bring their own networks, and Docker's pool of network address
+	// ranges is small, so an unused network is not created.
+	if len(plan.containers) > 0 {
+		netLabels, err := docker.BuildNetworkLabels(docker.LabelParams{
+			ProjectID:     id.ID,
+			CanonicalPath: id.CanonicalPath,
+			ConfigHash:    spec.ConfigHash,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to build network labels: %w", err)
+		}
+		if _, err := o.engine.EnsureNetwork(ctx, id.NetworkName(), netLabels); err != nil {
+			return fmt.Errorf("failed to ensure project network: %w", err)
+		}
+	} else if err := o.engine.RemoveNetwork(ctx, id.NetworkName()); err != nil {
+		// Drop the unused network an earlier SLD version created.
+		return fmt.Errorf("failed to remove unused project network: %w", err)
+	}
+
+	// 3. Per-project TLS certificate (browsers reject *.localhost / *.test wildcards).
 	if spec.Config.Domain.TLS {
 		certMgr, err := o.CertManager()
 		if err != nil {
@@ -240,12 +263,6 @@ func (o *Orchestrator) StartProject(ctx context.Context, spec *ProjectSpec) erro
 		if _, err := certMgr.EnsureCert(id.ID, ProjectTLSHosts(spec.Config)); err != nil {
 			return fmt.Errorf("failed to issue TLS certificate: %w", err)
 		}
-	}
-
-	// 3. Plan services and apps
-	plan, err := o.planProject(spec)
-	if err != nil {
-		return fmt.Errorf("failed to build desired state: %w", err)
 	}
 
 	// 4. Build images for dockerfile apps. The image ID becomes a label so a
@@ -451,6 +468,7 @@ func (o *Orchestrator) planProject(spec *ProjectSpec) (*projectPlan, error) {
 		PHPImage:       func(v string) string { return fmt.Sprintf("%s/sld-php:%s", ImageRegistry, v) },
 		NginxImage:     fmt.Sprintf("%s/sld-nginx:%s", ImageRegistry, NginxImageTag),
 		StaticImage:    StaticImage,
+		StaticConfig:   o.staticNginxConfig,
 	}
 	for i := range cfg.Apps {
 		appPlan, err := appruntime.PlanApp(rctx, &cfg.Apps[i])

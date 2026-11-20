@@ -191,6 +191,20 @@ func (r *Runner) Start(ctx context.Context, projectRoot string) error {
 		return fmt.Errorf("failed to start project: %w", err)
 	}
 
+	// Wait until the router serves the project, so "running" means reachable.
+	var hosts []string
+	for _, app := range cfg.Apps {
+		if app.Domain != "" {
+			hosts = append(hosts, app.Domain)
+		}
+	}
+	if len(hosts) > 0 {
+		fmt.Fprintln(r.w(), "[SLD] Waiting for the router to serve the project...")
+		if unrouted := r.orch.WaitForRoutes(ctx, hosts, 90*time.Second); len(unrouted) > 0 {
+			fmt.Fprintf(r.w(), "[SLD] ⚠️  Not reachable yet: %s (the app may still be starting; check its logs)\n", strings.Join(unrouted, ", "))
+		}
+	}
+
 	// 7. Ensure local DNS resolution for every served host name
 	for _, host := range cfg.Hostnames() {
 		r.ensureProjectDomainDNS(host)

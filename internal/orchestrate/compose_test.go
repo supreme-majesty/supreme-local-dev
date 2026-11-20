@@ -132,3 +132,37 @@ func TestStartProject_LeavesComposeContainersAlone(t *testing.T) {
 		t.Error("obsolete SLD containers should still be removed")
 	}
 }
+
+// TestStartProject_ComposeOnlyCreatesNoProjectNetwork: compose stacks bring
+// their own networks; SLD must not spend one of Docker's limited address pools.
+func TestStartProject_ComposeOnlyCreatesNoProjectNetwork(t *testing.T) {
+	engine := newMockEngine()
+	orch, projectRoot := containerOrchestrator(t, engine)
+	id, err := orch.Env().ProjectIdentity(projectRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine.networks[id.NetworkName()] = "leftover" // created by an earlier SLD version
+	spec := &ProjectSpec{
+		Identity: id,
+		Config: &config.Config{Version: 2, Name: "shop", Domain: config.DomainConfig{Name: "shop.localhost"},
+			Apps: config.Apps{{Name: "web", Runtime: config.RuntimeCompose, Service: "nginx", Port: 80, ComposeFiles: []string{"compose.yaml"}}}},
+		ProjectRoot: projectRoot,
+	}
+	plan, err := orch.planProject(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.containers) != 0 || len(plan.composeStacks) != 1 {
+		t.Fatalf("plan: %d containers, %d stacks", len(plan.containers), len(plan.composeStacks))
+	}
+	// StartProject would run docker compose next (needs a real engine); the
+	// network decision happens before that, so check it via the mock.
+	_ = orch.StartProject(context.Background(), spec)
+	if _, exists := engine.networks[id.NetworkName()]; exists {
+		t.Error("compose-only project must not keep an SLD project network")
+	}
+	if !slices.Contains(engine.removedNetworks, id.NetworkName()) {
+		t.Error("the unused network left by an earlier version should be removed")
+	}
+}

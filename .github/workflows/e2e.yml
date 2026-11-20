@@ -1,0 +1,48 @@
+name: End-to-end
+
+# Runs the SLD image against fixture projects (static, node, python, php,
+# dockerfile, docker compose) through the same API the dashboard uses.
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    name: Projects of every stack
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build router image
+        run: docker build -t ghcr.io/supreme-majesty/sld-router:2 docker/router
+
+      - name: Build PHP runtime images (8.3)
+        run: |
+          docker build -t ghcr.io/supreme-majesty/sld-nginx:1 docker/nginx
+          docker build --build-arg PHP_VERSION=8.3 -t ghcr.io/supreme-majesty/sld-php:8.3 docker/php
+
+      - name: Build SLD image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          load: true
+          tags: sld:e2e
+          build-args: VERSION=e2e-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run end-to-end tests
+        env:
+          SLD_IMAGE: sld:e2e
+          E2E_PHP: "1"
+        run: bash scripts/e2e.sh
