@@ -21,7 +21,8 @@ import (
 )
 
 type Server struct {
-	Port int
+	Port  int
+	roots []string // folders that path-taking routes may touch; see WithRoots
 }
 
 func NewServer(port int) *Server {
@@ -183,6 +184,9 @@ func (s *Server) handleProjectFiles(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, ErrorResponse{Error: "path is required"}, 400)
 		return
 	}
+	if !s.allowPath(w, path) {
+		return
+	}
 
 	d, _ := daemon.GetClient()
 	files, err := d.ProjectManager.ListFiles(path)
@@ -197,6 +201,9 @@ func (s *Server) handleProjectFileContent(w http.ResponseWriter, r *http.Request
 	path := r.URL.Query().Get("path")
 	if path == "" {
 		jsonResponse(w, ErrorResponse{Error: "path is required"}, 400)
+		return
+	}
+	if !s.allowPath(w, path) {
 		return
 	}
 
@@ -220,6 +227,9 @@ func (s *Server) handleProjectFileSave(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
+		return
+	}
+	if !s.allowPath(w, req.Path) {
 		return
 	}
 
@@ -250,6 +260,9 @@ func (s *Server) handleSystemOpenEditor(w http.ResponseWriter, r *http.Request) 
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
+		return
+	}
+	if !s.allowPath(w, req.Path) {
 		return
 	}
 
@@ -1828,6 +1841,9 @@ func (s *Server) handleEnvFiles(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, ErrorResponse{Error: "project parameter required"}, 400)
 		return
 	}
+	if !s.allowPath(w, projectPath) {
+		return
+	}
 
 	d, _ := daemon.GetClient()
 	files, err := d.EnvManager.ListEnvFiles(projectPath)
@@ -1847,6 +1863,9 @@ func (s *Server) handleEnvRead(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
 	if path == "" {
 		jsonResponse(w, ErrorResponse{Error: "path parameter required"}, 400)
+		return
+	}
+	if !s.allowEnvFile(w, path) {
 		return
 	}
 
@@ -1873,6 +1892,9 @@ func (s *Server) handleEnvWrite(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
 		return
 	}
+	if !s.allowEnvFile(w, req.Path) {
+		return
+	}
 
 	d, _ := daemon.GetClient()
 	if err := d.EnvManager.WriteEnvFile(req.Path, req.Variables); err != nil {
@@ -1891,6 +1913,9 @@ func (s *Server) handleEnvBackups(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
 	if path == "" {
 		jsonResponse(w, ErrorResponse{Error: "path parameter required"}, 400)
+		return
+	}
+	if !s.allowEnvFile(w, path) {
 		return
 	}
 
@@ -1915,6 +1940,9 @@ func (s *Server) handleEnvRestore(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonResponse(w, ErrorResponse{Error: err.Error()}, 400)
+		return
+	}
+	if !s.allowEnvBackup(w, req.BackupPath, req.TargetPath) {
 		return
 	}
 
@@ -1945,6 +1973,9 @@ func (s *Server) handleArtisanRun(w http.ResponseWriter, r *http.Request) {
 
 	if req.ProjectPath == "" || req.Command == "" {
 		jsonResponse(w, ErrorResponse{Error: "project_path and command required"}, 400)
+		return
+	}
+	if !s.allowPath(w, req.ProjectPath) {
 		return
 	}
 

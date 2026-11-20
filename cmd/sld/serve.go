@@ -56,7 +56,7 @@ the SLD image, or the current folder on a host).`,
 			return err
 		}
 
-		mux := api.NewServer(2025).Mux() // dashboard, database manager, websocket
+		mux := api.NewServer(2025).WithRoots(workspaces).Mux() // dashboard, database manager, websocket
 		controlPlane := server.New(server.Options{
 			Engine: engine, Env: env, Auth: auth, Workspaces: workspaces, Version: Version,
 		})
