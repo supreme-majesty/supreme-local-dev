@@ -22,7 +22,7 @@ func (d imageDriver) Plan(ctx *Context, app *config.App) (*AppPlan, error) {
 
 	image := app.Image
 	if d.build {
-		contextDir := filepath.Join(ctx.ProjectRoot, filepath.FromSlash(app.Context))
+		contextDir := filepath.Join(AppRoot(ctx, app), filepath.FromSlash(app.Context))
 		image = id.AppImageTag(app.Name)
 		plan.Build = &Build{
 			App:        app.Name,
@@ -34,7 +34,7 @@ func (d imageDriver) Plan(ctx *Context, app *config.App) (*AppPlan, error) {
 		}
 	}
 
-	appMount, err := projectMount(ctx, "", "/app", false)
+	codeMount, err := appMount(ctx, app, "", "/app", false)
 	if err != nil {
 		return nil, err
 	}
@@ -53,7 +53,7 @@ func (d imageDriver) Plan(ctx *Context, app *config.App) (*AppPlan, error) {
 		Environment: appEnv(ctx, app, map[string]string{"PORT": fmt.Sprint(app.Port)}),
 		Networks:    []string{ctx.ProjectNetwork, ctx.GlobalNetwork},
 		ExtraHosts:  []string{"host.docker.internal:host-gateway"},
-		Mounts:      []reconcile.Mount{appMount},
+		Mounts:      []reconcile.Mount{codeMount},
 		// Images may run migrations or builds at start; don't block on them.
 		SkipHealthWait: true,
 	}

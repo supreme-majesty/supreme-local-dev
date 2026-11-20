@@ -150,12 +150,12 @@ func (d langDriver) Plan(ctx *Context, app *config.App) (*AppPlan, error) {
 	install := app.Install
 	if install == "" {
 		var err error
-		if install, err = d.spec.install(ctx.ProjectRoot, app); err != nil {
+		if install, err = d.spec.install(AppRoot(ctx, app), app); err != nil {
 			return nil, err
 		}
 	}
 
-	appMount, err := projectMount(ctx, "", "/app", false)
+	codeMount, err := appMount(ctx, app, "", "/app", false)
 	if err != nil {
 		return nil, err
 	}
@@ -179,7 +179,7 @@ func (d langDriver) Plan(ctx *Context, app *config.App) (*AppPlan, error) {
 	// Control variables come last so app environment cannot break the entrypoint.
 	env["SLD_UID"], env["SLD_GID"] = ctx.UID, ctx.GID
 	env["SLD_DEPS_DIR"] = d.spec.depsDir
-	env["SLD_DEPS_HASH"] = depsHash(ctx.ProjectRoot, d.spec.lockfiles, install)
+	env["SLD_DEPS_HASH"] = depsHash(AppRoot(ctx, app), d.spec.lockfiles, install)
 	env["SLD_PRELUDE"] = d.spec.prelude
 	env["SLD_INSTALL"] = install
 	env["SLD_COMMAND"] = app.Command
@@ -197,7 +197,7 @@ func (d langDriver) Plan(ctx *Context, app *config.App) (*AppPlan, error) {
 		Networks:    []string{ctx.ProjectNetwork, ctx.GlobalNetwork},
 		ExtraHosts:  []string{"host.docker.internal:host-gateway"},
 		Volumes:     []string{depsVolume + ":" + d.spec.depsDir},
-		Mounts:      []reconcile.Mount{appMount},
+		Mounts:      []reconcile.Mount{codeMount},
 		// Dependency installs can take minutes; don't block `sld start` on them.
 		SkipHealthWait: true,
 	}

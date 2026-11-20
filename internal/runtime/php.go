@@ -14,11 +14,11 @@ func (phpDriver) Plan(ctx *Context, app *config.App) (*AppPlan, error) {
 	id := ctx.Identity
 	phpName := id.AppContainerName(app.Name, docker.ServicePHP)
 
-	rwMount, err := projectMount(ctx, "", "/app", false)
+	rwMount, err := appMount(ctx, app, "", "/app", false)
 	if err != nil {
 		return nil, err
 	}
-	roMount, err := projectMount(ctx, "", "/app", true)
+	roMount, err := appMount(ctx, app, "", "/app", true)
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +78,7 @@ func (phpDriver) Plan(ctx *Context, app *config.App) (*AppPlan, error) {
 type staticDriver struct{}
 
 func (staticDriver) Plan(ctx *Context, app *config.App) (*AppPlan, error) {
-	webRoot, err := projectMount(ctx, app.WebRoot, "/usr/share/nginx/html", true)
+	webRoot, err := appMount(ctx, app, app.WebRoot, "/usr/share/nginx/html", true)
 	if err != nil {
 		return nil, err
 	}

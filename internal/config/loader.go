@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/supreme-majesty/supreme-local-dev/internal/project"
@@ -344,7 +345,7 @@ func validateApp(path string, app *App, fail func(string, ...any)) {
 	if app.ExposePort != 0 && !validPort(app.ExposePort) {
 		fail("%s.expose_port: %d is not a valid port", path, app.ExposePort)
 	}
-	for _, p := range []struct{ field, value string }{{"web_root", app.WebRoot}, {"context", app.Context}, {"dockerfile", app.Dockerfile}} {
+	for _, p := range []struct{ field, value string }{{"path", app.Path}, {"web_root", app.WebRoot}, {"context", app.Context}, {"dockerfile", app.Dockerfile}} {
 		if p.value != "" && (filepath.IsAbs(p.value) || strings.HasPrefix(filepath.ToSlash(filepath.Clean(p.value)), "../") || filepath.Clean(p.value) == "..") {
 			fail("%s.%s: %q must be a path inside the project", path, p.field, p.value)
 		}
@@ -371,6 +372,24 @@ func ResolvePHPConstraint(constraint string) (string, error) {
 	c := strings.TrimSpace(constraint)
 	if c == "" {
 		return "", fmt.Errorf("empty PHP constraint")
+	}
+
+	// Composer alternatives ("^7.3|^8.2", "^8.1 || ^8.2"): use the highest
+	// supported version any alternative allows.
+	if strings.Contains(c, "|") {
+		best := ""
+		for _, alt := range strings.Split(c, "|") {
+			if alt = strings.TrimSpace(alt); alt == "" {
+				continue
+			}
+			if v, err := ResolvePHPConstraint(alt); err == nil && slices.Index(SupportedPHPVersions, v) > slices.Index(SupportedPHPVersions, best) {
+				best = v
+			}
+		}
+		if best == "" {
+			return "", fmt.Errorf("project requires PHP %s, but SLD V2 only supports PHP %s. Please upgrade project dependencies", c, strings.Join(SupportedPHPVersions, ", "))
+		}
+		return best, nil
 	}
 
 	// Direct matching

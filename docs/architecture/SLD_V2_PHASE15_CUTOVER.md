@@ -300,7 +300,31 @@ Original scope:
 - §5.2. The PHP driver must produce **identical** specs for upgraded v1 configs, so existing projects aren't recreated.
 - `static` template in `sld-nginx`.
 
-### M4 — Detection *(2–3 days)*
+### M4 — Detection *(2–3 days)* — implemented 2026-11-20
+
+What landed:
+- **`internal/detect`:** an ordered detector chain.
+  - PHP: Laravel, Symfony, WordPress/Bedrock or plain PHP, plus a Vite companion.
+  - Node: Next.js, Nuxt, Astro, SvelteKit, Remix, NestJS, Vite, Express, Fastify, Hono, Koa. The package manager comes from the lockfile, and the version from `.nvmrc`/`.node-version`/`engines`.
+  - Python: Django, FastAPI (finds `module:app`), Flask. Ruby: Rails, Sinatra. Go, using Air when configured.
+  - Fallbacks: a Dockerfile (port from `EXPOSE`), then static `index.html`.
+- **Services** are inferred from `.env`/`.env.example` (`DB_CONNECTION`, `DATABASE_URL`, `REDIS_URL`, cache/session/queue settings) and from database and Redis drivers in the dependency files.
+- **Monorepos:** when the root is not an app, each first-level folder is detected as its own app with the new `apps.<name>.path`. Mobile folders (React Native, Expo, Flutter, native) and Node packages with nothing to run are skipped. Frontend-like folders come first, so they own the root domain.
+- **New config field `path`:** an app's own folder is mounted at `/app`, and its lockfiles, web root and Dockerfile context are resolved from there.
+- **`init-project --runtime <rt>` and `--dry-run`.** If nothing is detected, SLD explains what it looked for instead of assuming PHP.
+- **Other fixes:** composer alternatives like `^7.3|^8.2` resolve to the highest supported version, and CLI errors print once, without the usage dump.
+
+Verified read-only against 10 real projects in `Documents/Development`:
+- Laravel: swiftsms, sunport backend.
+- Laravel monorepos with React Native and Flutter folders: cecadoe-ride, insightify-lms.
+- Vite frontend plus Laravel backend: smart-docx, gifec, tailorly.
+- pnpm projects: logistics-os, lgs_operationaltools. Rails: rails_learning.
+
+Follow-ups:
+- Turborepo/pnpm workspaces are run as one root `dev` script; per-package apps are not split out.
+- Two Laravel backends with Vite companions would both expose host port 5173.
+
+Original scope:
 - §5.3 with fixtures per framework.
 
 ### M5 — Control plane rebuild (`sld serve`) *(7–10 days)*

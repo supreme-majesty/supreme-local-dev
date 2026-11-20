@@ -59,6 +59,7 @@ type App struct {
 	Name string `yaml:"-"`
 
 	Runtime        string            `yaml:"runtime"`
+	Path           string            `yaml:"path,omitempty"`            // app directory relative to the project root (default "."); mounted at /app
 	Version        string            `yaml:"version,omitempty"`         // runtime version / image tag, e.g. "8.3", "22", "3.13"
 	Command        string            `yaml:"command,omitempty"`         // long-running process (node/python/ruby/go/image)
 	Install        string            `yaml:"install,omitempty"`         // dependency install command, e.g. "npm ci"

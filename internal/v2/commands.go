@@ -245,20 +245,26 @@ certificate on 'sld v2 start'.`,
 	})
 
 	// --- sld v2 init-project ---
-	v2Cmd.AddCommand(&cobra.Command{
+	var initRuntime string
+	var initDryRun bool
+	initProjectCmd := &cobra.Command{
 		Use:   "init-project [path]",
-		Short: "Auto-detect project framework and generate .sld/config.yaml",
-		Long: `Scans composer.json, package.json, and .env to detect the project type
-(Laravel, Symfony, WordPress) and generates a .sld/config.yaml with
-sensible defaults for PHP version, database, Redis, and Mailpit.`,
+		Short: "Detect the project's stack and generate .sld/config.yaml",
+		Long: `Detects PHP (Laravel, Symfony, WordPress), Node (Next.js, Nuxt, Vite, SvelteKit,
+Astro, Remix, NestJS, Express...), Python (Django, FastAPI, Flask), Ruby (Rails,
+Sinatra), Go, a Dockerfile or a static site, plus the database, Redis and Mailpit
+it needs, and writes .sld/config.yaml.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			projectRoot, err := resolveProjectRoot(args)
 			if err != nil {
 				return err
 			}
-			return InitProject(projectRoot)
+			return InitProjectWith(projectRoot, InitOptions{Runtime: initRuntime, DryRun: initDryRun})
 		},
-	})
+	}
+	initProjectCmd.Flags().StringVar(&initRuntime, "runtime", "", "Only keep apps of this runtime (php, node, python, ruby, go, dockerfile, static)")
+	initProjectCmd.Flags().BoolVar(&initDryRun, "dry-run", false, "Print the detected configuration without writing it")
+	v2Cmd.AddCommand(initProjectCmd)
 
 	// --- sld v2 logs ---
 	var followLogs bool

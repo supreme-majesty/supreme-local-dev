@@ -181,11 +181,19 @@ func appEnv(ctx *Context, app *config.App, extra map[string]string) map[string]s
 	return env
 }
 
-// projectMount mounts the project (or a sub-directory of it) into a container.
-func projectMount(ctx *Context, sub, target string, readOnly bool) (reconcile.Mount, error) {
-	local := ctx.ProjectRoot
+// AppRoot is the local directory of an app: the project root joined with app.Path.
+func AppRoot(ctx *Context, app *config.App) string {
+	if app.Path == "" || app.Path == "." {
+		return ctx.ProjectRoot
+	}
+	return filepath.Join(ctx.ProjectRoot, filepath.FromSlash(app.Path))
+}
+
+// appMount mounts an app's directory (or a sub-directory of it) into a container.
+func appMount(ctx *Context, app *config.App, sub, target string, readOnly bool) (reconcile.Mount, error) {
+	local := AppRoot(ctx, app)
 	if sub != "" && sub != "." {
-		local = filepath.Join(ctx.ProjectRoot, filepath.FromSlash(sub))
+		local = filepath.Join(local, filepath.FromSlash(sub))
 	}
 	return ctx.Env.MountFor(local, target, readOnly)
 }

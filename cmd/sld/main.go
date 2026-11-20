@@ -70,6 +70,9 @@ var rootCmd = &cobra.Command{
 	Short:   "Supreme Local Dev",
 	Long:    `High-performance local development environment for PHP/Laravel.`,
 	Version: Version,
+	// main prints the error once; don't repeat it or dump usage on runtime failures.
+	SilenceUsage:  true,
+	SilenceErrors: true,
 }
 
 var Version = "dev"
