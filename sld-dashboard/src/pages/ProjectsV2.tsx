@@ -5,6 +5,7 @@ import {
   ExternalLink,
   FileText,
   Play,
+  Power,
   RefreshCw,
   RotateCw,
   Search,
@@ -174,6 +175,14 @@ export default function ProjectsV2() {
               setLogsFor(p);
             }}
             onShowJob={() => p.job_id && setJob({ id: p.job_id, title: `${p.name} (in progress)` })}
+            onAutostart={async (enabled) => {
+              try {
+                await v2.setAutostart(p.id, enabled);
+                queryClient.invalidateQueries({ queryKey: ["v2", "projects"] });
+              } catch (e) {
+                toastError("Could not change auto start", (e as Error).message);
+              }
+            }}
           />
         ))}
       </div>
@@ -199,12 +208,14 @@ function ProjectRow({
   onAction,
   onLogs,
   onShowJob,
+  onAutostart,
 }: {
   project: ProjectView;
   busy: boolean;
   onAction: (a: ProjectAction) => void;
   onLogs: () => void;
   onShowJob: () => void;
+  onAutostart: (enabled: boolean) => void;
 }) {
   const style = statusStyle[p.status];
   const isUp = p.status === "running" || p.status === "partial";
@@ -217,6 +228,20 @@ function ProjectRow({
           <div className="flex items-center gap-2">
             <h2 className="text-base font-semibold text-[var(--foreground)] truncate">{p.name}</h2>
             <span className={cn("text-[11px] px-2 py-0.5 rounded-full border", style.className)}>{style.label}</span>
+            {p.configured && (
+              <button
+                onClick={() => onAutostart(!p.autostart)}
+                title={p.autostart ? "Starts whenever SLD starts — click to turn off" : "Start this project whenever SLD starts"}
+                className={cn(
+                  "inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border transition-colors",
+                  p.autostart
+                    ? "bg-blue-500/15 text-blue-300 border-blue-500/30"
+                    : "border-[var(--border)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]",
+                )}
+              >
+                <Power size={11} /> Auto start {p.autostart ? "on" : "off"}
+              </button>
+            )}
             {busy && (
               <button onClick={onShowJob} className="text-[11px] text-blue-400 hover:underline">
                 operation in progress…

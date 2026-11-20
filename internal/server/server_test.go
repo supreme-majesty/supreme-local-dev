@@ -365,3 +365,139 @@ func TestProjectsAPI(t *testing.T) {
 		t.Errorf("system: %d %s", rec.Code, rec.Body)
 	}
 }
+
+func TestSettingsStore(t *testing.T) {
+	dir := t.TempDir()
+	st, err := loadSettings(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := st.Get(); !got.RestoreRunning || got.AutoSetup || got.AutostartAll {
+		t.Errorf("defaults = %+v, want only restore_running on", got)
+	}
+	if _, err := st.Update(func(s *Settings) {
+		s.AutoSetup = true
+		s.Autostart["a"] = true
+		s.Autostart["b"] = false // dropped on save
+		s.Running["c"] = true
+	}); err != nil {
+		t.Fatal(err)
+	}
+	again, err := loadSettings(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := again.Get()
+	if !got.AutoSetup || !got.Autostart["a"] || len(got.Autostart) != 1 || !got.Running["c"] {
+		t.Errorf("reloaded = %+v", got)
+	}
+	// Get returns a copy: mutating it must not change the store.
+	got.Autostart["x"] = true
+	if again.Get().Autostart["x"] {
+		t.Error("Get must return a copy")
+	}
+}
+
+func TestStartupTargets(t *testing.T) {
+	projects := []ProjectView{
+		{ID: "z-run", Folder: "z", Configured: true, Status: "stopped"},
+		{ID: "a-pin", Folder: "a", Configured: true, Status: "stopped"},
+		{ID: "m-up", Folder: "m", Configured: true, Status: "running"},
+		{ID: "n-new", Folder: "n", Configured: false, Status: "not-configured"},
+		{ID: "b-other", Folder: "b", Configured: true, Status: "stopped"},
+	}
+	ids := func(ps []ProjectView) string {
+		var out []string
+		for _, p := range ps {
+			out = append(out, p.ID)
+		}
+		return strings.Join(out, ",")
+	}
+	s := defaultSettings()
+	s.Running["z-run"] = true
+	s.Running["m-up"] = true
+	s.Autostart["a-pin"] = true
+	if got := ids(startupTargets(projects, s)); got != "a-pin,z-run" {
+		t.Errorf("restore + pinned = %s, want a-pin,z-run (sorted, running ones skipped)", got)
+	}
+	s.RestoreRunning = false
+	if got := ids(startupTargets(projects, s)); got != "a-pin" {
+		t.Errorf("without restore = %s", got)
+	}
+	s.AutostartAll = true
+	if got := ids(startupTargets(projects, s)); got != "a-pin,b-other,z-run" {
+		t.Errorf("autostart all = %s (must skip not set up and already running)", got)
+	}
+}
+
+func TestAutomationAPI(t *testing.T) {
+	t.Setenv("SLD_TLD", "")
+	ws := t.TempDir()
+	writeTree(t, ws, map[string]string{
+		"blog/.git/HEAD":        "x",
+		"blog/index.html":       "<h1>blog</h1>",
+		"shop/.git/HEAD":        "x",
+		"shop/index.html":       "<h1>shop</h1>",
+		"blog/.sld/config.yaml": "version: 2\napps:\n  web: {runtime: static}\n",
+	})
+	env := hostenv.Host(t.TempDir())
+	a, token := newAuth(t)
+	mux := http.NewServeMux()
+	srv := New(Options{Engine: &fakeEngine{}, Env: env, Auth: a, Workspaces: []string{ws}})
+	srv.Register(mux)
+	h := a.Middleware(mux)
+	call := func(method, path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Host = "localhost"
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+
+	if rec := call("GET", "/api/v2/settings", ""); !strings.Contains(rec.Body.String(), `"restore_running":true`) {
+		t.Errorf("default settings: %s", rec.Body)
+	}
+	// Turning auto setup on writes the config of the new project on the next listing.
+	if rec := call("PUT", "/api/v2/settings", `{"auto_setup":true}`); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"auto_setup":true`) {
+		t.Fatalf("put settings: %d %s", rec.Code, rec.Body)
+	}
+	rec := call("GET", "/api/v2/projects", "")
+	if _, err := os.Stat(filepath.Join(ws, "shop", ".sld", "config.yaml")); err != nil {
+		t.Errorf("auto setup did not write shop's config: %v", err)
+	}
+	var projects []ProjectView
+	_ = json.Unmarshal(rec.Body.Bytes(), &projects)
+	var shop ProjectView
+	for _, p := range projects {
+		if p.Name == "shop" {
+			shop = p
+		}
+	}
+	if !shop.Configured {
+		t.Fatalf("shop should be set up: %+v", shop)
+	}
+
+	// Per-project auto start toggle is reflected in the listing.
+	if rec := call("POST", "/api/v2/projects/"+shop.ID+"/autostart", `{"enabled":true}`); rec.Code != 200 {
+		t.Fatalf("autostart: %d %s", rec.Code, rec.Body)
+	}
+	srv.invalidateScan()
+	rec = call("GET", "/api/v2/projects", "")
+	if !strings.Contains(rec.Body.String(), `"autostart":true`) {
+		t.Errorf("autostart not shown: %s", rec.Body)
+	}
+	if !srv.settings.Get().Autostart[shop.ID] {
+		t.Error("autostart not persisted")
+	}
+
+	// Stop/start bookkeeping for "restart what was running".
+	srv.recordRunning(shop.ID, "start")
+	if !srv.settings.Get().Running[shop.ID] {
+		t.Error("start should be remembered")
+	}
+	srv.recordRunning(shop.ID, "stop")
+	if srv.settings.Get().Running[shop.ID] {
+		t.Error("stop should be remembered")
+	}
+}

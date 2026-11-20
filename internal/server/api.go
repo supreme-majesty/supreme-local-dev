@@ -37,8 +37,9 @@ type Options struct {
 
 // Server is the V2 control-plane API.
 type Server struct {
-	opts Options
-	jobs *Jobs
+	opts     Options
+	jobs     *Jobs
+	settings *settingsStore
 
 	mu        sync.Mutex
 	projects  map[string]v2.ScanResult // project id -> last scan result
@@ -47,7 +48,12 @@ type Server struct {
 
 // New creates the API.
 func New(opts Options) *Server {
-	return &Server{opts: opts, jobs: NewJobs(), projects: map[string]v2.ScanResult{}}
+	settings, err := loadSettings(opts.Env.DataDir())
+	if err != nil {
+		fmt.Printf("[SLD] ⚠️  %v — using default automation settings\n", err)
+		settings = &settingsStore{path: filepath.Join(opts.Env.DataDir(), "settings.json"), s: defaultSettings()}
+	}
+	return &Server{opts: opts, jobs: NewJobs(), settings: settings, projects: map[string]v2.ScanResult{}}
 }
 
 // Register adds the /api/v2 routes to mux.
@@ -64,6 +70,10 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v2/projects/{id}", s.handleProject)
 	mux.HandleFunc("POST /api/v2/projects/{id}/{action}", s.handleProjectAction)
 	mux.HandleFunc("GET /api/v2/projects/{id}/logs", s.handleLogs)
+
+	mux.HandleFunc("POST /api/v2/projects/{id}/autostart", s.handleAutostart)
+	mux.HandleFunc("GET /api/v2/settings", s.handleGetSettings)
+	mux.HandleFunc("PUT /api/v2/settings", s.handlePutSettings)
 
 	mux.HandleFunc("GET /api/v2/jobs/{id}", s.handleJob)
 	mux.HandleFunc("GET /api/v2/jobs/{id}/events", s.handleJobEvents)
@@ -92,6 +102,7 @@ type ProjectView struct {
 	Running    int          `json:"running"`
 	Problems   []string     `json:"problems,omitempty"`
 	JobID      string       `json:"job_id,omitempty"` // running operation, if any
+	Autostart  bool         `json:"autostart"`        // starts whenever SLD starts
 	Services   []ServiceRef `json:"services,omitempty"`
 }
 
@@ -121,7 +132,8 @@ func (s *Server) scan(force bool) ([]v2.ScanResult, error) {
 	}
 	var all []v2.ScanResult
 	for _, ws := range s.opts.Workspaces {
-		results, err := v2.Scan(ws, false)
+		// With auto setup on, newly found projects get their config written now.
+		results, err := v2.Scan(ws, s.settings.Get().AutoSetup)
 		if err != nil {
 			return nil, fmt.Errorf("scanning %s: %w", ws, err)
 		}
@@ -143,16 +155,18 @@ func (s *Server) view(ctx context.Context, r v2.ScanResult) ProjectView {
 	if id != nil {
 		v.ID = id.ID
 		v.JobID = s.jobs.Running(id.ID)
+		v.Autostart = s.settings.Get().Autostart[id.ID]
 	}
-	v.Configured = r.Status == "configured"
+	// "written" means auto setup created the config during this scan.
+	v.Configured = r.Status == "configured" || r.Status == "written"
 	for _, a := range r.AppList {
 		v.Apps = append(v.Apps, AppView{AppInfo: a, URL: s.opts.Env.SiteURL(a.Domain, r.TLS)})
 	}
 
 	switch r.Status {
-	case "configured":
+	case "configured", "written":
 		v.Status = "stopped"
-	case "new", "written":
+	case "new":
 		v.Status = "not-configured"
 	case "undetected":
 		v.Status = "undetected"
@@ -292,6 +306,9 @@ func (s *Server) handleProjectAction(w http.ResponseWriter, r *http.Request) {
 
 	job, err := s.jobs.Start(action, id, func(ctx context.Context, job *Job) error {
 		err := fn(ctx, job)
+		if err == nil {
+			s.recordRunning(id, action)
+		}
 		s.mu.Lock()
 		s.scannedAt = time.Time{} // status/config changed: rescan on next list
 		s.mu.Unlock()

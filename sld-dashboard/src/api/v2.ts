@@ -34,7 +34,14 @@ export interface ProjectView {
   running: number;
   problems?: string[];
   job_id?: string;
+  autostart?: boolean;
   services?: ServiceRef[];
+}
+
+export interface AutomationSettings {
+  auto_setup: boolean;
+  restore_running: boolean;
+  autostart_all: boolean;
 }
 
 export interface JobView {
@@ -112,6 +119,15 @@ export const v2 = {
       body: JSON.stringify(body || {}),
     }),
   job: (id: string) => request<JobView>(`/jobs/${encodeURIComponent(id)}`),
+
+  settings: () => request<AutomationSettings>("/settings"),
+  updateSettings: (patch: Partial<AutomationSettings>) =>
+    request<AutomationSettings>("/settings", { method: "PUT", body: JSON.stringify(patch) }),
+  setAutostart: (id: string, enabled: boolean) =>
+    request<{ id: string; autostart: boolean }>(`/projects/${encodeURIComponent(id)}/autostart`, {
+      method: "POST",
+      body: JSON.stringify({ enabled }),
+    }),
 
   /** Streams a job's output; returns a function that stops listening. */
   followJob(id: string, onOutput: (text: string) => void, onDone: (job: JobView) => void): () => void {

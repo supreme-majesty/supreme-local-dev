@@ -57,9 +57,16 @@ the SLD image, or the current folder on a host).`,
 		}
 
 		mux := api.NewServer(2025).Mux() // dashboard, database manager, websocket
-		server.New(server.Options{
+		controlPlane := server.New(server.Options{
 			Engine: engine, Env: env, Auth: auth, Workspaces: workspaces, Version: Version,
-		}).Register(mux)
+		})
+		controlPlane.Register(mux)
+
+		// Automation: set up new projects and start the ones that should run.
+		go func() {
+			time.Sleep(3 * time.Second) // let the listener come up first
+			controlPlane.RunStartupTasks(context.Background())
+		}()
 
 		listen := serveListen
 		if listen == "" {

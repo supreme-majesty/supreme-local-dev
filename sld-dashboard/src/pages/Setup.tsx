@@ -4,6 +4,7 @@ import { CheckCircle2, Download, LogOut, Router, ShieldCheck, XCircle, AlertTria
 import { v2 } from "@/api/v2";
 import { Button } from "@/components/ui/Button";
 import { JobConsole } from "@/components/projects/JobConsole";
+import { AutomationSettings } from "@/components/projects/AutomationSettings";
 
 function Row({ ok, warn, label, children }: { ok: boolean; warn?: boolean; label: string; children: ReactNode }) {
   const Icon = ok ? CheckCircle2 : warn ? AlertTriangle : XCircle;
@@ -112,6 +113,8 @@ export default function Setup() {
           )}
         </Row>
       </div>
+
+      <AutomationSettings />
 
       {jobId && (
         <JobConsole
