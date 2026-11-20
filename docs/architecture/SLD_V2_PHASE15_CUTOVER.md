@@ -402,7 +402,28 @@ Original scope:
 | `system/doctor` | Container-mode checks: socket access, workspace mounts, router ports, CA trust hint, Docker Desktop file-sharing |
 | `plugins/*` | Drop |
 
-### M6 — Dashboard *(4–6 days, can overlap with M5)*
+### M6 — Dashboard *(4–6 days, can overlap with M5)* — first version implemented 2026-11-20
+
+What landed:
+- **Sign-in gate** (`components/auth/AuthGate.tsx`): a token form that reappears whenever the API answers 401.
+- **One fetch interceptor** (`lib/fetch-interceptor.ts`) adds `X-SLD-Request` to every same-origin API write and reports 401s, so the existing database pages work behind auth without per-page changes.
+- **`src/api/v2.ts`:** typed client for `/api/v2`, with SSE job following and streamed logs.
+- **Projects page (home):**
+  - status badges, filters, search, per-app links;
+  - set up / start / stop / restart, with a live job console;
+  - a log viewer per container, with follow and pause;
+  - destroy keeps data by default, and deleting volumes requires typing the project name.
+- **Setup page:** Docker and router status (with a "Start router" button), ports, workspaces, CA certificate download with install steps, sign out.
+- **Topbar** shows SLD health (Docker plus router) instead of V1's PHP/nginx host status.
+- **Navigation** is reduced to Projects, Databases and Setup. V1-only pages (Domains, Plugins, X-Ray, Share, Doctor, host Logs/Settings) are no longer routed; their files are still in the repo.
+- **Build:** 0 TypeScript errors. The production build is embedded in `pkg/assets/gui`.
+
+Follow-ups:
+- A browser end-to-end check (the Chrome extension was not connected during implementation).
+- Delete the unrouted V1 page files.
+- Per-project detail view (config editor, file manager, env editor).
+
+Original scope:
 - Login screen and token handling in `src/api/daemon.ts`; remove the hard-coded `localhost:2025` (`Database.tsx:2407`).
 - Projects → Apps view with runtime badges, start/stop per app, terminal, tasks, logs.
 - Databases → Servers (shared + project + discovered) with create-server flow.

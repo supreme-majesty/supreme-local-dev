@@ -1,34 +1,18 @@
 import { NavLink } from "react-router-dom";
 import {
-  LayoutDashboard,
   FolderOpen,
-  Globe,
-  Puzzle,
   Settings,
-  Stethoscope,
-  Zap,
   ChevronLeft,
   ChevronRight,
-  Share2,
   Database,
-  Terminal,
-  Activity,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/useAppStore";
 
 const navItems = [
-  { to: "/", icon: LayoutDashboard, label: "Dashboard" },
   { to: "/projects", icon: FolderOpen, label: "Projects" },
-  { to: "/domains", icon: Globe, label: "Domains" },
-  { to: "/database", icon: Database, label: "Database" },
-  { to: "/logs", icon: Terminal, label: "Logs" },
-  { to: "/plugins", icon: Puzzle, label: "Plugins" },
-  { to: "/xray", icon: Zap, label: "X-Ray" },
-  { to: "/share", icon: Share2, label: "Share" },
-  { to: "/system", icon: Activity, label: "System" },
-  { to: "/settings", icon: Settings, label: "Settings" },
-  { to: "/doctor", icon: Stethoscope, label: "Doctor" },
+  { to: "/database", icon: Database, label: "Databases" },
+  { to: "/setup", icon: Settings, label: "Setup" },
 ];
 
 export function Sidebar() {

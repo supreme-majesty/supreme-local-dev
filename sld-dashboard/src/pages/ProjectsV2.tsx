@@ -1,0 +1,357 @@
+import { useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  AlertTriangle,
+  ExternalLink,
+  FileText,
+  Play,
+  RefreshCw,
+  RotateCw,
+  Search,
+  Settings2,
+  Square,
+  Trash2,
+} from "lucide-react";
+import { ApiError, v2, type JobView, type ProjectAction, type ProjectView } from "@/api/v2";
+import { Button } from "@/components/ui/Button";
+import { JobConsole } from "@/components/projects/JobConsole";
+import { LogViewer } from "@/components/projects/LogViewer";
+import { useToast } from "@/hooks/useToast";
+import { cn } from "@/lib/utils";
+
+const statusStyle: Record<ProjectView["status"], { label: string; className: string }> = {
+  running: { label: "Running", className: "bg-green-500/15 text-green-400 border-green-500/30" },
+  partial: { label: "Partly running", className: "bg-amber-500/15 text-amber-400 border-amber-500/30" },
+  stopped: { label: "Stopped", className: "bg-slate-500/15 text-slate-300 border-slate-500/30" },
+  "not-configured": { label: "Not set up", className: "bg-blue-500/15 text-blue-300 border-blue-500/30" },
+  undetected: { label: "Unknown stack", className: "bg-slate-500/10 text-slate-400 border-slate-500/20" },
+  invalid: { label: "Config error", className: "bg-red-500/15 text-red-400 border-red-500/30" },
+};
+
+const actionLabels: Record<ProjectAction, string> = {
+  setup: "Setting up",
+  start: "Starting",
+  stop: "Stopping",
+  restart: "Restarting",
+  destroy: "Removing",
+};
+
+type Filter = "all" | "running" | "configured" | "not-configured";
+
+export default function ProjectsV2() {
+  const queryClient = useQueryClient();
+  const { success, error: toastError } = useToast();
+  const [filter, setFilter] = useState<Filter>("all");
+  const [search, setSearch] = useState("");
+  const [job, setJob] = useState<{ id: string; title: string } | null>(null);
+  const [logsFor, setLogsFor] = useState<ProjectView | null>(null);
+  const [confirmDestroy, setConfirmDestroy] = useState<ProjectView | null>(null);
+
+  const { data: projects, isLoading, error, refetch, isFetching } = useQuery({
+    queryKey: ["v2", "projects"],
+    queryFn: () => v2.projects(),
+    refetchInterval: job ? 3000 : 15000,
+  });
+
+  const visible = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return (projects ?? []).filter((p) => {
+      if (q && !`${p.name} ${p.folder}`.toLowerCase().includes(q)) return false;
+      switch (filter) {
+        case "running":
+          return p.status === "running" || p.status === "partial";
+        case "configured":
+          return p.configured;
+        case "not-configured":
+          return p.status === "not-configured";
+        default:
+          return true;
+      }
+    });
+  }, [projects, filter, search]);
+
+  const counts = useMemo(() => {
+    const list = projects ?? [];
+    return {
+      all: list.length,
+      running: list.filter((p) => p.status === "running" || p.status === "partial").length,
+      configured: list.filter((p) => p.configured).length,
+      "not-configured": list.filter((p) => p.status === "not-configured").length,
+    };
+  }, [projects]);
+
+  const run = async (project: ProjectView, action: ProjectAction, body?: { remove_volumes?: boolean }) => {
+    try {
+      const started = await v2.action(project.id, action, body);
+      setLogsFor(null);
+      setJob({ id: started.id, title: `${actionLabels[action]} ${project.name}` });
+      queryClient.invalidateQueries({ queryKey: ["v2", "projects"] });
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409 && e.jobId) {
+        setJob({ id: e.jobId, title: `${project.name} (operation in progress)` });
+        return;
+      }
+      toastError(`Could not ${action} ${project.name}`, (e as Error).message);
+    }
+  };
+
+  const onJobFinished = (done: JobView) => {
+    queryClient.invalidateQueries({ queryKey: ["v2", "projects"] });
+    if (done.status === "succeeded") success("Done", job?.title);
+    else toastError("Operation failed", done.error);
+  };
+
+  return (
+    <div className="space-y-6 max-w-6xl">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold text-[var(--foreground)]">Projects</h1>
+          <p className="text-sm text-[var(--muted-foreground)]">
+            Every project found in your workspace. Set one up once, then start and stop it from here.
+          </p>
+        </div>
+        <Button variant="secondary" onClick={() => v2.projects(true).then(() => refetch())} loading={isFetching}>
+          <RefreshCw size={16} /> Rescan
+        </Button>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        {(["all", "running", "configured", "not-configured"] as Filter[]).map((f) => (
+          <button
+            key={f}
+            onClick={() => setFilter(f)}
+            className={cn(
+              "h-8 px-3 rounded-full text-xs font-medium border transition-colors",
+              filter === f
+                ? "bg-[var(--primary)] text-[var(--primary-foreground)] border-transparent"
+                : "border-[var(--border)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]",
+            )}
+          >
+            {{ all: "All", running: "Running", configured: "Set up", "not-configured": "Not set up" }[f]} ({counts[f]})
+          </button>
+        ))}
+        <div className="relative ml-auto">
+          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Filter projects"
+            className="h-8 w-56 pl-8 pr-3 rounded-lg border border-[var(--border)] bg-[var(--background)] text-sm text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+          />
+        </div>
+      </div>
+
+      {job && (
+        <JobConsole
+          key={job.id}
+          jobId={job.id}
+          title={job.title}
+          onClose={() => setJob(null)}
+          onFinished={onJobFinished}
+        />
+      )}
+      {logsFor && <LogViewer key={logsFor.id} project={logsFor} onClose={() => setLogsFor(null)} />}
+
+      {isLoading && <p className="text-sm text-[var(--muted-foreground)]">Scanning your workspace…</p>}
+      {error && <p className="text-sm text-red-400">Could not load projects: {(error as Error).message}</p>}
+      {!isLoading && !error && visible.length === 0 && (
+        <div className="rounded-lg border border-dashed border-[var(--border)] p-8 text-center text-sm text-[var(--muted-foreground)]">
+          {projects?.length
+            ? "No projects match this filter."
+            : "No projects found. Mount your projects folder into the SLD container (for example -v ~/Projects:/workspace) and rescan."}
+        </div>
+      )}
+
+      <div className="grid gap-3">
+        {visible.map((p) => (
+          <ProjectRow
+            key={p.id || p.folder}
+            project={p}
+            busy={Boolean(p.job_id)}
+            onAction={(a) => (a === "destroy" ? setConfirmDestroy(p) : run(p, a))}
+            onLogs={() => {
+              setJob(null);
+              setLogsFor(p);
+            }}
+            onShowJob={() => p.job_id && setJob({ id: p.job_id, title: `${p.name} (in progress)` })}
+          />
+        ))}
+      </div>
+
+      {confirmDestroy && (
+        <DestroyDialog
+          project={confirmDestroy}
+          onCancel={() => setConfirmDestroy(null)}
+          onConfirm={(removeVolumes) => {
+            const p = confirmDestroy;
+            setConfirmDestroy(null);
+            run(p, "destroy", { remove_volumes: removeVolumes });
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function ProjectRow({
+  project: p,
+  busy,
+  onAction,
+  onLogs,
+  onShowJob,
+}: {
+  project: ProjectView;
+  busy: boolean;
+  onAction: (a: ProjectAction) => void;
+  onLogs: () => void;
+  onShowJob: () => void;
+}) {
+  const style = statusStyle[p.status];
+  const isUp = p.status === "running" || p.status === "partial";
+  const apps = p.apps ?? [];
+
+  return (
+    <div className="rounded-lg border border-[var(--border)] bg-[var(--card)] p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <h2 className="text-base font-semibold text-[var(--foreground)] truncate">{p.name}</h2>
+            <span className={cn("text-[11px] px-2 py-0.5 rounded-full border", style.className)}>{style.label}</span>
+            {busy && (
+              <button onClick={onShowJob} className="text-[11px] text-blue-400 hover:underline">
+                operation in progress…
+              </button>
+            )}
+          </div>
+          <p className="text-xs text-[var(--muted-foreground)] mt-0.5">{p.folder}</p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-1.5">
+          {!p.configured && p.status !== "undetected" && (
+            <Button size="sm" onClick={() => onAction("setup")} disabled={busy}>
+              <Settings2 size={14} /> Set up
+            </Button>
+          )}
+          {p.configured && !isUp && (
+            <Button size="sm" onClick={() => onAction("start")} disabled={busy}>
+              <Play size={14} /> Start
+            </Button>
+          )}
+          {p.configured && isUp && (
+            <>
+              <Button size="sm" variant="secondary" onClick={() => onAction("restart")} disabled={busy}>
+                <RotateCw size={14} /> Restart
+              </Button>
+              <Button size="sm" variant="secondary" onClick={() => onAction("stop")} disabled={busy}>
+                <Square size={14} /> Stop
+              </Button>
+            </>
+          )}
+          {p.containers > 0 && (
+            <Button size="sm" variant="ghost" onClick={onLogs}>
+              <FileText size={14} /> Logs
+            </Button>
+          )}
+          {p.configured && (
+            <Button size="sm" variant="ghost" onClick={() => onAction("destroy")} disabled={busy} title="Remove containers">
+              <Trash2 size={14} />
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {apps.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {apps.map((a) => (
+            <a
+              key={a.name}
+              href={a.url}
+              target="_blank"
+              rel="noreferrer"
+              className={cn(
+                "inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md border text-xs transition-colors",
+                isUp
+                  ? "border-[var(--border)] text-[var(--foreground)] hover:bg-[var(--card-hover)]"
+                  : "border-dashed border-[var(--border)] text-[var(--muted-foreground)] pointer-events-none",
+              )}
+              aria-disabled={!isUp}
+            >
+              <span className="font-medium">{a.name}</span>
+              <span className="text-[var(--muted-foreground)]">
+                {a.runtime}
+                {a.version ? ` ${a.version}` : ""}
+                {a.service ? ` · ${a.service}` : ""}
+              </span>
+              <span className="text-blue-400">{a.url.replace(/^https?:\/\//, "")}</span>
+              {isUp && <ExternalLink size={12} />}
+            </a>
+          ))}
+        </div>
+      )}
+
+      {p.problems && p.problems.length > 0 && (
+        <ul className="mt-3 space-y-1">
+          {p.problems.map((msg) => (
+            <li key={msg} className="flex gap-1.5 text-xs text-amber-400">
+              <AlertTriangle size={12} className="mt-0.5 flex-shrink-0" /> {msg}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function DestroyDialog({
+  project,
+  onCancel,
+  onConfirm,
+}: {
+  project: ProjectView;
+  onCancel: () => void;
+  onConfirm: (removeVolumes: boolean) => void;
+}) {
+  const [removeVolumes, setRemoveVolumes] = useState(false);
+  const [typed, setTyped] = useState("");
+  const confirmed = !removeVolumes || typed === project.name;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true">
+      <div className="w-full max-w-md rounded-xl border border-[var(--border)] bg-[var(--card)] p-6 space-y-4">
+        <h2 className="text-lg font-semibold text-[var(--foreground)]">Remove {project.name}?</h2>
+        <p className="text-sm text-[var(--muted-foreground)]">
+          Stops and removes this project&apos;s containers and network. Your code is not touched, and data volumes are
+          kept unless you choose otherwise below.
+        </p>
+        <label className="flex items-start gap-2 text-sm text-[var(--foreground)]">
+          <input
+            type="checkbox"
+            checked={removeVolumes}
+            onChange={(e) => setRemoveVolumes(e.target.checked)}
+            className="mt-1"
+          />
+          <span>
+            Also delete data volumes (databases, Redis, uploads).{" "}
+            <span className="text-red-400">This permanently erases the data.</span>
+          </span>
+        </label>
+        {removeVolumes && (
+          <input
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+            placeholder={`Type ${project.name} to confirm`}
+            className="w-full h-9 px-3 rounded-lg border border-red-500/40 bg-[var(--background)] text-sm text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-red-500/40"
+          />
+        )}
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button variant="danger" disabled={!confirmed} onClick={() => onConfirm(removeVolumes)}>
+            {removeVolumes ? "Remove and delete data" : "Remove containers"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
