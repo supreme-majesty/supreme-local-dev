@@ -135,7 +135,7 @@ func (s *Server) handleSetTLS(w http.ResponseWriter, r *http.Request) {
 		running = true
 	}
 	if !bytes.Equal(old, updated) {
-		if err := writeProjectFile(p.Root, path, updated); err != nil {
+		if err := s.writeProjectFile(r.Context(), p.Root, path, updated); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}

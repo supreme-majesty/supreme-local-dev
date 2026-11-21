@@ -177,7 +177,7 @@ func (s *Server) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		chownLike(root, dir)
 	}
-	if err := writeProjectFile(root, filepath.Join(dir, "config.yaml"), []byte(body.Config)); err != nil {
+	if err := s.writeProjectFile(r.Context(), root, filepath.Join(dir, "config.yaml"), []byte(body.Config)); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -311,7 +311,7 @@ func (s *Server) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := writeProjectFile(root, p, []byte(body.Content)); err != nil {
+	if err := s.writeProjectFile(r.Context(), root, p, []byte(body.Content)); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -409,7 +409,7 @@ func (s *Server) handleWriteEnv(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := writeProjectFile(root, p, updateEnv(old, body.Variables)); err != nil {
+	if err := s.writeProjectFile(r.Context(), root, p, updateEnv(old, body.Variables)); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -526,7 +526,7 @@ func (s *Server) handleEnvRestore(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := writeProjectFile(root, p, data); err != nil {
+	if err := s.writeProjectFile(r.Context(), root, p, data); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
