@@ -39,6 +39,9 @@ type ScanOptions struct {
 	// Keep, when set, decides which projects are reported (and written). It
 	// sees the project folder and its apps (empty when the stack is unknown).
 	Keep func(root string, apps []AppInfo) bool
+	// Manifests also treats folders with an app manifest (composer.json,
+	// package.json, wp-config.php, ...) as projects, even without .git.
+	Manifests bool
 }
 
 // ScanWith is Scan with options.
@@ -50,7 +53,7 @@ func ScanWith(dir string, opts ScanOptions) ([]ScanResult, error) {
 		return nil, err
 	}
 	var results []ScanResult
-	for _, root := range detect.FindProjects(abs, 3) {
+	for _, root := range detect.FindProjectsWith(abs, 3, opts.Manifests) {
 		res := ScanResult{Root: root}
 		configPath := filepath.Join(root, ".sld", "config.yaml")
 

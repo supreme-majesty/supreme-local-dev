@@ -25,6 +25,16 @@ func TestDockerizeCandidates(t *testing.T) {
 		"shop/Dockerfile":  "FROM nginx\n",
 		"notes/.git/HEAD":  "x",
 		"notes/readme.txt": "no stack here",
+		// No .git: found through their manifests.
+		"group/wp/wp-config-sample.php":     "<?php",
+		"group/wp/index.php":                "<?php",
+		"group/wp/wp-content/plugins/x.php": "<?php /* Plugin Name: Inner */",
+		"group/sms-plugin/index.php":        "<?php\n/*\n * Plugin Name: SMS Notifications\n */",
+		"group/sms-plugin/composer.json":    `{"require":{}}`,
+		// A repository with sub-folder apps.
+		"mono/.git/HEAD":           "x",
+		"mono/backend/index.html":  "<h1>api</h1>",
+		"mono/frontend/index.html": "<h1>ui</h1>",
 	})
 	a, token := newAuth(t)
 	mux := http.NewServeMux()
@@ -58,6 +68,40 @@ func TestDockerizeCandidates(t *testing.T) {
 		t.Fatalf("blog should be a detected candidate: %+v", list)
 	}
 
+	if wp, ok := got["group/wp"]; !ok || !wp.Detected {
+		t.Errorf("a WordPress site without .git should be a detected candidate: %+v", list)
+	}
+	plugin, ok := got["group/sms-plugin"]
+	if !ok || plugin.Detected || !strings.Contains(plugin.Reason, "WordPress plugin") {
+		t.Errorf("a WordPress plugin must be listed as not dockerizable: %+v", plugin)
+	}
+	if mono := got["mono"]; len(mono.Apps) != 2 {
+		t.Fatalf("mono should list its two sub-folder apps: %+v", mono)
+	}
+
+	// Only the chosen sub-folder app is dockerized.
+	body, _ := json.Marshal(map[string]any{"projects": []map[string]any{{"path": got["mono"].Path, "apps": []string{got["mono"].Apps[1].Name}}}})
+	rec = call("POST", "/api/v2/dockerize", string(body))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("dockerize mono: %d %s", rec.Code, rec.Body)
+	}
+	var monoJob JobView
+	_ = json.Unmarshal(rec.Body.Bytes(), &monoJob)
+	if j, ok := srv.jobs.Get(monoJob.ID); ok {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if done := waitJob(ctx, j); done.Status != JobSucceeded {
+			t.Fatalf("mono job %s: %s\n%s", done.Status, done.Error, done.Output)
+		}
+		cancel()
+	}
+	compose, _ := os.ReadFile(filepath.Join(ws, "mono", "compose.yaml"))
+	if n := strings.Count(string(compose), "\n  web:\n"); n != 1 || strings.Contains(string(compose), "./"+got["mono"].Apps[0].Path) {
+		t.Errorf("only %s should be in compose.yaml:\n%s", got["mono"].Apps[1].Name, compose)
+	}
+	if rec := call("POST", "/api/v2/dockerize", `{"paths":["`+plugin.Path+`"]}`); rec.Code != http.StatusBadRequest {
+		t.Errorf("plugin must be refused: %d %s", rec.Code, rec.Body)
+	}
+
 	// An arbitrary path is refused.
 	if rec := call("POST", "/api/v2/dockerize", `{"paths":["/etc"]}`); rec.Code != http.StatusBadRequest {
 		t.Errorf("arbitrary path: %d %s", rec.Code, rec.Body)
@@ -69,7 +113,7 @@ func TestDockerizeCandidates(t *testing.T) {
 		}
 	}
 
-	body, _ := json.Marshal(map[string]any{"paths": []string{blog.Path}})
+	body, _ = json.Marshal(map[string]any{"paths": []string{blog.Path}})
 	rec = call("POST", "/api/v2/dockerize", string(body))
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("dockerize: %d %s", rec.Code, rec.Body)

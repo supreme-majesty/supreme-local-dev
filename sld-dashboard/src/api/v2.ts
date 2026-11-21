@@ -55,6 +55,8 @@ export interface Candidate {
   /** Already has a .sld/config.yaml. */
   configured: boolean;
   problems?: string[];
+  /** Why it cannot be dockerized on its own (WordPress plugin, Apps Script add-on...). */
+  reason?: string;
 }
 
 export interface AutomationSettings {
@@ -190,9 +192,12 @@ export const v2 = {
 
   /** Workspace projects that are not dockerized, parked or linked yet. */
   candidates: () => request<Candidate[]>("/candidates"),
-  /** Links the chosen projects, writes their configs and optionally starts them, in one job. */
-  dockerize: (paths: string[], start: boolean) =>
-    request<JobView>("/dockerize", { method: "POST", body: JSON.stringify({ paths, start }) }),
+  /**
+   * Generates Docker files for the chosen projects (each with the sub-folder apps to include;
+   * no apps = all) and optionally builds and starts them, in one job.
+   */
+  dockerize: (projects: { path: string; apps?: string[] }[], start: boolean) =>
+    request<JobView>("/dockerize", { method: "POST", body: JSON.stringify({ projects, start }) }),
 
   // Parked and linked folders: projects in them are detected even without Docker files.
   parked: () => request<{ path: string; folder: string }[]>("/parked"),

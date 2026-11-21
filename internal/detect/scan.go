@@ -15,13 +15,41 @@ import (
 // groups and searched up to maxDepth levels deep. A project's sub-folders are
 // not searched: they belong to it (backend/, frontend/, ...).
 func FindProjects(dir string, maxDepth int) []string {
+	return FindProjectsWith(dir, maxDepth, false)
+}
+
+// manifestMarkers identify an application folder even without git or an SLD
+// config: a Laravel/PHP app, a WordPress site, a Node/Python/Ruby/Go app.
+var manifestMarkers = []string{
+	"artisan", "composer.json", "wp-config.php", "wp-config-sample.php", "package.json",
+	"manage.py", "requirements.txt", "pyproject.toml", "Gemfile", "go.mod",
+}
+
+// FindProjectsWith is FindProjects; with manifests, folders holding an app
+// manifest (composer.json, package.json, wp-config.php, ...) are project roots
+// too, so copies of projects without .git are found.
+func FindProjectsWith(dir string, maxDepth int, manifests bool) []string {
+	isRoot := isProjectRoot
+	if manifests {
+		isRoot = func(path string) bool {
+			if isProjectRoot(path) {
+				return true
+			}
+			for _, m := range manifestMarkers {
+				if _, err := os.Stat(filepath.Join(path, m)); err == nil {
+					return true
+				}
+			}
+			return false
+		}
+	}
 	var out []string
 	var walk func(path string, depth int)
 	walk = func(path string, depth int) {
 		if isIgnored(path) {
 			return
 		}
-		if isProjectRoot(path) {
+		if isRoot(path) {
 			out = append(out, path)
 			return
 		}

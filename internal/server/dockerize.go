@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/supreme-majesty/supreme-local-dev/internal/detect"
 	"github.com/supreme-majesty/supreme-local-dev/internal/dockerize"
 	v2 "github.com/supreme-majesty/supreme-local-dev/internal/v2"
 )
@@ -39,15 +40,21 @@ type Candidate struct {
 	// Configured: the folder already has a .sld/config.yaml.
 	Configured bool     `json:"configured"`
 	Problems   []string `json:"problems,omitempty"`
+	// Reason explains why it cannot be dockerized on its own (a WordPress
+	// plugin, an Apps Script add-on...); Detected is false then.
+	Reason string `json:"reason,omitempty"`
+
+	selectedApps []string // set for a dockerize request; empty = all apps
 }
 
-// candidates scans the workspaces for projects the normal scan skips.
+// candidates scans the workspaces for projects the normal scan skips,
+// including app folders without .git (copies, WordPress sites...).
 func (s *Server) candidates() ([]Candidate, error) {
 	keep := s.keepProject()
 	skipped := func(root string, apps []v2.AppInfo) bool { return !keep(root, apps) }
 	out := []Candidate{}
 	for _, ws := range s.opts.Workspaces {
-		results, err := v2.ScanWith(ws, v2.ScanOptions{Keep: skipped}) // never writes
+		results, err := v2.ScanWith(ws, v2.ScanOptions{Keep: skipped, Manifests: true}) // never writes
 		if err != nil {
 			return nil, fmt.Errorf("scanning %s: %w", ws, err)
 		}
@@ -60,6 +67,10 @@ func (s *Server) candidates() ([]Candidate, error) {
 				Configured: r.Status == "configured",
 				Detected:   r.Status == "new" || r.Status == "configured",
 				Problems:   r.Problems,
+				Reason:     detect.NotServable(r.Root),
+			}
+			if c.Reason != "" {
+				c.Detected = false
 			}
 			if c.Apps == nil {
 				c.Apps = []v2.AppInfo{}
@@ -84,12 +95,23 @@ func (s *Server) handleCandidates(w http.ResponseWriter, r *http.Request) {
 // with "start", starts them one after another, all in one job.
 func (s *Server) handleDockerize(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Paths []string `json:"paths"`
+		// Projects to dockerize, each with the apps (sub-folders) to include;
+		// no apps means all of them.
+		Projects []struct {
+			Path string   `json:"path"`
+			Apps []string `json:"apps"`
+		} `json:"projects"`
+		Paths []string `json:"paths"` // shorthand: whole projects
 		Start bool     `json:"start"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 64*1024)).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
+	}
+	appsFor := map[string][]string{}
+	for _, p := range req.Projects {
+		req.Paths = append(req.Paths, p.Path)
+		appsFor[p.Path] = p.Apps
 	}
 	if len(req.Paths) == 0 {
 		writeError(w, http.StatusBadRequest, "choose at least one project")
@@ -112,10 +134,25 @@ func (s *Server) handleDockerize(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, p+" is not a workspace project waiting to be dockerized")
 			return
 		}
+		if c.Reason != "" {
+			writeError(w, http.StatusBadRequest, c.Folder+" cannot be dockerized on its own: "+c.Reason)
+			return
+		}
 		if !c.Detected {
 			writeError(w, http.StatusBadRequest, "SLD could not detect the stack of "+c.Folder+"; add .sld/config.yaml to it by hand")
 			return
 		}
+		for _, name := range appsFor[p] {
+			found := false
+			for _, a := range c.Apps {
+				found = found || a.Name == name
+			}
+			if !found {
+				writeError(w, http.StatusBadRequest, c.Folder+" has no app named "+name)
+				return
+			}
+		}
+		c.selectedApps = appsFor[p]
 		chosen = append(chosen, c)
 	}
 
@@ -149,7 +186,10 @@ func (s *Server) handleDockerize(w http.ResponseWriter, r *http.Request) {
 // and, with start, builds and starts it.
 func (s *Server) dockerizeOne(ctx context.Context, job *Job, c Candidate, start bool) error {
 	fmt.Fprintf(job, "\n[SLD] ── %s\n", c.Folder)
-	plan, err := dockerize.PlanProject(c.Path)
+	if len(c.selectedApps) > 0 {
+		fmt.Fprintf(job, "[SLD] Only: %s\n", strings.Join(c.selectedApps, ", "))
+	}
+	plan, err := dockerize.PlanProjectWith(c.Path, dockerize.Options{Apps: c.selectedApps})
 	if err != nil {
 		return err
 	}

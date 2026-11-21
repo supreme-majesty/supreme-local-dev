@@ -70,8 +70,20 @@ type Plan struct {
 // ErrExists is returned when the project already has Docker files.
 var ErrExists = errors.New("project already has Docker files")
 
+// Options narrow what PlanProjectWith generates.
+type Options struct {
+	// Apps keeps only these detected apps (by name), e.g. just "backend" of a
+	// repository with backend/, frontend/ and mobile/. Empty keeps all.
+	Apps []string
+}
+
 // PlanProject inspects root and returns the files to write. It writes nothing.
 func PlanProject(root string) (*Plan, error) {
+	return PlanProjectWith(root, Options{})
+}
+
+// PlanProjectWith is PlanProject with options.
+func PlanProjectWith(root string, opts Options) (*Plan, error) {
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
@@ -81,6 +93,12 @@ func PlanProject(root string) (*Plan, error) {
 		return nil, err
 	}
 	cfg := res.Config
+	if len(opts.Apps) > 0 {
+		cfg.Apps, err = selectApps(cfg.Apps, opts.Apps)
+		if err != nil {
+			return nil, err
+		}
+	}
 	for _, a := range cfg.Apps {
 		if a.Runtime == config.RuntimeCompose || a.Runtime == config.RuntimeDockerfile {
 			return nil, ErrExists
@@ -143,6 +161,52 @@ func PlanProject(root string) (*Plan, error) {
 	}
 	g.file("DOCKER.md", g.report())
 	return g.plan, nil
+}
+
+// selectApps keeps the named apps. A PHP app keeps its Vite companion (same
+// folder), which is part of it rather than an app of its own.
+func selectApps(apps config.Apps, names []string) (config.Apps, error) {
+	want := map[string]bool{}
+	for _, n := range names {
+		want[n] = true
+	}
+	phpDirs := map[string]bool{}
+	var out config.Apps
+	for _, a := range apps {
+		if want[a.Name] {
+			out = append(out, a)
+			delete(want, a.Name)
+			if a.Runtime == config.RuntimePHP {
+				phpDirs[a.Path] = true
+			}
+		}
+	}
+	for _, a := range apps {
+		if a.Runtime == config.RuntimeNode && phpDirs[a.Path] && !containsApp(out, a.Name) {
+			out = append(out, a)
+		}
+	}
+	if len(want) > 0 {
+		var unknown []string
+		for n := range want {
+			unknown = append(unknown, n)
+		}
+		sort.Strings(unknown)
+		return nil, fmt.Errorf("unknown app(s): %s", strings.Join(unknown, ", "))
+	}
+	if len(out) == 0 {
+		return nil, errors.New("choose at least one app")
+	}
+	return out, nil
+}
+
+func containsApp(apps config.Apps, name string) bool {
+	for _, a := range apps {
+		if a.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // Conflicts lists the plan's files that already exist (never overwritten).

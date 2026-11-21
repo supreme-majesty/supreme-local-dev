@@ -474,7 +474,10 @@ function DestroyDialog({
   );
 }
 
-/** Lists workspace projects SLD does not detect yet and dockerizes the selected ones. */
+/**
+ * Lists workspace projects that have no Docker files, grouped by folder, and dockerizes the
+ * selected ones. A project with sub-folder apps (backend/, frontend/...) lets you pick which.
+ */
 function DockerizeDialog({
   onClose,
   onStarted,
@@ -484,42 +487,62 @@ function DockerizeDialog({
 }) {
   const { error: toastError } = useToast();
   const list = useQuery({ queryKey: ["v2", "candidates"], queryFn: () => v2.candidates() });
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Selected projects (by path) and, for each, the chosen app names.
+  const [selected, setSelected] = useState<Map<string, Set<string>>>(new Map());
   const [search, setSearch] = useState("");
   const [start, setStart] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const all = useMemo(() => list.data ?? [], [list.data]);
-  const visible = useMemo(() => {
+  const groups = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return all.filter((c) => !q || `${c.name} ${c.folder}`.toLowerCase().includes(q));
+    const byGroup = new Map<string, Candidate[]>();
+    for (const c of all) {
+      const haystack = `${c.name} ${c.folder} ${c.apps.map((a) => `${a.name} ${a.path ?? ""}`).join(" ")}`;
+      if (q && !haystack.toLowerCase().includes(q)) continue;
+      const slash = c.folder.lastIndexOf("/");
+      const group = slash > 0 ? c.folder.slice(0, slash) : "";
+      byGroup.set(group, [...(byGroup.get(group) ?? []), c]);
+    }
+    return [...byGroup.entries()].sort(([a], [b]) => a.localeCompare(b));
   }, [all, search]);
-  const selectable = visible.filter((c) => c.detected);
-  const allSelected = selectable.length > 0 && selectable.every((c) => selected.has(c.path));
+  const selectable = groups.flatMap(([, items]) => items.filter((c) => c.detected));
 
-  const toggle = (path: string) =>
+  const allApps = (c: Candidate) => new Set(c.apps.map((a) => a.name));
+
+  const setProjects = (items: Candidate[], on: boolean) =>
     setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
+      const next = new Map(prev);
+      for (const c of items) {
+        if (!c.detected) continue;
+        if (on) next.set(c.path, next.get(c.path) ?? allApps(c));
+        else next.delete(c.path);
+      }
       return next;
     });
 
-  const toggleAll = () =>
+  const toggleApp = (c: Candidate, app: string) =>
     setSelected((prev) => {
-      const next = new Set(prev);
-      for (const c of selectable) {
-        if (allSelected) next.delete(c.path);
-        else next.add(c.path);
-      }
+      const next = new Map(prev);
+      const apps = new Set(next.get(c.path) ?? []);
+      if (apps.has(app)) apps.delete(app);
+      else apps.add(app);
+      if (apps.size === 0) next.delete(c.path);
+      else next.set(c.path, apps);
       return next;
     });
 
   const submit = async () => {
     setSaving(true);
     try {
-      const job = await v2.dockerize([...selected], start);
-      onStarted(job, selected.size);
+      const projects = all
+        .filter((c) => selected.has(c.path))
+        .map((c) => {
+          const apps = selected.get(c.path)!;
+          return apps.size === c.apps.length ? { path: c.path } : { path: c.path, apps: [...apps] };
+        });
+      const job = await v2.dockerize(projects, start);
+      onStarted(job, projects.length);
     } catch (e) {
       toastError("Could not dockerize", (e as Error).message);
     } finally {
@@ -527,8 +550,8 @@ function DockerizeDialog({
     }
   };
 
-  const stack = (c: Candidate) =>
-    c.apps.map((a) => `${a.runtime}${a.version ? ` ${a.version}` : ""}`).join(" · ") || "Unknown stack";
+  const stackOf = (a: Candidate["apps"][number]) => `${a.runtime}${a.version ? ` ${a.version}` : ""}`;
+  const allChosen = selectable.length > 0 && selectable.every((c) => selected.has(c.path));
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true">
@@ -536,18 +559,24 @@ function DockerizeDialog({
         <div>
           <h2 className="text-lg font-semibold text-[var(--foreground)]">Dockerize projects</h2>
           <p className="mt-1 text-sm text-[var(--muted-foreground)]">
-            These workspace projects have no Docker files yet. For each one you pick, SLD writes a{" "}
-            <code className="text-xs">Dockerfile</code> (development and production targets),{" "}
-            <code className="text-xs">compose.yaml</code>, <code className="text-xs">.dockerignore</code> and a{" "}
-            <code className="text-xs">DOCKER.md</code> explaining every decision. Everything is based on the stack it
-            detects: pinned versions, non-root users, and a database or Redis only when the project uses one. Existing
-            files are never overwritten, and your code and <code className="text-xs">.env</code> are not touched.
+            Projects in your workspace folders (and their sub-folders) that have no Docker files yet, with or without
+            git. For each one you pick, SLD writes a <code className="text-xs">Dockerfile</code> (development and
+            production targets), <code className="text-xs">compose.yaml</code>,{" "}
+            <code className="text-xs">.dockerignore</code> and a <code className="text-xs">DOCKER.md</code> explaining
+            every decision. Everything is based on the stack it detects: pinned versions, non-root users, and a
+            database or Redis only when the project uses one. Existing files are never overwritten, and your code and{" "}
+            <code className="text-xs">.env</code> are not touched.
           </p>
         </div>
 
         <div className="flex items-center gap-3">
           <label className="flex items-center gap-2 text-sm text-[var(--foreground)]">
-            <input type="checkbox" checked={allSelected} onChange={toggleAll} disabled={selectable.length === 0} />
+            <input
+              type="checkbox"
+              checked={allChosen}
+              onChange={() => setProjects(selectable, !allChosen)}
+              disabled={selectable.length === 0}
+            />
             Select all
           </label>
           <div className="relative ml-auto">
@@ -555,52 +584,100 @@ function DockerizeDialog({
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Filter"
-              className="h-8 w-48 pl-8 pr-3 rounded-lg border border-[var(--border)] bg-[var(--background)] text-sm text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+              placeholder="Filter by name or folder"
+              className="h-8 w-56 pl-8 pr-3 rounded-lg border border-[var(--border)] bg-[var(--background)] text-sm text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
             />
           </div>
         </div>
 
-        <div className="max-h-80 overflow-y-auto rounded-md border border-[var(--border)] divide-y divide-[var(--border)]">
+        <div className="max-h-96 overflow-y-auto rounded-md border border-[var(--border)]">
           {list.isLoading && <p className="px-3 py-3 text-xs text-[var(--muted-foreground)]">Scanning your workspace…</p>}
           {list.error && <p className="px-3 py-3 text-xs text-red-400">{(list.error as Error).message}</p>}
-          {!list.isLoading && !list.error && visible.length === 0 && (
+          {!list.isLoading && !list.error && groups.length === 0 && (
             <p className="px-3 py-3 text-xs text-[var(--muted-foreground)]">
               {all.length ? "No projects match this filter." : "Every project in your workspace is already dockerized, parked or linked."}
             </p>
           )}
-          {visible.map((c) => (
-            <label
-              key={c.path}
-              className={cn(
-                "flex items-start gap-3 px-3 py-2 text-sm",
-                c.detected ? "cursor-pointer hover:bg-[var(--card-hover)]" : "opacity-60",
-              )}
-              title={c.detected ? undefined : "SLD could not detect this project's stack; add .sld/config.yaml to it by hand"}
-            >
-              <input
-                type="checkbox"
-                className="mt-1"
-                checked={selected.has(c.path)}
-                disabled={!c.detected}
-                onChange={() => toggle(c.path)}
-              />
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="font-medium text-[var(--foreground)] truncate">{c.name}</span>
-                  {c.configured && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded-full border border-[var(--border)] text-[var(--muted-foreground)]">
-                      has config
-                    </span>
-                  )}
-                </div>
-                <p className="text-xs text-[var(--muted-foreground)] truncate">{c.folder}</p>
+          {groups.map(([group, items]) => {
+            const groupSelectable = items.filter((c) => c.detected);
+            const groupChosen = groupSelectable.length > 0 && groupSelectable.every((c) => selected.has(c.path));
+            return (
+              <div key={group || "/"} className="border-b border-[var(--border)] last:border-b-0">
+                <label className="flex items-center gap-2 bg-[var(--background)] px-3 py-1.5 text-xs font-medium text-[var(--muted-foreground)]">
+                  <input
+                    type="checkbox"
+                    checked={groupChosen}
+                    disabled={groupSelectable.length === 0}
+                    onChange={() => setProjects(groupSelectable, !groupChosen)}
+                    aria-label={`Select all in ${group || "workspace root"}`}
+                  />
+                  <Folder size={13} className="text-blue-400" />
+                  {group ? `${group}/` : "Workspace root"}
+                  <span className="ml-auto">{items.length}</span>
+                </label>
+                {items.map((c) => {
+                  const chosen = selected.get(c.path);
+                  const multi = c.apps.length > 1;
+                  return (
+                    <div
+                      key={c.path}
+                      className={cn("px-3 py-2 pl-8 text-sm", !c.detected && "opacity-60")}
+                      title={c.reason || (c.detected ? undefined : "SLD could not detect this project's stack; add .sld/config.yaml to it by hand")}
+                    >
+                      <label className={cn("flex items-start gap-3", c.detected && "cursor-pointer")}>
+                        <input
+                          type="checkbox"
+                          className="mt-1"
+                          checked={Boolean(chosen)}
+                          disabled={!c.detected}
+                          onChange={() => setProjects([c], !chosen)}
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-[var(--foreground)] truncate">{c.name}</span>
+                            {c.configured && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded-full border border-[var(--border)] text-[var(--muted-foreground)]">
+                                has SLD config
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-[var(--muted-foreground)] truncate">{c.folder}</p>
+                          {c.reason && <p className="mt-0.5 text-xs text-amber-400">{c.reason}</p>}
+                          {!c.reason && !c.detected && <p className="mt-0.5 text-xs text-[var(--muted-foreground)]">Unknown stack</p>}
+                        </div>
+                        {!multi && c.apps[0] && (
+                          <span className="text-xs font-mono whitespace-nowrap text-[var(--foreground)]">{stackOf(c.apps[0])}</span>
+                        )}
+                      </label>
+                      {multi && c.detected && (
+                        <div className="mt-1.5 ml-7 flex flex-wrap gap-1.5">
+                          {c.apps.map((a) => {
+                            const on = chosen?.has(a.name) ?? false;
+                            return (
+                              <button
+                                key={a.name}
+                                type="button"
+                                onClick={() => toggleApp(c, a.name)}
+                                className={cn(
+                                  "inline-flex items-center gap-1.5 h-6 px-2 rounded-md border text-xs font-mono transition-colors",
+                                  on
+                                    ? "border-blue-500/40 bg-blue-500/15 text-blue-200"
+                                    : "border-[var(--border)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]",
+                                )}
+                                title={on ? "Included; click to leave this sub-folder out" : "Click to include this sub-folder"}
+                              >
+                                {a.path ? `${a.path}/` : a.name} · {stackOf(a)}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
-              <span className={cn("text-xs font-mono whitespace-nowrap", c.detected ? "text-[var(--foreground)]" : "text-[var(--muted-foreground)]")}>
-                {stack(c)}
-              </span>
-            </label>
-          ))}
+            );
+          })}
         </div>
 
         <label className="flex items-center gap-2 text-sm text-[var(--foreground)]">
