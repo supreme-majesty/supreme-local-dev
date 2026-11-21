@@ -5,10 +5,55 @@ import { useTheme } from "@/hooks/useTheme";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { useServices, useRestartMutation } from "@/hooks/use-daemon";
 import { Link } from "react-router-dom";
+import { useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { v2, type ProjectView } from "@/api/v2";
+
+const MAX_STACKS = 3;
+
+const runtimeNames: Record<string, string> = {
+  php: "PHP",
+  node: "Node",
+  python: "Python",
+  ruby: "Ruby",
+  go: "Go",
+  static: "Static",
+  image: "Image",
+  compose: "Compose",
+};
+
+interface Stack {
+  label: string; // e.g. "PHP 8.3"
+  projects: string[];
+}
+
+// runningStacks lists the runtimes (with versions) of the apps in running
+// projects, most used first, e.g. ["PHP 8.3 ×4", "Node 20", "Compose"].
+function runningStacks(projects: ProjectView[]): Stack[] {
+  const byLabel = new Map<string, Set<string>>();
+  for (const p of projects) {
+    if (p.status !== "running" && p.status !== "partial") continue;
+    for (const a of p.apps ?? []) {
+      const name = runtimeNames[a.runtime] ?? a.runtime;
+      const label = a.version ? `${name} ${a.version}` : name;
+      if (!byLabel.has(label)) byLabel.set(label, new Set());
+      byLabel.get(label)!.add(p.name);
+    }
+  }
+  return [...byLabel.entries()]
+    .map(([label, names]) => ({ label, projects: [...names].sort() }))
+    .sort((a, b) => b.projects.length - a.projects.length || a.label.localeCompare(b.label));
+}
 
 export function Topbar() {
   const { sidebarCollapsed } = useAppStore();
   const { data: services = [], isLoading: isServicesLoading } = useServices();
+  const { data: projects } = useQuery({
+    queryKey: ["v2", "projects"],
+    queryFn: () => v2.projects(),
+    refetchInterval: 15000,
+  });
+  const stacks = useMemo(() => runningStacks(projects ?? []), [projects]);
   const restartMutation = useRestartMutation();
   const { toggleTheme, isDark } = useTheme();
 
@@ -43,12 +88,21 @@ export function Topbar() {
           status={isLoading ? "loading" : allRunning ? "running" : "stopped"}
         />
 
-        {services.length > 0 && (
-          <div className="hidden sm:flex items-center gap-2 text-sm text-[var(--muted-foreground)]">
-            <span className="font-mono">
-              PHP{" "}
-              {services.find((s) => s.name.includes("PHP"))?.version || "--"}
-            </span>
+        {stacks.length > 0 && (
+          <div
+            className="hidden sm:flex items-center gap-1.5 text-xs text-[var(--muted-foreground)]"
+            title={stacks.map((s) => `${s.label}: ${s.projects.join(", ")}`).join("\n")}
+          >
+            {stacks.slice(0, MAX_STACKS).map((s) => (
+              <span
+                key={s.label}
+                className="font-mono px-2 py-0.5 rounded-md border border-[var(--border)] bg-[var(--background)]"
+              >
+                {s.label}
+                {s.projects.length > 1 && <span className="opacity-60"> ×{s.projects.length}</span>}
+              </span>
+            ))}
+            {stacks.length > MAX_STACKS && <span>+{stacks.length - MAX_STACKS}</span>}
           </div>
         )}
 
