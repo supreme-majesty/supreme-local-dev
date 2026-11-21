@@ -1,4 +1,7 @@
 FROM nginx:1.27
+LABEL org.opencontainers.image.source="https://github.com/supreme-majesty/supreme-local-dev" \
+      org.opencontainers.image.title="SLD nginx" \
+      org.opencontainers.image.description="nginx sidecar for Supreme Local Dev PHP and static apps"
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends gettext-base wget \

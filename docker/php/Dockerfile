@@ -1,5 +1,8 @@
 ARG PHP_VERSION=8.3
 FROM php:${PHP_VERSION}-fpm-bookworm
+LABEL org.opencontainers.image.source="https://github.com/supreme-majesty/supreme-local-dev" \
+      org.opencontainers.image.title="SLD PHP" \
+      org.opencontainers.image.description="PHP-FPM runtime for Supreme Local Dev projects"
 
 # Install mlocati/docker-php-extension-installer
 ADD --chmod=0755 https://github.com/mlocati/docker-php-extension-installer/releases/latest/download/install-php-extensions /usr/local/bin/
