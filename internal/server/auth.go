@@ -45,6 +45,28 @@ type Auth struct {
 	// server notices the new modification time and accepts the new token.
 	path    string
 	modTime time.Time
+
+	// tokenCommand is how to get a new token in this setup, e.g.
+	// "docker exec sld-app-1 sld token"; the sign-in page shows it.
+	tokenCommand string
+}
+
+// SetContainerName sets the SLD container's name, so the sign-in page shows
+// the exact `docker exec <name> sld token` command for this setup.
+func (a *Auth) SetContainerName(name string) {
+	if name == "" {
+		a.tokenCommand = "sld token"
+		return
+	}
+	a.tokenCommand = "docker exec " + name + " sld token"
+}
+
+// TokenCommand is the command that prints a new admin token.
+func (a *Auth) TokenCommand() string {
+	if a.tokenCommand == "" {
+		return "sld token"
+	}
+	return a.tokenCommand
 }
 
 type authFile struct {
@@ -330,7 +352,7 @@ func (a *Auth) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(sessionCookie); err == nil {
 		ok = a.validSession(c.Value)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"authenticated": ok})
+	writeJSON(w, http.StatusOK, map[string]any{"authenticated": ok, "token_command": a.TokenCommand()})
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {

@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { KeyRound, Loader2 } from "lucide-react";
+import { Check, Copy, KeyRound, Loader2 } from "lucide-react";
 import { v2 } from "@/api/v2";
 import { UNAUTHORIZED_EVENT } from "@/lib/fetch-interceptor";
 import { queryClient } from "@/lib/react-query";
@@ -13,10 +13,14 @@ type State = "checking" | "signed-out" | "signed-in" | "unreachable";
  */
 export function AuthGate({ children }: { children: ReactNode }) {
   const [state, setState] = useState<State>("checking");
+  const [tokenCommand, setTokenCommand] = useState("");
 
   const check = () => {
     v2.authStatus()
-      .then((s) => setState(s.authenticated ? "signed-in" : "signed-out"))
+      .then((s) => {
+        if (s.token_command) setTokenCommand(s.token_command);
+        setState(s.authenticated ? "signed-in" : "signed-out");
+      })
       .catch(() => setState("unreachable"));
   };
 
@@ -65,16 +69,25 @@ export function AuthGate({ children }: { children: ReactNode }) {
             <Button variant="secondary" onClick={check}>Retry</Button>
           </div>
         )}
-        {state === "signed-out" && <SignInForm onSignedIn={() => { queryClient.invalidateQueries(); setState("signed-in"); }} />}
+        {state === "signed-out" && <SignInForm tokenCommand={tokenCommand} onSignedIn={() => { queryClient.invalidateQueries(); setState("signed-in"); }} />}
       </div>
     </div>
   );
 }
 
-function SignInForm({ onSignedIn }: { onSignedIn: () => void }) {
+function SignInForm({ tokenCommand, onSignedIn }: { tokenCommand: string; onSignedIn: () => void }) {
   const [token, setToken] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const command = tokenCommand || "docker exec <sld-container> sld token";
+
+  const copyCommand = () => {
+    navigator.clipboard?.writeText(command).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }).catch(() => undefined);
+  };
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -112,11 +125,23 @@ function SignInForm({ onSignedIn }: { onSignedIn: () => void }) {
       <Button type="submit" className="w-full" loading={busy} disabled={!token.trim()}>
         Sign in
       </Button>
-      <p className="text-xs text-[var(--muted-foreground)] leading-relaxed">
-        Lost it? Get a new token and a sign-in link with{" "}
-        <code className="px-1 py-0.5 rounded bg-[var(--secondary)]">docker exec sld sld token</code> (or{" "}
-        <code className="px-1 py-0.5 rounded bg-[var(--secondary)]">make token</code> in the SLD repository).
-      </p>
+      <div className="space-y-1.5 text-xs text-[var(--muted-foreground)] leading-relaxed">
+        <p>Lost it? Run this on your machine for a new token and a sign-in link:</p>
+        <div className="flex items-center gap-2">
+          <code className="flex-1 min-w-0 truncate px-2 py-1 rounded bg-[var(--secondary)] text-[var(--foreground)]" title={command}>
+            {command}
+          </code>
+          <button
+            type="button"
+            onClick={copyCommand}
+            className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded border border-[var(--border)] hover:bg-[var(--secondary)]"
+            aria-label="Copy command"
+          >
+            {copied ? <Check size={12} /> : <Copy size={12} />}
+            {copied ? "Copied" : "Copy"}
+          </button>
+        </div>
+      </div>
     </form>
   );
 }

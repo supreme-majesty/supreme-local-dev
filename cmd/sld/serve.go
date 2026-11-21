@@ -50,6 +50,8 @@ the SLD image, or the current folder on a host).`,
 		if err != nil {
 			return err
 		}
+		auth.SetContainerName(env.ContainerName())
+		fmt.Printf("[SLD] For a new admin token, run on the host: %s\n", auth.TokenCommand())
 
 		workspaces, err := serveWorkspaces(env)
 		if err != nil {
@@ -132,7 +134,8 @@ func serveWorkspaces(env *hostenv.Env) ([]string, error) {
 }
 
 // tokenCmd issues a new admin token for a running (or the next) `sld serve`.
-// Inside the SLD container: docker exec sld sld token (or: make token).
+// Inside the SLD container: docker exec <container> sld token (or: make token).
+// The sign-in page shows the exact command for the running container.
 var tokenCmd = &cobra.Command{
 	Use:   "token",
 	Short: "Print a new admin token and a sign-in link for the dashboard",
@@ -141,8 +144,9 @@ The running dashboard accepts it immediately; the old token stops working.
 Browsers that are already signed in stay signed in.
 
 Run it where SLD keeps its data: inside the SLD container
-  docker exec sld sld token            (docker run setup)
-  make token                           (this repository's compose setup)`,
+  docker exec sld sld token            (docker run --name sld setup)
+  docker exec sld-app-1 sld token      (compose setup; or: make token)
+The dashboard's sign-in page shows the exact command for your container.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		token, err := server.IssueToken(hostenv.DefaultDataDir())

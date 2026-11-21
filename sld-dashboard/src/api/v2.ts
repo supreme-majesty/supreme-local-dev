@@ -141,7 +141,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const v2 = {
-  authStatus: () => request<{ authenticated: boolean }>("/auth/status"),
+  authStatus: () => request<{ authenticated: boolean; token_command?: string }>("/auth/status"),
   login: (token: string) =>
     request<{ authenticated: boolean }>("/auth/login", { method: "POST", body: JSON.stringify({ token }) }),
   logout: () => request<{ authenticated: boolean }>("/auth/logout", { method: "POST" }),

@@ -30,7 +30,7 @@ Open **http://localhost:2025**, paste the token, and you will see the dockerized
 - **Linux:** SLD runs as a non-root user and needs the Docker socket's group: replace `--group-add 0` with `--group-add $(stat -c %g /var/run/docker.sock)`.
 - **Several project folders:** mount each one and list them: `-v ~/work:/workspace/work -v ~/oss:/workspace/oss`, or set `SLD_WORKSPACES=/a,/b`.
 
-> **Lost the token?** Only its hash is stored, so it can't be shown again, but `docker exec sld sld token` prints a new one with a link that signs you straight in. The running dashboard accepts it at once; the old token stops working.
+> **Lost the token?** Only its hash is stored, so it can't be shown again, but `docker exec sld sld token` (with Compose: `docker exec sld-app-1 sld token`, or `make token`; the sign-in page shows the exact command) prints a new one with a link that signs you straight in. The running dashboard accepts it at once; the old token stops working.
 
 ### With this repository (Docker Compose)
 

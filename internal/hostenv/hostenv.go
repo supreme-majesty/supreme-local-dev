@@ -57,11 +57,12 @@ type Mount struct {
 
 // Env is the resolved runtime environment of the SLD process.
 type Env struct {
-	inContainer bool
-	containerID string
-	mounts      []Mount // sorted by Destination length, longest first
-	dataDir     string
-	bindHost    string
+	inContainer   bool
+	containerID   string
+	containerName string
+	mounts        []Mount // sorted by Destination length, longest first
+	dataDir       string
+	bindHost      string
 }
 
 // Inspector is the subset of the Docker client needed for self-inspection.
@@ -126,8 +127,14 @@ func Detect(ctx context.Context, inspector Inspector) (*Env, error) {
 			Destination: m.Destination,
 		})
 	}
-	return Container(info.ID, mounts, ""), nil
+	env := Container(info.ID, mounts, "")
+	env.containerName = strings.TrimPrefix(info.Name, "/")
+	return env, nil
 }
+
+// ContainerName is the name of SLD's own container, such as "sld" or
+// "sld-app-1" ("" on the host or when it could not be inspected).
+func (e *Env) ContainerName() string { return e.containerName }
 
 // InContainer reports whether SLD runs inside a container.
 func (e *Env) InContainer() bool { return e.inContainer }
