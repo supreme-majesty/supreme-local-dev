@@ -118,6 +118,17 @@ export interface EnvFileView {
   mod_time: string;
 }
 
+export interface TaskView {
+  name: string;
+  command: string;
+  app?: string;
+  description?: string;
+  /** "config": from the project's tasks: block; "suggested": found by SLD. */
+  source: "config" | "suggested";
+}
+
+export type ContainerAction = "start" | "stop" | "restart";
+
 export interface EnvBackup {
   id: string;
   name: string;
@@ -256,6 +267,26 @@ export const v2 = {
       method: "POST",
       body: JSON.stringify({ id: backupId }),
     }),
+
+  // Tasks and commands run inside a project's app containers (as background jobs).
+  tasks: (id: string) =>
+    request<{ tasks: TaskView[]; apps: string[]; error?: string }>(`/projects/${encodeURIComponent(id)}/tasks`),
+  runTask: (id: string, task: string, app?: string) =>
+    request<JobView>(`/projects/${encodeURIComponent(id)}/exec`, {
+      method: "POST",
+      body: JSON.stringify({ task, app }),
+    }),
+  runCommand: (id: string, command: string, app?: string) =>
+    request<JobView>(`/projects/${encodeURIComponent(id)}/exec`, {
+      method: "POST",
+      body: JSON.stringify({ command, app }),
+    }),
+  /** Starts, stops or restarts one container of a project. */
+  containerAction: (id: string, container: string, action: ContainerAction) =>
+    request<{ ok: boolean }>(
+      `/projects/${encodeURIComponent(id)}/containers/${encodeURIComponent(container)}/${action}`,
+      { method: "POST" },
+    ),
 
   /** Streams a job's output; returns a function that stops listening. */
   followJob(id: string, onOutput: (text: string) => void, onDone: (job: JobView) => void): () => void {

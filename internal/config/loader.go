@@ -258,6 +258,7 @@ func Validate(cfg *Config) error {
 	if db.ExposePort != 0 && !validPort(db.ExposePort) {
 		fail("services.database.expose_port: %d is not a valid port", db.ExposePort)
 	}
+	validateTasks(cfg, fail)
 
 	return errors.Join(errs...)
 }

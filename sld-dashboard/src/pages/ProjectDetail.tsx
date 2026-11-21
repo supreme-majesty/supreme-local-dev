@@ -25,6 +25,7 @@ import {
 import {
   ApiError,
   v2,
+  type ContainerAction,
   type EnvVar,
   type FileContent,
   type JobView,
@@ -35,13 +36,14 @@ import { Button } from "@/components/ui/Button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import { JobConsole } from "@/components/projects/JobConsole";
 import { LogViewer } from "@/components/projects/LogViewer";
+import { TasksPanel } from "@/components/projects/TasksPanel";
 import { CaTrustNotice, HttpsSwitch } from "@/components/projects/HttpsCard";
 import { useSetHttps } from "@/hooks/use-https";
 import { useToast } from "@/hooks/useToast";
 import { useTheme } from "@/hooks/useTheme";
 import { cn } from "@/lib/utils";
 
-type Tab = "overview" | "config" | "files" | "env" | "logs";
+type Tab = "overview" | "tasks" | "config" | "files" | "env" | "logs";
 
 const actionLabels: Record<ProjectAction, string> = {
   setup: "Setting up",
@@ -145,6 +147,7 @@ export default function ProjectDetail() {
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="tasks">Tasks</TabsTrigger>
           <TabsTrigger value="config">Config</TabsTrigger>
           <TabsTrigger value="files">Files</TabsTrigger>
           <TabsTrigger value="env">Environment</TabsTrigger>
@@ -154,7 +157,10 @@ export default function ProjectDetail() {
         </TabsList>
 
         <TabsContent value="overview" className="mt-4">
-          <Overview project={project} />
+          <Overview project={project} onChanged={refresh} />
+        </TabsContent>
+        <TabsContent value="tasks" className="mt-4">
+          <TasksPanel project={project} />
         </TabsContent>
         <TabsContent value="config" className="mt-4">
           <ConfigEditor
@@ -204,8 +210,21 @@ function StatusText({ project }: { project: ProjectView }) {
 
 // ---------------------------------------------------------------- overview
 
-function Overview({ project }: { project: ProjectView }) {
+function Overview({ project, onChanged }: { project: ProjectView; onChanged: () => void }) {
   const isUp = project.status === "running" || project.status === "partial";
+  const { error: toastError } = useToast();
+  const [pending, setPending] = useState<string | null>(null);
+  const containerAction = async (name: string, action: ContainerAction) => {
+    setPending(name);
+    try {
+      await v2.containerAction(project.id, name, action);
+    } catch (e) {
+      toastError(`Could not ${action} ${name}`, (e as Error).message);
+    } finally {
+      setPending(null);
+      onChanged();
+    }
+  };
   const apps = project.apps ?? [];
   const services = project.services ?? [];
   return (
@@ -281,6 +300,22 @@ function Overview({ project }: { project: ProjectView }) {
                   >
                     {s.state}
                   </span>
+                  <span className="flex items-center">
+                    {s.state === "running" ? (
+                      <>
+                        <IconAction label={`Restart ${s.name}`} disabled={pending !== null} onClick={() => containerAction(s.name, "restart")}>
+                          <RotateCw size={13} className={pending === s.name ? "animate-spin" : undefined} />
+                        </IconAction>
+                        <IconAction label={`Stop ${s.name}`} disabled={pending !== null} onClick={() => containerAction(s.name, "stop")}>
+                          <Square size={13} />
+                        </IconAction>
+                      </>
+                    ) : (
+                      <IconAction label={`Start ${s.name}`} disabled={pending !== null} onClick={() => containerAction(s.name, "start")}>
+                        <Play size={13} className={pending === s.name ? "animate-pulse" : undefined} />
+                      </IconAction>
+                    )}
+                  </span>
                 </span>
               </li>
             ))}
@@ -288,6 +323,31 @@ function Overview({ project }: { project: ProjectView }) {
         )}
       </Section>
     </div>
+  );
+}
+
+function IconAction({
+  label,
+  disabled,
+  onClick,
+  children,
+}: {
+  label: string;
+  disabled?: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      title={label}
+      aria-label={label}
+      disabled={disabled}
+      onClick={onClick}
+      className="rounded p-1 text-[var(--muted-foreground)] hover:bg-[var(--card-hover)] hover:text-[var(--foreground)] disabled:opacity-40"
+    >
+      {children}
+    </button>
   );
 }
 

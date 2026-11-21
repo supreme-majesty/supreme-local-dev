@@ -339,6 +339,11 @@ export function useOpenInEditorMutation() {
   return useMutation({
     mutationFn: ({ path, editor }: { path: string; editor: string }) =>
       api.openInEditor(path, editor),
+    // SLD runs in a container, so the browser opens the editor on this
+    // machine through the editor's URL scheme.
+    onSuccess: (res) => {
+      if (res?.url) window.location.href = res.url;
+    },
     onError: (err: Error) => {
       addToast({
         type: "error",

@@ -9,11 +9,8 @@ import {
   Minimize2,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
-import {
-  useArtisanRunMutation,
-  useArtisanCommands,
-  useArtisanSocket,
-} from "@/hooks/use-daemon";
+import { v2 } from "@/api/v2";
+import { useArtisanCommands } from "@/hooks/use-daemon";
 
 interface ConsoleDrawerProps {
   isOpen: boolean;
@@ -39,27 +36,25 @@ export function ConsoleDrawer({
   const inputRef = useRef<HTMLInputElement>(null);
 
   const { data: commands = [] } = useArtisanCommands();
-  const runMutation = useArtisanRunMutation();
+  const stopFollowing = useRef<(() => void) | null>(null);
 
-  // Socket listener
-  useArtisanSocket(
-    (line, isError) => {
-      setOutput((prev) => [...prev, { line, isError }]);
-    },
-    (success) => {
-      setIsRunning(false);
-      setOutput((prev) => [
-        ...prev,
-        {
-          line: success ? "Command finished successfully." : "Command failed.",
-          isError: !success,
-        },
-      ]);
-      // Focus input when done
-      setTimeout(() => inputRef.current?.focus(), 100);
-    },
-    isOpen ? projectPath : null
-  );
+  // Stop streaming when the drawer closes or unmounts.
+  useEffect(() => {
+    if (!isOpen) stopFollowing.current?.();
+    return () => stopFollowing.current?.();
+  }, [isOpen]);
+
+  const finish = (success: boolean, error?: string) => {
+    setIsRunning(false);
+    setOutput((prev) => [
+      ...prev,
+      {
+        line: success ? "Command finished successfully." : `Command failed${error ? `: ${error}` : "."}`,
+        isError: !success,
+      },
+    ]);
+    setTimeout(() => inputRef.current?.focus(), 100);
+  };
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -83,7 +78,27 @@ export function ConsoleDrawer({
     ]);
     setInput("");
 
-    runMutation.mutate({ projectPath, command: cmd });
+    // Runs in the project's PHP container; the output streams from the job.
+    fetch("/api/artisan/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ project_path: projectPath, command: cmd }),
+    })
+      .then(async (res) => {
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok || !body.job_id) throw new Error(body.error || res.statusText);
+        stopFollowing.current?.();
+        stopFollowing.current = v2.followJob(
+          body.job_id,
+          (text) =>
+            setOutput((prev) => [
+              ...prev,
+              ...text.replace(/\n$/, "").split("\n").map((line) => ({ line, isError: false })),
+            ]),
+          (job) => finish(job.status === "succeeded", job.error),
+        );
+      })
+      .catch((e: Error) => finish(false, e.message));
   };
 
   if (!isOpen) return null;

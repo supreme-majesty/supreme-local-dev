@@ -41,6 +41,7 @@ type Config struct {
 	Services    ServicesConfig    `yaml:"services,omitempty"`
 	Tools       ToolsConfig       `yaml:"tools,omitempty"`
 	Environment map[string]string `yaml:"environment,omitempty"`
+	Tasks       Tasks             `yaml:"tasks,omitempty"` // one-off commands run from the dashboard
 
 	// SourceVersion is the schema version of the file this config was loaded
 	// from (1 when it was upgraded in memory). Not serialized.

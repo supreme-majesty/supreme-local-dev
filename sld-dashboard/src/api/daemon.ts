@@ -612,8 +612,9 @@ class DaemonApi {
     return res || [];
   }
 
-  async openInEditor(path: string, editor: string): Promise<ActionResponse> {
-    return this.request<ActionResponse>("/system/open-editor", {
+  /** Returns the editor link (vscode://file/..., phpstorm://open?file=...) for a project folder. */
+  async openInEditor(path: string, editor: string): Promise<ActionResponse & { url?: string }> {
+    return this.request<ActionResponse & { url?: string }>("/system/open-editor", {
       method: "POST",
       body: JSON.stringify({ path, editor }),
     });

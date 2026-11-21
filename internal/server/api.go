@@ -70,6 +70,14 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v2/projects/{id}", s.handleProject)
 	mux.HandleFunc("POST /api/v2/projects/{id}/{action}", s.handleProjectAction)
 	mux.HandleFunc("GET /api/v2/projects/{id}/logs", s.handleLogs)
+	mux.HandleFunc("GET /api/v2/projects/{id}/tasks", s.handleTasks)
+	mux.HandleFunc("POST /api/v2/projects/{id}/exec", s.handleExec)
+	mux.HandleFunc("POST /api/v2/projects/{id}/containers/{name}/{action}", s.handleContainerAction)
+	// The Artisan console (more specific than the legacy host-PHP route).
+	mux.HandleFunc("POST /api/artisan/run", s.handleArtisanRun)
+	// Editors open through URL schemes in the browser (the container cannot start them).
+	mux.HandleFunc("GET /api/system/editors", s.handleEditors)
+	mux.HandleFunc("POST /api/system/open-editor", s.handleOpenEditor)
 
 	mux.HandleFunc("POST /api/v2/projects/{id}/autostart", s.handleAutostart)
 	mux.HandleFunc("GET /api/v2/settings", s.handleGetSettings)

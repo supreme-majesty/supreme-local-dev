@@ -59,6 +59,8 @@ If another project already uses 3306 or 6379, set `MYSQL_PORT` / `REDIS_PORT` in
   - **Set up** writes the project's `.sld/config.yaml` (detected automatically; review it in the repo).
   - **Start / Stop / Restart** run in the background; their output streams into a console.
   - **Logs** follows any container of the project.
+  - **Tasks** runs one-off commands inside the project's containers: the ones in its `tasks:` block, suggestions SLD finds (Artisan migrations, `package.json` scripts, Django and Rails commands), or any command you type. The output streams live.
+  - **Containers** (on the project's Overview) start, stop or restart one container without touching the rest.
   - **Remove** deletes containers but keeps data unless you explicitly choose to delete the data volumes.
 - **Setup** — Docker and router status, ports, workspace, the HTTPS certificate download, and automation (set up new projects, restart what was running, autostart).
 - **Dashboard**, **Sites**, **Domains** — overview, metrics and every site with its URL; tag and categorise sites. *Remove* hides a project (it writes `.sldignore` in its folder).
@@ -115,6 +117,19 @@ services:
 ```
 
 Runtimes: `php`, `static`, `node`, `python`, `ruby`, `go`, `image`, `dockerfile`, `proxy`, `compose`. The first app owns the root domain; others get `<app>.<name>.localhost`. Dependencies are installed inside the containers (in a per-app volume) and reinstalled when the lockfile changes. Version 1 files keep working; `sld config migrate` rewrites them.
+
+### Tasks
+
+One-off commands you run from the project's **Tasks** tab. Each runs with `sh -c` in a running app container (the main app unless `app` is set). For SLD runtimes it runs as the owner of the project folder, so files it creates are not owned by root.
+
+```yaml
+tasks:
+  fresh: php artisan migrate:fresh --seed
+  build:
+    command: npm run build
+    app: vite
+    description: Production build of the frontend
+```
 
 Add a `.sldignore` file to a folder to keep SLD from treating it as a project.
 
