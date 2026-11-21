@@ -60,7 +60,7 @@ export function JobConsole({ jobId, title, onClose, onFinished }: Props) {
       <pre
         className={cn(
           "max-h-80 overflow-auto p-4 text-xs leading-relaxed font-mono whitespace-pre-wrap break-words",
-          "bg-black/40 text-slate-200",
+          "terminal bg-slate-950 text-slate-200",
         )}
       >
         {output || (status === "running" ? "Waiting for output…" : "")}

@@ -130,7 +130,7 @@ function ContainerRow({
       )}
       {c.last_error && (
         <p
-          className="mt-1 truncate rounded bg-black/30 px-2 py-1 font-mono text-[11px] text-amber-300"
+          className="mt-1 truncate terminal rounded bg-slate-950/90 px-2 py-1 font-mono text-[11px] text-amber-300"
           title={c.last_error.line}
         >
           {c.last_error.time && (

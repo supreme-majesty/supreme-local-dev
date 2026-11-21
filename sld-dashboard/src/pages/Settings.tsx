@@ -21,6 +21,7 @@ import {
 } from "@/hooks/use-daemon";
 import { cn } from "@/lib/utils";
 import { Switch } from "@/components/ui/Switch";
+import { ThemeSwitcher } from "@/components/ui/ThemeSwitcher";
 import { useToast } from "@/hooks/useToast";
 
 function SettingsSection({
@@ -77,7 +78,7 @@ function SettingsRow({
 }
 
 export default function Settings() {
-  const { theme, toggleTheme } = useAppStore();
+  const { themePreference, setTheme } = useAppStore();
   const { data: state, isLoading: isStateLoading } = useSldState();
   const { data: phpVersions, isLoading: isVersionsLoading } = usePHPVersions();
   const { toast } = useToast();
@@ -211,31 +212,15 @@ export default function Settings() {
         description="Customize the dashboard appearance"
         icon={<Palette size={20} />}
       >
-        <SettingsRow label="Theme" description="Choose light or dark mode">
-          <div className="flex gap-2">
-            <button
-              onClick={() => theme === "light" || toggleTheme()}
-              className={cn(
-                "px-4 py-2 rounded-lg text-sm font-medium transition-all",
-                theme === "dark"
-                  ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
-                  : "bg-[var(--muted)] text-[var(--muted-foreground)]"
-              )}
-            >
-              Dark
-            </button>
-            <button
-              onClick={() => theme === "dark" || toggleTheme()}
-              className={cn(
-                "px-4 py-2 rounded-lg text-sm font-medium transition-all",
-                theme === "light"
-                  ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
-                  : "bg-[var(--muted)] text-[var(--muted-foreground)]"
-              )}
-            >
-              Light
-            </button>
-          </div>
+        <SettingsRow
+          label="Theme"
+          description={
+            themePreference === "system"
+              ? "Follows your system setting"
+              : "Choose light or dark mode, or follow your system"
+          }
+        >
+          <ThemeSwitcher value={themePreference} onChange={setTheme} />
         </SettingsRow>
       </SettingsSection>
 

@@ -49,10 +49,10 @@ export default function SystemStatus() {
     <div className="space-y-6 animate-in fade-in duration-500">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-white mb-2">
+          <h1 className="text-3xl font-bold tracking-tight text-[var(--foreground)] mb-2">
             System Status
           </h1>
-          <p className="text-zinc-400">
+          <p className="text-[var(--muted-foreground)]">
             Monitor and control core system services.
           </p>
         </div>
@@ -64,9 +64,9 @@ export default function SystemStatus() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Core Services */}
-        <Card className="bg-zinc-900 border-zinc-800">
+        <Card>
           <CardHeader>
-            <CardTitle className="flex items-center text-white">
+            <CardTitle className="flex items-center text-[var(--foreground)]">
               <Server className="w-5 h-5 mr-2 text-indigo-400" />
               Core Services
             </CardTitle>
@@ -75,7 +75,7 @@ export default function SystemStatus() {
             {services.map((svc) => (
               <div
                 key={svc.name}
-                className="flex items-center justify-between p-3 bg-zinc-950/50 rounded-lg border border-zinc-900"
+                className="flex items-center justify-between p-3 bg-[var(--card-hover)] rounded-lg border border-[var(--border)]"
               >
                 <div className="flex items-center gap-3">
                   <div
@@ -86,18 +86,18 @@ export default function SystemStatus() {
                     }`}
                   />
                   <div>
-                    <div className="font-medium text-zinc-100 flex items-center gap-2">
+                    <div className="font-medium text-[var(--foreground)] flex items-center gap-2">
                       {svc.name}
                       {svc.version && (
                         <Badge
                           variant="secondary"
-                          className="bg-zinc-800 text-xs py-0 h-5"
+                          className="bg-[var(--muted)] text-xs py-0 h-5"
                         >
                           {svc.version}
                         </Badge>
                       )}
                     </div>
-                    <div className="text-xs text-zinc-500 capitalize">
+                    <div className="text-xs text-[var(--muted-foreground)] capitalize">
                       {svc.running ? "Running" : "Stopped"}
                     </div>
                   </div>
@@ -140,7 +140,7 @@ export default function SystemStatus() {
               </div>
             ))}
             {services.length === 0 && (
-              <div className="text-center py-6 text-zinc-500">
+              <div className="text-center py-6 text-[var(--muted-foreground)]">
                 Loading services...
               </div>
             )}
@@ -148,25 +148,25 @@ export default function SystemStatus() {
         </Card>
 
         {/* System Health */}
-        <Card className="bg-zinc-900 border-zinc-800">
+        <Card>
           <CardHeader>
-            <CardTitle className="flex items-center text-white">
+            <CardTitle className="flex items-center text-[var(--foreground)]">
               <Activity className="w-5 h-5 mr-2 text-emerald-400" />
               System Health
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             {health.length === 0 ? (
-              <div className="text-center py-6 text-zinc-500">
+              <div className="text-center py-6 text-[var(--muted-foreground)]">
                 No health checks implemented yet.
               </div>
             ) : (
               health.map((check, i) => (
                 <div
                   key={i}
-                  className="flex items-center justify-between p-3 bg-zinc-950/50 rounded-lg border border-zinc-900"
+                  className="flex items-center justify-between p-3 bg-[var(--card-hover)] rounded-lg border border-[var(--border)]"
                 >
-                  <span className="text-zinc-300 font-medium">
+                  <span className="text-[var(--muted-foreground)] font-medium">
                     {check.name}
                   </span>
                   <Badge

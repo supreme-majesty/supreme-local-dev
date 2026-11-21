@@ -157,6 +157,7 @@ export function Topbar() {
             "active:scale-95"
           )}
           title={`Switch to ${isDark ? "light" : "dark"} mode`}
+          aria-label={`Switch to ${isDark ? "light" : "dark"} mode`}
         >
           {isDark ? <Sun size={20} /> : <Moon size={20} />}
         </button>

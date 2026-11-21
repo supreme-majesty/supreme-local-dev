@@ -319,7 +319,7 @@ export function AlterTableDesigner({
           </div>
 
           {showSQL && (
-            <div className="bg-slate-950 p-4 rounded-md font-mono text-xs text-blue-300 whitespace-pre overflow-x-auto">
+            <div className="terminal bg-slate-950 p-4 rounded-md font-mono text-xs text-blue-300 whitespace-pre overflow-x-auto">
               {generateSQL() || "-- No changes"}
             </div>
           )}

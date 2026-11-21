@@ -48,7 +48,7 @@ export function PluginLogsModal({
           </button>
         </div>
 
-        <div className="flex-1 overflow-auto p-4 bg-[#1e1e1e] text-gray-300 font-mono text-xs">
+        <div className="terminal flex-1 overflow-auto p-4 bg-[#1e1e1e] text-gray-300 font-mono text-xs">
           {isLoading && logs.length === 0 ? (
             <div className="flex justify-center items-center h-full">
               <RefreshCw className="animate-spin text-gray-500" />

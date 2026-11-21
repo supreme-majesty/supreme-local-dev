@@ -105,7 +105,7 @@ export function ConsoleDrawer({
 
   return (
     <div
-      className={`fixed bottom-0 left-0 right-0 bg-[#1e1e1e] text-white shadow-2xl border-t border-[#333] transition-all duration-300 z-50 flex flex-col ${
+      className={`terminal fixed bottom-0 left-0 right-0 bg-[#1e1e1e] text-white shadow-2xl border-t border-[#333] transition-all duration-300 z-50 flex flex-col ${
         isExpanded ? "h-[80vh]" : "h-[400px]"
       }`}
     >

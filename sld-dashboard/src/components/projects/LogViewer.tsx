@@ -74,7 +74,7 @@ export function LogViewer({ project, onClose }: Props) {
           </Button>
         </div>
       </div>
-      <pre className="h-96 overflow-auto p-4 text-xs leading-relaxed font-mono whitespace-pre-wrap break-words bg-black/40 text-slate-200">
+      <pre className="h-96 overflow-auto p-4 text-xs leading-relaxed font-mono whitespace-pre-wrap break-words terminal bg-slate-950 text-slate-200">
         {error ? <span className="text-red-400">{error}</span> : text || "No output yet."}
         <div ref={bottom} />
       </pre>

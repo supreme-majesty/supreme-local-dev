@@ -1,4 +1,13 @@
 import { create } from "zustand";
+import {
+  applyTheme,
+  readPreference,
+  resolveTheme,
+  savePreference,
+  watchTheme,
+  type ResolvedTheme,
+  type ThemePreference,
+} from "@/lib/theme";
 
 interface Toast {
   id: string;
@@ -17,7 +26,10 @@ interface PendingProject {
 
 interface AppState {
   // UI State
-  theme: "dark" | "light";
+  /** The theme in effect. */
+  theme: ResolvedTheme;
+  /** What the viewer chose; "system" follows the OS. */
+  themePreference: ThemePreference;
   sidebarCollapsed: boolean;
 
   // Toasts
@@ -27,6 +39,8 @@ interface AppState {
   pendingProjects: PendingProject[];
 
   // UI Actions
+  setTheme: (pref: ThemePreference) => void;
+  /** Switches to the opposite of the current theme (an explicit choice). */
   toggleTheme: () => void;
   toggleSidebar: () => void;
   addToast: (toast: Omit<Toast, "id">) => string;
@@ -37,17 +51,22 @@ interface AppState {
 
 export const useAppStore = create<AppState>((set, get) => ({
   // Initial state
-  theme: (localStorage.getItem("theme") as "dark" | "light") || "dark",
+  theme: resolveTheme(readPreference()),
+  themePreference: readPreference(),
   sidebarCollapsed: false,
   toasts: [],
   pendingProjects: JSON.parse(localStorage.getItem("pendingProjects") || "[]"),
 
   // UI actions
+  setTheme: (pref) => {
+    savePreference(pref);
+    const theme = resolveTheme(pref);
+    applyTheme(theme);
+    set({ theme, themePreference: pref });
+  },
+
   toggleTheme: () => {
-    const newTheme = get().theme === "dark" ? "light" : "dark";
-    localStorage.setItem("theme", newTheme);
-    document.documentElement.setAttribute("data-theme", newTheme);
-    set({ theme: newTheme });
+    get().setTheme(get().theme === "dark" ? "light" : "dark");
   },
 
   toggleSidebar: () => {
@@ -97,8 +116,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 }));
 
-// Initialize theme on load
+// Apply the theme now, and follow OS changes ("system") and other tabs.
 if (typeof window !== "undefined") {
-  const theme = localStorage.getItem("theme") || "dark";
-  document.documentElement.setAttribute("data-theme", theme);
+  applyTheme(useAppStore.getState().theme);
+  watchTheme((pref) => {
+    const theme = resolveTheme(pref);
+    applyTheme(theme);
+    useAppStore.setState({ theme, themePreference: pref });
+  });
 }

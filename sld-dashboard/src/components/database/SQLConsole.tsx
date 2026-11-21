@@ -872,7 +872,7 @@ export function SQLConsole({ database }: SQLConsoleProps) {
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
         <div className={showExplanation ? "lg:col-span-3" : "lg:col-span-4"}>
-          <div className="border border-[var(--border)] rounded-lg overflow-hidden bg-[#1e1e1e]">
+          <div className="border border-[var(--border)] terminal rounded-lg overflow-hidden bg-[#1e1e1e]">
             <Editor
               height="300px"
               defaultLanguage="sql"
