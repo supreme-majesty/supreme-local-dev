@@ -19,9 +19,13 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
+      // SLD only accepts writes and WebSocket handshakes from its own origin,
+      // so the dev proxy presents requests as coming from it.
       "/api": {
         target: "http://localhost:2025",
         changeOrigin: true,
+        ws: true,
+        headers: { Origin: "http://localhost:2025" },
       },
     },
   },

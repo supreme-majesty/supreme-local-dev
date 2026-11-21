@@ -133,6 +133,28 @@ func TestAuthMiddleware(t *testing.T) {
 	if rec := do(h, "POST", "/api/v2/projects/x/start", "localhost", withCookie(evilOrigin)); rec.Code != 403 {
 		t.Errorf("cross-origin POST should be 403, got %d", rec.Code)
 	}
+	// Other local origins share the cookie (ports are not isolated) and must
+	// be refused too: another dev server, or a project's own domain.
+	for _, o := range []string{"http://localhost:3000", "http://shop.localhost"} {
+		other := func(r *http.Request) { csrf(r); r.Header.Set("Origin", o) }
+		if rec := do(h, "POST", "/api/v2/projects/x/start", "localhost:2025", withCookie(other)); rec.Code != 403 {
+			t.Errorf("POST from %s should be 403, got %d", o, rec.Code)
+		}
+	}
+	own := func(r *http.Request) { csrf(r); r.Header.Set("Origin", "http://localhost:2025") }
+	if rec := do(h, "POST", "/api/v2/projects/x/start", "localhost:2025", withCookie(own)); rec.Code != 200 {
+		t.Errorf("same-origin POST: %d", rec.Code)
+	}
+	// WebSocket handshakes are GETs but get the same origin check.
+	ws := func(o string) func(*http.Request) {
+		return func(r *http.Request) { r.Header.Set("Upgrade", "websocket"); r.Header.Set("Origin", o) }
+	}
+	if rec := do(h, "GET", "/api/v2/projects", "localhost:2025", withCookie(ws("http://localhost:3000"))); rec.Code != 403 {
+		t.Errorf("cross-origin WebSocket handshake should be 403, got %d", rec.Code)
+	}
+	if rec := do(h, "GET", "/api/v2/projects", "localhost:2025", withCookie(ws("http://localhost:2025"))); rec.Code != 200 {
+		t.Errorf("same-origin WebSocket handshake: %d", rec.Code)
+	}
 }
 
 func TestLoadAuth_PersistsOnlyHash(t *testing.T) {

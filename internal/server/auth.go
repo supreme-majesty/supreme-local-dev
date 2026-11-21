@@ -14,12 +14,13 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/supreme-majesty/supreme-local-dev/pkg/daemon/api"
 )
 
 const (
@@ -296,14 +297,18 @@ func (a *Auth) Middleware(next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, "sign in required")
 			return
 		}
-		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
-			if origin := r.Header.Get("Origin"); origin != "" {
-				u, err := url.Parse(origin)
-				if err != nil || !a.hostAllowed(u.Host) {
-					writeError(w, http.StatusForbidden, "cross-origin request refused")
-					return
-				}
+		// Cookies are not isolated by port, so a page on another local port
+		// (or a project's *.localhost domain) can make the browser send the
+		// session cookie. Writes and WebSocket handshakes must therefore come
+		// from the dashboard's own origin.
+		isWrite := r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions
+		if isWrite || strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+			if origin := r.Header.Get("Origin"); origin != "" && !api.SameOrigin(origin, r.Host) {
+				writeError(w, http.StatusForbidden, "cross-origin request refused")
+				return
 			}
+		}
+		if isWrite {
 			if r.Header.Get(csrfHeader) == "" {
 				writeError(w, http.StatusForbidden, "missing "+csrfHeader+" header")
 				return

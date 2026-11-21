@@ -171,7 +171,6 @@ type SuccessResponse struct {
 
 func jsonResponse(w http.ResponseWriter, data interface{}, code int) {
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*") // For dev
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(data)

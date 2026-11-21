@@ -2,7 +2,10 @@ package api
 
 import (
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 
 	"github.com/gorilla/websocket"
@@ -10,12 +13,42 @@ import (
 	"github.com/supreme-majesty/supreme-local-dev/pkg/events"
 )
 
+// Only the dashboard's own origin may open the socket: it streams X-Ray
+// traffic and SQL queries, and browsers send the session cookie from pages on
+// any local port (cookies are not isolated by port).
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 	CheckOrigin: func(r *http.Request) bool {
-		return true // In dev, allow all. In prod, we can restrict to sld.test
+		origin := r.Header.Get("Origin")
+		return origin == "" || SameOrigin(origin, r.Host)
 	},
+}
+
+// SameOrigin reports whether an Origin header names the host and port the
+// request was sent to. Default ports are normalised, so "http://localhost"
+// matches Host "localhost:80".
+func SameOrigin(origin, host string) bool {
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	return normaliseHostPort(u.Host, u.Scheme) == normaliseHostPort(host, u.Scheme)
+}
+
+func normaliseHostPort(hostport, scheme string) string {
+	hostport = strings.ToLower(hostport)
+	h, port, err := net.SplitHostPort(hostport)
+	if err != nil {
+		h, port = strings.Trim(hostport, "[]"), ""
+	}
+	if port == "" {
+		port = "80"
+		if scheme == "https" || scheme == "wss" {
+			port = "443"
+		}
+	}
+	return net.JoinHostPort(h, port)
 }
 
 type Hub struct {
