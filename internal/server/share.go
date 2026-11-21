@@ -1,13 +1,16 @@
 package server
 
 // Sharing a project publicly: a cloudflared quick tunnel runs as a container
-// on the router network and forwards a random trycloudflare.com URL to the
-// router with the project's Host header.
+// on the router network and forwards a random trycloudflare.com URL to a small
+// nginx proxy, which calls the router with the project's Host header and
+// rewrites the app's local URLs (http://<project>.localhost/...) to the public
+// one, so assets, links and redirects work for visitors.
 
 import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"regexp"
@@ -28,6 +31,8 @@ const (
 	shareLabel       = "com.supreme.sld.share"
 	shareDomainLabel = "com.supreme.sld.share-domain"
 	cloudflaredImage = "cloudflare/cloudflared:2024.12.2"
+	shareProxyLabel  = "com.supreme.sld.share-proxy"
+	shareProxyImage  = "nginx:1.27-alpine"
 )
 
 var tunnelURL = regexp.MustCompile(`https://[a-z0-9-]+\.trycloudflare\.com`)
@@ -78,6 +83,22 @@ func (s *Server) shareContainers(ctx context.Context) ([]*reconcile.ActualContai
 	return out, nil
 }
 
+// removeShareProxies removes the rewriting proxies of a shared project.
+func (s *Server) removeShareProxies(ctx context.Context, site string) error {
+	all, err := s.opts.Engine.ListAllContainers(ctx)
+	if err != nil {
+		return err
+	}
+	for _, c := range all {
+		if c.Labels[shareProxyLabel] == site {
+			if err := s.opts.Engine.RemoveContainer(ctx, c.ID, true); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func decodeSite(r *http.Request) string {
 	var req struct {
 		Site string `json:"site"`
@@ -105,8 +126,16 @@ func (s *Server) handleShareStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// A running tunnel is reused only together with its running proxy; older
+	// tunnels without one served pages with unreachable local links.
+	proxyUp := false
+	if all, err := s.opts.Engine.ListAllContainers(ctx); err == nil {
+		for _, c := range all {
+			proxyUp = proxyUp || (c.Labels[shareProxyLabel] == site && c.State == "running")
+		}
+	}
 	for _, c := range existing {
-		if c.Labels[shareLabel] == site && c.State == "running" {
+		if c.Labels[shareLabel] == site && c.State == "running" && proxyUp {
 			if url := s.tunnelURLOf(ctx, c.ID, 15*time.Second); url != "" {
 				writeJSON(w, http.StatusOK, map[string]any{"success": true, "message": url})
 				return
@@ -116,39 +145,105 @@ func (s *Server) handleShareStart(w http.ResponseWriter, r *http.Request) {
 			_ = s.opts.Engine.RemoveContainer(ctx, c.ID, true)
 		}
 	}
+	_ = s.removeShareProxies(ctx, site)
 
 	name := "sld-share-" + strings.Trim(shareNameRe.ReplaceAllString(strings.ToLower(site), "-"), "-")
+	proxyName := name + "-proxy"
 	// Tunnels created before they carried the SLD label are not listed above;
-	// a stopped one still holds the name, so remove it by name.
-	if info, err := s.opts.Engine.InspectContainer(ctx, name); err == nil && info.Config != nil && info.Config.Labels[shareLabel] != "" {
-		_ = s.opts.Engine.RemoveContainer(ctx, info.ID, true)
+	// a stopped one still holds the name, so remove it (and its proxy) by name.
+	for _, n := range []string{name, proxyName} {
+		if info, err := s.opts.Engine.InspectContainer(ctx, n); err == nil && info.Config != nil &&
+			(info.Config.Labels[shareLabel] != "" || info.Config.Labels[shareProxyLabel] != "") {
+			_ = s.opts.Engine.RemoveContainer(ctx, info.ID, true)
+		}
 	}
 
-	id, err := s.opts.Engine.CreateContainer(ctx, &reconcile.DesiredContainer{
+	// The proxy gives the router the project's Host and rewrites the local
+	// URLs the app puts in its pages to the public one; see shareProxyConfig.
+	proxyID, err := s.startShareContainer(ctx, &reconcile.DesiredContainer{
+		Name:     proxyName,
+		Image:    shareProxyImage,
+		Cmd:      []string{"sh", "-c", "cat > /etc/nginx/conf.d/default.conf <<'SLD_EOF'\n" + shareProxyConfig(domain) + "SLD_EOF\nexec nginx -g 'daemon off;'"},
+		Networks: []string{orchestrate.GlobalNetwork},
+		Labels:   map[string]string{docker.LabelSLD: "true", shareProxyLabel: site},
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	id, err := s.startShareContainer(ctx, &reconcile.DesiredContainer{
 		Name:     name,
 		Image:    cloudflaredImage,
-		Cmd:      []string{"tunnel", "--no-autoupdate", "--url", "http://" + orchestrate.RouterContainer + ":80", "--http-host-header", domain},
+		Cmd:      []string{"tunnel", "--no-autoupdate", "--url", "http://" + proxyName + ":8080"},
 		Networks: []string{orchestrate.GlobalNetwork},
 		// The SLD label makes the tunnel visible to ListAllContainers, so status,
 		// stop and the cleanup above find it.
 		Labels: map[string]string{docker.LabelSLD: "true", shareLabel: site, shareDomainLabel: domain},
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if err := s.opts.Engine.StartContainer(ctx, id); err != nil {
-		_ = s.opts.Engine.RemoveContainer(ctx, id, true)
+		_ = s.opts.Engine.RemoveContainer(context.Background(), proxyID, true)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	url := s.tunnelURLOf(ctx, id, 45*time.Second)
 	if url == "" {
 		_ = s.opts.Engine.RemoveContainer(context.Background(), id, true)
+		_ = s.opts.Engine.RemoveContainer(context.Background(), proxyID, true)
 		writeError(w, http.StatusGatewayTimeout, "the tunnel did not report a public URL (is the internet reachable from Docker?)")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "message": url})
+}
+
+func (s *Server) startShareContainer(ctx context.Context, desired *reconcile.DesiredContainer) (string, error) {
+	id, err := s.opts.Engine.CreateContainer(ctx, desired)
+	if err != nil {
+		return "", err
+	}
+	if err := s.opts.Engine.StartContainer(ctx, id); err != nil {
+		_ = s.opts.Engine.RemoveContainer(ctx, id, true)
+		return "", err
+	}
+	return id, nil
+}
+
+// shareProxyConfig is the nginx config between the tunnel and the router.
+// Apps build absolute URLs from the Host they are served on (Laravel's asset()
+// and url(), redirects, canonical links...). The router needs the project's
+// local Host to route, so the app would print http://<project>.localhost/...
+// links that a visitor's browser cannot load. nginx sends the local Host
+// upstream and rewrites those URLs, redirects and cookie domains to the
+// public https host the visitor used. Upstream compression is turned off so
+// bodies can be rewritten.
+func shareProxyConfig(domain string) string {
+	d := strings.ReplaceAll(domain, ".", `\.`)
+	var subs strings.Builder
+	for _, scheme := range []string{"http", "https"} {
+		fmt.Fprintf(&subs, "        sub_filter '%s://%s' 'https://$host';\n", scheme, domain)
+		// JSON-escaped URLs (Inertia page props, @json, Livewire snapshots).
+		fmt.Fprintf(&subs, "        sub_filter '%s:\\\\/\\\\/%s' 'https:\\\\/\\\\/$host';\n", scheme, domain)
+	}
+	fmt.Fprintf(&subs, "        sub_filter '//%s' '//$host';\n", domain)
+	return fmt.Sprintf(`server {
+    listen 8080;
+    client_max_body_size 100m;
+    location / {
+        proxy_pass http://%s:80;
+        proxy_http_version 1.1;
+        proxy_set_header Host %s;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header Accept-Encoding "";
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $http_connection;
+        proxy_read_timeout 300s;
+        proxy_redirect ~^https?://%s(.*)$ https://$host$1;
+        proxy_cookie_domain %s $host;
+        sub_filter_types *;
+        sub_filter_once off;
+%s    }
+}
+`, orchestrate.RouterContainer, domain, d, domain, subs.String())
 }
 
 // tunnelURLOf reads the public URL cloudflared prints when the tunnel is up.
@@ -204,6 +299,10 @@ func (s *Server) handleShareStop(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+	}
+	if err := s.removeShareProxies(r.Context(), site); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true})
 }
