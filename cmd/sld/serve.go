@@ -17,6 +17,7 @@ import (
 	"github.com/supreme-majesty/supreme-local-dev/internal/docker"
 	"github.com/supreme-majesty/supreme-local-dev/internal/hostenv"
 	"github.com/supreme-majesty/supreme-local-dev/internal/server"
+	"github.com/supreme-majesty/supreme-local-dev/pkg/daemon"
 	"github.com/supreme-majesty/supreme-local-dev/pkg/daemon/api"
 )
 
@@ -63,6 +64,9 @@ the SLD image, or the current folder on a host).`,
 			Engine: engine, Env: env, Auth: auth, Workspaces: workspaces, Version: Version,
 		})
 		controlPlane.Register(mux)
+		if d, err := daemon.GetClient(); err == nil {
+			controlPlane.StartXRay(context.Background(), d.Events) // X-Ray: requests through the router
+		}
 
 		// Automation: set up new projects and start the ones that should run.
 		go func() {

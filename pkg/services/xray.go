@@ -17,6 +17,7 @@ type XRayLogEntry struct {
 	Method          string `json:"method"`
 	Host            string `json:"host"`
 	URI             string `json:"uri"`
+	Scheme          string `json:"scheme,omitempty"`
 	Status          int    `json:"status"`
 	BodyBytes       int    `json:"body_bytes"`
 	Latency         string `json:"latency"`

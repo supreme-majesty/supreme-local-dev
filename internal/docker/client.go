@@ -271,6 +271,9 @@ func (e *DockerEngine) CreateContainer(ctx context.Context, desired *reconcile.D
 		ExtraHosts:    desired.ExtraHosts,
 		RestartPolicy: container.RestartPolicy{Name: restart},
 	}
+	if len(desired.LogOptions) > 0 {
+		hostConfig.LogConfig = container.LogConfig{Type: "json-file", Config: desired.LogOptions}
+	}
 
 	// 4. Primary Network Configuration
 	var netConfig *network.NetworkingConfig

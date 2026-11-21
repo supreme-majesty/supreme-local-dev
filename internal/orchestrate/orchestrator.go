@@ -155,18 +155,38 @@ func (o *Orchestrator) EnsureGlobalInfra(ctx context.Context) error {
 		return fmt.Errorf("router cannot access SLD Traefik config (mount SLD's data directory as a volume): %w", err)
 	}
 
+	// The static config is SLD's (not the one baked into the image), so it can
+	// add the JSON access log X-Ray reads without publishing a new image.
+	staticDir := filepath.Join(o.env.DataDir(), "traefik-static")
+	if err := os.MkdirAll(staticDir, 0o755); err != nil {
+		return fmt.Errorf("failed to create %s: %w", staticDir, err)
+	}
+	if err := os.WriteFile(filepath.Join(staticDir, "traefik.yml"), []byte(RouterStaticConfig), 0o644); err != nil {
+		return fmt.Errorf("failed to write the router config: %w", err)
+	}
+	staticMount, err := o.env.MountFor(staticDir, "/etc/traefik/static", true)
+	if err != nil {
+		return fmt.Errorf("router cannot access SLD Traefik config (mount SLD's data directory as a volume): %w", err)
+	}
+	staticSum := sha256.Sum256([]byte(RouterStaticConfig))
+
 	// 3. Ensure router container is running
 	routerImage := fmt.Sprintf("%s/sld-router:%s", ImageRegistry, RouterImageTag)
 	desired := &reconcile.DesiredContainer{
 		Name:  RouterContainer,
 		Image: routerImage,
+		Cmd:   []string{"traefik", "--configFile=/etc/traefik/static/traefik.yml"},
 		Labels: map[string]string{
 			docker.LabelSLD:          "true",
 			docker.LabelVersion:      docker.CurrentVersion,
 			docker.LabelManagedBy:    docker.ManagedBySLD,
 			docker.LabelService:      docker.ServiceRouter,
 			docker.LabelResourceType: docker.ResourceTypeContainer,
+			// A changed static config needs a new router (Traefik reads it once).
+			"com.supreme.sld.router-config": hex.EncodeToString(staticSum[:8]),
 		},
+		// Every request writes an access log line: cap what Docker keeps.
+		LogOptions: map[string]string{"max-size": "10m", "max-file": "3"},
 		Ports: []string{
 			o.env.PublishPort(o.env.HTTPPort(), "80"),
 			o.env.PublishPort(o.env.HTTPSPort(), "443"),
@@ -176,7 +196,7 @@ func (o *Orchestrator) EnsureGlobalInfra(ctx context.Context) error {
 		ExtraHosts: []string{"host.docker.internal:host-gateway"},
 		// The Docker socket path is resolved on the Docker host, which is what Traefik needs.
 		Volumes: []string{"/var/run/docker.sock:/var/run/docker.sock:ro"},
-		Mounts:  []reconcile.Mount{certMount, dynMount},
+		Mounts:  []reconcile.Mount{certMount, dynMount, staticMount},
 		// SLD infrastructure, not a project: keep it up across Docker restarts.
 		RestartPolicy: "unless-stopped",
 	}

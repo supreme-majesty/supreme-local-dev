@@ -17,3 +17,12 @@ api:
   dashboard: false
 
 ping: {}
+
+accessLog:
+  format: json
+  fields:
+    defaultMode: keep
+    headers:
+      defaultMode: drop
+      names:
+        User-Agent: keep

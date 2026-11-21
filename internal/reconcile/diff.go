@@ -64,6 +64,10 @@ type DesiredContainer struct {
 	// containers start only when asked to, never on their own when Docker
 	// starts. SLD's own router uses "unless-stopped".
 	RestartPolicy string
+	// LogOptions are json-file log driver options, e.g. max-size and max-file
+	// for containers that log a lot (the router's access log). Empty: Docker's
+	// defaults.
+	LogOptions map[string]string
 }
 
 // ActualContainer represents the current state of a container in Docker.

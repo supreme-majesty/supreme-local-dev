@@ -11,17 +11,21 @@ import {
   Clock,
   Database,
   Globe,
+  AlertTriangle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface XRayLog {
   id: string;
   time_iso: string;
+  remote_addr?: string;
   method: string;
   host: string;
   uri: string;
+  scheme?: string;
   status: number;
   latency: string;
+  upstream_latency?: string;
   body_bytes: number;
   agent: string;
 }
@@ -36,6 +40,13 @@ interface DBQueryLog {
   argument: string;
 }
 
+const STATUS_TEXT: Record<number, string> = {
+  200: "OK", 201: "Created", 204: "No Content", 301: "Moved Permanently", 302: "Found", 304: "Not Modified",
+  400: "Bad Request", 401: "Unauthorized", 403: "Forbidden", 404: "Not Found", 405: "Method Not Allowed",
+  419: "Page Expired", 422: "Unprocessable", 429: "Too Many Requests", 500: "Server Error", 502: "Bad Gateway",
+  503: "Unavailable", 504: "Gateway Timeout",
+};
+
 export default function XRay() {
   const [mode, setMode] = useState<"http" | "database">("http");
   const [logs, setLogs] = useState<XRayLog[]>([]);
@@ -44,44 +55,53 @@ export default function XRay() {
   const [search, setSearch] = useState("");
   const [selectedLog, setSelectedLog] = useState<XRayLog | null>(null);
   const [selectedDbLog, setSelectedDbLog] = useState<DBQueryLog | null>(null);
+  const [dbError, setDbError] = useState<string | null>(null);
 
   const ws = useRef<WebSocket | null>(null);
+  const paused = useRef(false);
   const logContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    paused.current = isPaused;
+  }, [isPaused]);
+
+  // One connection for the page; pausing only stops adding entries.
+  useEffect(() => {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const host = window.location.host;
-    const socket = new WebSocket(`${protocol}//${host}/api/ws`);
+    const socket = new WebSocket(`${protocol}//${window.location.host}/api/ws`);
 
     socket.onmessage = (event) => {
+      if (paused.current) return;
       const message = JSON.parse(event.data);
-      if (!isPaused) {
-        if (message.type === "xray:log") {
-          setLogs((prev) => {
-            const newLog = {
-              ...message.data,
-              id: Math.random().toString(36).substr(2, 9),
-            };
-            return [newLog, ...prev].slice(0, 100);
-          });
-        } else if (message.type === "database:query") {
-          setDbLogs((prev) => {
-            const newLog = message.data;
-            return [newLog, ...prev].slice(0, 100);
-          });
-        }
+      if (message.type === "xray:log") {
+        setLogs((prev) => [{ ...message.data, id: Math.random().toString(36).slice(2, 11) }, ...prev].slice(0, 100));
+      } else if (message.type === "database:query") {
+        setDbLogs((prev) => [message.data, ...prev].slice(0, 100));
       }
     };
-
-    socket.onopen = () => console.log("X-Ray: Connected");
-    socket.onclose = () => console.log("X-Ray: Disconnected");
-
     ws.current = socket;
+    return () => socket.close();
+  }, []);
 
+  // The database's query log is on only while this view asks for it.
+  useEffect(() => {
+    if (mode !== "database") return;
+    let cancelled = false;
+    const beat = () =>
+      fetch("/api/xray/queries/watch", { method: "POST" })
+        .then(async (res) => {
+          if (cancelled) return;
+          if (res.ok) setDbError(null);
+          else setDbError((await res.json().catch(() => ({}))).error || res.statusText);
+        })
+        .catch((e) => !cancelled && setDbError((e as Error).message));
+    beat();
+    const timer = setInterval(beat, 20000);
     return () => {
-      socket.close();
+      cancelled = true;
+      clearInterval(timer);
     };
-  }, [isPaused]);
+  }, [mode]);
 
   const filteredLogs = logs.filter(
     (log) =>
@@ -291,7 +311,7 @@ export default function XRay() {
                         Full URL
                       </span>
                       <div className="p-2 bg-[var(--background)] rounded-lg text-xs break-all font-mono border border-[var(--border)]">
-                        http://{selectedLog.host}
+                        {selectedLog.scheme || "http"}://{selectedLog.host}
                         {selectedLog.uri}
                       </div>
                     </div>
@@ -307,10 +327,12 @@ export default function XRay() {
                               "w-2 h-2 rounded-full",
                               selectedLog.status < 300
                                 ? "bg-emerald-500"
+                                : selectedLog.status < 400
+                                ? "bg-blue-500"
                                 : "bg-red-500"
                             )}
                           />
-                          {selectedLog.status} OK
+                          {selectedLog.status} {STATUS_TEXT[selectedLog.status] ?? ""}
                         </div>
                       </div>
                       <div className="flex flex-col gap-1 text-right">
@@ -337,8 +359,14 @@ export default function XRay() {
                         <span className="text-[var(--muted-foreground)]">
                           IP Address
                         </span>
-                        <span className="font-mono">127.0.0.1</span>
+                        <span className="font-mono">{selectedLog.remote_addr || "—"}</span>
                       </div>
+                      {selectedLog.upstream_latency && (
+                        <div className="flex justify-between text-xs py-1 border-b border-[var(--border)]">
+                          <span className="text-[var(--muted-foreground)]">Time in the app</span>
+                          <span className="font-mono">{Number(selectedLog.upstream_latency).toFixed(3)}s</span>
+                        </div>
+                      )}
                       <div className="flex justify-between text-xs py-1 border-b border-[var(--border)]">
                         <span className="text-[var(--muted-foreground)]">
                           Payload Size
@@ -362,7 +390,7 @@ export default function XRay() {
 
                 <div className="p-4 bg-[var(--background)] border-t border-[var(--border)] rounded-b-xl">
                   <p className="text-[10px] text-center text-[var(--muted-foreground)]">
-                    Showing raw Nginx access log data as JSON
+                    From the SLD router&apos;s access log
                   </p>
                 </div>
               </div>
@@ -380,10 +408,16 @@ export default function XRay() {
               </div>
 
               <div className="flex-1 overflow-y-auto" ref={logContainerRef}>
+                {dbError && (
+                  <div className="m-4 flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-400">
+                    <AlertTriangle size={16} className="mt-0.5 flex-shrink-0" /> {dbError}
+                  </div>
+                )}
                 {filteredDbLogs.length === 0 ? (
                   <div className="h-full flex flex-col items-center justify-center text-[var(--muted-foreground)] opacity-50 space-y-4">
                     <Database size={48} strokeWidth={1} />
                     <p>Waiting for database queries...</p>
+                    <p className="text-xs">Queries on SLD&apos;s shared database server; logging stops a minute after you leave this view.</p>
                   </div>
                 ) : (
                   filteredDbLogs.map((log) => (

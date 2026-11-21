@@ -93,6 +93,7 @@ func (s *Server) Mux() *http.ServeMux {
 	mux.HandleFunc("/api/logs/sources", s.handleLogSources)
 	mux.HandleFunc("/api/logs/watch", s.handleLogWatch)
 	mux.HandleFunc("/api/logs/unwatch", s.handleLogUnwatch)
+	mux.HandleFunc("/api/xray/queries/watch", s.handleQueryWatch)
 
 	// Supreme Healer
 	mux.HandleFunc("/api/healer/issues", s.handleHealerIssues)
@@ -1826,6 +1827,29 @@ func (s *Server) handleLogUnwatch(w http.ResponseWriter, r *http.Request) {
 	d, _ := daemon.GetClient()
 	d.LogWatcher.StopWatching(services.LogSource(req.Source))
 
+	jsonResponse(w, SuccessResponse{Success: true}, 200)
+}
+
+// handleQueryWatch is X-Ray's heartbeat while its Queries view is open: it
+// keeps the database's query log on (POST) or turns it off now (DELETE).
+func (s *Server) handleQueryWatch(w http.ResponseWriter, r *http.Request) {
+	d, _ := daemon.GetClient()
+	if d == nil || d.QueryWatcher == nil {
+		jsonResponse(w, ErrorResponse{Error: "no MySQL/MariaDB server is configured for SLD"}, 503)
+		return
+	}
+	switch r.Method {
+	case http.MethodPost:
+		if err := d.QueryWatcher.Touch(); err != nil {
+			jsonResponse(w, ErrorResponse{Error: "could not watch queries: " + err.Error()}, 502)
+			return
+		}
+	case http.MethodDelete:
+		d.QueryWatcher.Stop()
+	default:
+		jsonResponse(w, ErrorResponse{Error: "use POST or DELETE"}, 405)
+		return
+	}
 	jsonResponse(w, SuccessResponse{Success: true}, 200)
 }
 

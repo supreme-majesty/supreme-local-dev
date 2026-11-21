@@ -43,7 +43,8 @@ func Initialize() (*Daemon, error) {
 		log.Printf("Warning: phpMyAdmin hide_db config: %v", err)
 	}
 
-	go xrayService.Start()
+	// X-Ray's HTTP traffic now comes from the router's access log
+	// (internal/server/xray.go); there is no host nginx log to tail.
 
 	instance = &Daemon{
 		Events:          eventBus,
@@ -59,13 +60,15 @@ func Initialize() (*Daemon, error) {
 
 	instance.HealerService.Start()
 
-	// Watch queries on the configured MySQL server (shown on the X-Ray page).
+	// Queries on the configured MySQL server, shown on the X-Ray page. The
+	// server's general log is on only while the page asks for it (Touch);
+	// one left on by an earlier SLD is turned off and emptied.
 	qw, err := services.NewQueryWatcher(eventBus, services.MySQLDSN())
 	if err == nil {
 		instance.QueryWatcher = qw
-		qw.Start()
+		go qw.Reset()
 	} else {
-		fmt.Printf("Warning: Failed to start QueryWatcher: %v\n", err)
+		fmt.Printf("Warning: Failed to prepare QueryWatcher: %v\n", err)
 	}
 
 	return instance, nil
