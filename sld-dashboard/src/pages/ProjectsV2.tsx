@@ -19,7 +19,16 @@ import {
   X,
 } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
-import { ApiError, v2, type Candidate, type JobView, type ProjectAction, type ProjectView } from "@/api/v2";
+import {
+  ApiError,
+  v2,
+  type Candidate,
+  type JobView,
+  type ProjectAction,
+  type ProjectUsage,
+  type ProjectView,
+} from "@/api/v2";
+import { UsageText } from "@/components/projects/UsageText";
 import { Button } from "@/components/ui/Button";
 import { JobConsole } from "@/components/projects/JobConsole";
 import { LogViewer } from "@/components/projects/LogViewer";
@@ -64,6 +73,9 @@ export default function ProjectsV2() {
     queryFn: () => v2.projects(),
     refetchInterval: job ? 3000 : 15000,
   });
+
+  // CPU, memory and problems per project (sampled by SLD every few seconds).
+  const usage = useQuery({ queryKey: ["v2", "usage"], queryFn: () => v2.usage(), refetchInterval: 10000 });
 
   // SLD only detects dockerized and parked/linked projects, so everything it returns is listed.
   const base = useMemo(() => projects ?? [], [projects]);
@@ -217,6 +229,7 @@ export default function ProjectsV2() {
           <ProjectRow
             key={p.id || p.folder}
             project={p}
+            usage={p.id ? usage.data?.projects[p.id] : undefined}
             busy={Boolean(p.job_id)}
             onAction={(a) => (a === "destroy" ? setConfirmDestroy(p) : run(p, a))}
             onLogs={() => {
@@ -265,6 +278,7 @@ export default function ProjectsV2() {
 
 function ProjectRow({
   project: p,
+  usage,
   busy,
   onAction,
   onLogs,
@@ -273,6 +287,7 @@ function ProjectRow({
   onUnlink,
 }: {
   project: ProjectView;
+  usage?: ProjectUsage;
   busy: boolean;
   onAction: (a: ProjectAction) => void;
   onLogs: () => void;
@@ -336,7 +351,10 @@ function ProjectRow({
               </button>
             )}
           </div>
-          <p className="text-xs text-[var(--muted-foreground)] mt-0.5">{p.folder}</p>
+          <p className="text-xs text-[var(--muted-foreground)] mt-0.5 flex flex-wrap items-center gap-x-3">
+            <span>{p.folder}</span>
+            <UsageText usage={usage} />
+          </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5">

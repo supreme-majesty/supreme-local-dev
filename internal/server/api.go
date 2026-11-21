@@ -40,6 +40,7 @@ type Server struct {
 	opts     Options
 	jobs     *Jobs
 	settings *settingsStore
+	usage    *usageCache // recent container stats samples
 
 	mu        sync.Mutex
 	projects  map[string]v2.ScanResult // project id -> last scan result
@@ -53,7 +54,7 @@ func New(opts Options) *Server {
 		fmt.Printf("[SLD] ⚠️  %v — using default automation settings\n", err)
 		settings = &settingsStore{path: filepath.Join(opts.Env.DataDir(), "settings.json"), s: defaultSettings()}
 	}
-	return &Server{opts: opts, jobs: NewJobs(), settings: settings, projects: map[string]v2.ScanResult{}}
+	return &Server{opts: opts, jobs: NewJobs(), settings: settings, usage: &usageCache{}, projects: map[string]v2.ScanResult{}}
 }
 
 // Register adds the /api/v2 routes to mux.
@@ -71,6 +72,8 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v2/projects/{id}/{action}", s.handleProjectAction)
 	mux.HandleFunc("GET /api/v2/projects/{id}/logs", s.handleLogs)
 	mux.HandleFunc("GET /api/v2/projects/{id}/tasks", s.handleTasks)
+	mux.HandleFunc("GET /api/v2/projects/{id}/health", s.handleProjectHealth)
+	mux.HandleFunc("GET /api/v2/usage", s.handleUsage)
 	mux.HandleFunc("POST /api/v2/projects/{id}/exec", s.handleExec)
 	mux.HandleFunc("POST /api/v2/projects/{id}/containers/{name}/{action}", s.handleContainerAction)
 	// The Artisan console (more specific than the legacy host-PHP route).

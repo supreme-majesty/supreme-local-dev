@@ -25,7 +25,6 @@ import {
 import {
   ApiError,
   v2,
-  type ContainerAction,
   type EnvVar,
   type FileContent,
   type JobView,
@@ -37,6 +36,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import { JobConsole } from "@/components/projects/JobConsole";
 import { LogViewer } from "@/components/projects/LogViewer";
 import { TasksPanel } from "@/components/projects/TasksPanel";
+import { ContainersHealth } from "@/components/projects/ContainersHealth";
 import { CaTrustNotice, HttpsSwitch } from "@/components/projects/HttpsCard";
 import { useSetHttps } from "@/hooks/use-https";
 import { useToast } from "@/hooks/useToast";
@@ -212,21 +212,7 @@ function StatusText({ project }: { project: ProjectView }) {
 
 function Overview({ project, onChanged }: { project: ProjectView; onChanged: () => void }) {
   const isUp = project.status === "running" || project.status === "partial";
-  const { error: toastError } = useToast();
-  const [pending, setPending] = useState<string | null>(null);
-  const containerAction = async (name: string, action: ContainerAction) => {
-    setPending(name);
-    try {
-      await v2.containerAction(project.id, name, action);
-    } catch (e) {
-      toastError(`Could not ${action} ${name}`, (e as Error).message);
-    } finally {
-      setPending(null);
-      onChanged();
-    }
-  };
   const apps = project.apps ?? [];
-  const services = project.services ?? [];
   return (
     <div className="space-y-4">
       {project.problems && project.problems.length > 0 && (
@@ -280,74 +266,9 @@ function Overview({ project, onChanged }: { project: ProjectView; onChanged: () 
         )}
       </Section>
       <Section title="Containers">
-        {services.length === 0 ? (
-          <p className="text-sm text-[var(--muted-foreground)]">No containers. Start the project to create them.</p>
-        ) : (
-          <ul className="divide-y divide-[var(--border)]">
-            {services.map((s) => (
-              <li key={s.name} className="flex items-center justify-between py-2 text-sm">
-                <span className="font-mono text-xs text-[var(--foreground)]">{s.name}</span>
-                <span className="flex items-center gap-2 text-xs text-[var(--muted-foreground)]">
-                  {s.app ? `${s.app} · ` : ""}
-                  {s.service}
-                  <span
-                    className={cn(
-                      "px-2 py-0.5 rounded-full border",
-                      s.state === "running"
-                        ? "bg-green-500/15 text-green-400 border-green-500/30"
-                        : "bg-slate-500/15 text-slate-300 border-slate-500/30",
-                    )}
-                  >
-                    {s.state}
-                  </span>
-                  <span className="flex items-center">
-                    {s.state === "running" ? (
-                      <>
-                        <IconAction label={`Restart ${s.name}`} disabled={pending !== null} onClick={() => containerAction(s.name, "restart")}>
-                          <RotateCw size={13} className={pending === s.name ? "animate-spin" : undefined} />
-                        </IconAction>
-                        <IconAction label={`Stop ${s.name}`} disabled={pending !== null} onClick={() => containerAction(s.name, "stop")}>
-                          <Square size={13} />
-                        </IconAction>
-                      </>
-                    ) : (
-                      <IconAction label={`Start ${s.name}`} disabled={pending !== null} onClick={() => containerAction(s.name, "start")}>
-                        <Play size={13} className={pending === s.name ? "animate-pulse" : undefined} />
-                      </IconAction>
-                    )}
-                  </span>
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
+        <ContainersHealth project={project} onChanged={onChanged} />
       </Section>
     </div>
-  );
-}
-
-function IconAction({
-  label,
-  disabled,
-  onClick,
-  children,
-}: {
-  label: string;
-  disabled?: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      title={label}
-      aria-label={label}
-      disabled={disabled}
-      onClick={onClick}
-      className="rounded p-1 text-[var(--muted-foreground)] hover:bg-[var(--card-hover)] hover:text-[var(--foreground)] disabled:opacity-40"
-    >
-      {children}
-    </button>
   );
 }
 

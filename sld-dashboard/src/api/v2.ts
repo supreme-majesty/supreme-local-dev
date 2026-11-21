@@ -129,6 +129,39 @@ export interface TaskView {
 
 export type ContainerAction = "start" | "stop" | "restart";
 
+export interface Usage {
+  cpu_percent: number;
+  mem_bytes: number;
+  mem_limit: number;
+  net_rx_bytes: number;
+  net_tx_bytes: number;
+}
+
+export interface ContainerHealth {
+  name: string;
+  service: string;
+  app?: string;
+  state: string;
+  health?: string;
+  restart_count: number;
+  exit_code: number;
+  oom_killed?: boolean;
+  started_at?: string;
+  finished_at?: string;
+  crash_loop?: boolean;
+  /** What is wrong with the container, if anything. */
+  problem?: string;
+  usage?: Usage;
+  last_error?: { time?: string; line: string };
+}
+
+export interface ProjectUsage {
+  cpu_percent: number;
+  mem_bytes: number;
+  running: number;
+  problems: number;
+}
+
 export interface EnvBackup {
   id: string;
   name: string;
@@ -281,6 +314,11 @@ export const v2 = {
       method: "POST",
       body: JSON.stringify({ command, app }),
     }),
+  /** Each container's state, CPU/memory, restarts and last error line. */
+  health: (id: string) =>
+    request<{ containers: ContainerHealth[]; total: ProjectUsage }>(`/projects/${encodeURIComponent(id)}/health`),
+  /** Resource use per project id ("sld" = SLD's own containers). */
+  usage: () => request<{ projects: Record<string, ProjectUsage>; total: ProjectUsage; sampled_at: string }>("/usage"),
   /** Starts, stops or restarts one container of a project. */
   containerAction: (id: string, container: string, action: ContainerAction) =>
     request<{ ok: boolean }>(
