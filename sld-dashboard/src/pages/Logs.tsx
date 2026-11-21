@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import {
   Search,
   Trash2,
@@ -7,23 +7,25 @@ import {
   ChevronDown,
   Activity,
   Terminal,
+  AlertTriangle,
 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
 
+/** A container whose logs can be read (SLD's services, share tunnels, project containers). */
 interface LogSource {
-  id: string;
+  container: string;
   label: string;
-  path: string;
+  group: string;
+  state: string;
 }
 
 interface LogEntry {
   id: string;
-  source: string;
   level: "debug" | "info" | "warning" | "error" | "unknown";
   message: string;
   timestamp: string;
-  raw: string;
 }
 
 const COLORS = {
@@ -34,75 +36,106 @@ const COLORS = {
   unknown: "text-gray-500 bg-gray-500/10 border-gray-500/20",
 };
 
+const MAX_LINES = 1000;
+
+// levelOf guesses a line's level from the usual markers (Laravel, nginx, PHP, Traefik, MySQL, Node...).
+function levelOf(line: string): LogEntry["level"] {
+  const l = line.toLowerCase();
+  if (/\b(error|err|fatal|crit(ical)?|emerg(ency)?|alert|exception|panic)\b|"level":"error"|\.error:/.test(l)) return "error";
+  if (/\b(warn(ing)?)\b|"level":"warn|\.warning:/.test(l)) return "warning";
+  if (/\b(debug|trace)\b|"level":"debug"/.test(l)) return "debug";
+  if (/\b(info|notice)\b|"level":"info"|\.info:/.test(l)) return "info";
+  return "unknown";
+}
+
+let lineCounter = 0;
+
+// parseLine splits Docker's "<RFC3339 timestamp> <message>" format.
+function parseLine(raw: string): LogEntry {
+  const space = raw.indexOf(" ");
+  const ts = space > 0 ? raw.slice(0, space) : "";
+  const valid = ts && !Number.isNaN(Date.parse(ts));
+  const message = valid ? raw.slice(space + 1) : raw;
+  return {
+    id: `l${++lineCounter}`,
+    level: levelOf(message),
+    message,
+    timestamp: valid ? ts : new Date().toISOString(),
+  };
+}
+
 export default function Logs() {
-  const [sources, setSources] = useState<LogSource[]>([]);
   const [activeSource, setActiveSource] = useState<string | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [isPaused, setIsPaused] = useState(false);
   const [search, setSearch] = useState("");
+  const [streamError, setStreamError] = useState<string | null>(null);
 
-  const ws = useRef<WebSocket | null>(null);
+  const paused = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const shouldAutoScroll = useRef(true);
 
-  // Fetch available log sources
+  const sourcesQuery = useQuery({
+    queryKey: ["v2", "log-sources"],
+    queryFn: async () => {
+      const res = await fetch("/api/v2/logs/sources");
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || res.statusText);
+      return body as LogSource[];
+    },
+    refetchInterval: 15000,
+  });
+  const sources = useMemo(() => sourcesQuery.data ?? [], [sourcesQuery.data]);
+  const groups = useMemo(() => {
+    const byGroup = new Map<string, LogSource[]>();
+    for (const s of sources) byGroup.set(s.group, [...(byGroup.get(s.group) ?? []), s]);
+    return [...byGroup.entries()];
+  }, [sources]);
+  const active = sources.find((s) => s.container === activeSource);
+
+  // Default to the first source (the control plane or router).
   useEffect(() => {
-    fetch("/api/logs/sources")
-      .then((res) => res.json())
-      .then((data) => {
-        setSources(data);
-        if (data.length > 0) {
-          setActiveSource(data[0].id);
-        }
-      });
-  }, []);
+    if (!activeSource && sources.length > 0) setActiveSource(sources[0].container);
+  }, [sources, activeSource]);
 
-  // WebSocket connection
   useEffect(() => {
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const host = window.location.host;
-    const socket = new WebSocket(`${protocol}//${host}/api/ws`);
+    paused.current = isPaused;
+  }, [isPaused]);
 
-    socket.onmessage = (event) => {
-      const message = JSON.parse(event.data);
-      if (message.type === "log:entry" && !isPaused) {
-        // Only show logs for active source
-        if (activeSource && message.data.source !== activeSource) return;
-
-        setLogs((prev) => {
-          const updated = [...prev, message.data].slice(-1000); // Keep last 1000
-          return updated;
-        });
-      }
-    };
-
-    ws.current = socket;
-    return () => {
-      socket.close();
-    };
-  }, [activeSource, isPaused]);
-
-  // Handle source switching
+  // Stream the active container's logs: the last lines, then new ones as they come.
   useEffect(() => {
     if (!activeSource) return;
-
-    // Start watching active source
-    fetch("/api/logs/watch", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ source: activeSource }),
-    }).then(() => {
-        setLogs([]); // Clear logs after watching starts
-    });
-
-    return () => {
-      // Unwatch previous source
-      fetch("/api/logs/unwatch", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ source: activeSource }),
-      });
-    };
+    const controller = new AbortController();
+    setLogs([]);
+    setStreamError(null);
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/v2/logs/stream?container=${encodeURIComponent(activeSource)}&tail=300&follow=1`,
+          { signal: controller.signal },
+        );
+        if (!res.ok || !res.body) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error || res.statusText);
+        }
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let pending = "";
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          pending += decoder.decode(value, { stream: true });
+          const lines = pending.split("\n");
+          pending = lines.pop() ?? "";
+          if (paused.current) continue;
+          const entries = lines.filter((l) => l.trim() !== "").map(parseLine);
+          if (entries.length) setLogs((prev) => [...prev, ...entries].slice(-MAX_LINES));
+        }
+      } catch (e) {
+        if (!controller.signal.aborted) setStreamError((e as Error).message);
+      }
+    })();
+    return () => controller.abort();
   }, [activeSource]);
 
   // Auto-scroll
@@ -133,7 +166,7 @@ export default function Logs() {
           <div>
             <h1 className="text-xl font-bold">System Logs</h1>
             <p className="text-sm text-[var(--muted-foreground)]">
-              Real-time server log viewer
+              Live logs of SLD&apos;s services and your projects&apos; containers
             </p>
           </div>
         </div>
@@ -144,12 +177,19 @@ export default function Logs() {
             <select
               value={activeSource || ""}
               onChange={(e) => setActiveSource(e.target.value)}
-              className="appearance-none pl-4 pr-10 py-2 bg-[var(--background)] border border-[var(--border)] rounded-lg text-sm font-medium focus:outline-none focus:ring-2 focus:ring-purple-500/20 cursor-pointer min-w-[180px]"
+              className="appearance-none pl-4 pr-10 py-2 bg-[var(--background)] border border-[var(--border)] rounded-lg text-sm font-medium focus:outline-none focus:ring-2 focus:ring-purple-500/20 cursor-pointer min-w-[220px]"
+              aria-label="Log source"
             >
-              {sources.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.label}
-                </option>
+              {sources.length === 0 && <option value="">No containers</option>}
+              {groups.map(([group, items]) => (
+                <optgroup key={group} label={group}>
+                  {items.map((s) => (
+                    <option key={s.container} value={s.container}>
+                      {s.label}
+                      {s.state !== "running" ? ` (${s.state})` : ""}
+                    </option>
+                  ))}
+                </optgroup>
               ))}
             </select>
             <ChevronDown
@@ -208,10 +248,22 @@ export default function Logs() {
           onScroll={handleScroll}
           className="flex-1 overflow-y-auto p-4 space-y-1"
         >
+          {(streamError || sourcesQuery.error) && (
+            <div className="mb-3 flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/10 p-3 font-sans text-sm text-red-400">
+              <AlertTriangle size={16} className="mt-0.5 flex-shrink-0" />
+              {streamError || (sourcesQuery.error as Error).message}
+            </div>
+          )}
           {filteredLogs.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-[var(--muted-foreground)] opacity-50 space-y-4">
               <Activity size={48} strokeWidth={1} />
-              <p>Waiting for logs from {activeSource}...</p>
+              <p>
+                {sourcesQuery.isLoading
+                  ? "Loading log sources..."
+                  : active
+                  ? `Waiting for logs from ${active.group} / ${active.label}...`
+                  : "No containers to show logs for."}
+              </p>
             </div>
           ) : (
             filteredLogs.map((log) => (
