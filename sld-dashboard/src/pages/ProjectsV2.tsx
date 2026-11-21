@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
+  Container,
   ExternalLink,
   FileText,
   Folder,
@@ -18,7 +19,7 @@ import {
   X,
 } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
-import { ApiError, v2, type JobView, type ProjectAction, type ProjectView } from "@/api/v2";
+import { ApiError, v2, type Candidate, type JobView, type ProjectAction, type ProjectView } from "@/api/v2";
 import { Button } from "@/components/ui/Button";
 import { JobConsole } from "@/components/projects/JobConsole";
 import { LogViewer } from "@/components/projects/LogViewer";
@@ -53,6 +54,10 @@ export default function ProjectsV2() {
   const [job, setJob] = useState<{ id: string; title: string } | null>(null);
   const [logsFor, setLogsFor] = useState<ProjectView | null>(null);
   const [confirmDestroy, setConfirmDestroy] = useState<ProjectView | null>(null);
+  const [dockerizeOpen, setDockerizeOpen] = useState(false);
+
+  const candidates = useQuery({ queryKey: ["v2", "candidates"], queryFn: () => v2.candidates() });
+  const candidateCount = (candidates.data ?? []).filter((c) => c.detected).length;
 
   const { data: projects, isLoading, error, refetch, isFetching } = useQuery({
     queryKey: ["v2", "projects"],
@@ -107,6 +112,7 @@ export default function ProjectsV2() {
 
   const onJobFinished = (done: JobView) => {
     queryClient.invalidateQueries({ queryKey: ["v2", "projects"] });
+    queryClient.invalidateQueries({ queryKey: ["v2", "candidates"] });
     if (done.status === "succeeded") success("Done", job?.title);
     else toastError("Operation failed", done.error);
   };
@@ -122,6 +128,12 @@ export default function ProjectsV2() {
           </p>
         </div>
         <div className="flex gap-2">
+          <Button onClick={() => setDockerizeOpen(true)}>
+            <Container size={16} /> Dockerize projects
+            {candidateCount > 0 && (
+              <span className="ml-1 rounded-full bg-white/20 px-1.5 text-[11px] leading-5">{candidateCount}</span>
+            )}
+          </Button>
           <Button variant="secondary" onClick={() => setLinkOpen(true)}>
             <Link2 size={16} /> Park / link folder
           </Button>
@@ -130,6 +142,17 @@ export default function ProjectsV2() {
           </Button>
         </div>
       </div>
+
+      {dockerizeOpen && (
+        <DockerizeDialog
+          onClose={() => setDockerizeOpen(false)}
+          onStarted={(started, count) => {
+            setDockerizeOpen(false);
+            setLogsFor(null);
+            setJob({ id: started.id, title: `Dockerizing ${count} project${count === 1 ? "" : "s"}` });
+          }}
+        />
+      )}
 
       {linkOpen && (
         <LinkFolderDialog
@@ -444,6 +467,153 @@ function DestroyDialog({
           </Button>
           <Button variant="danger" disabled={!confirmed} onClick={() => onConfirm(removeVolumes)}>
             {removeVolumes ? "Remove and delete data" : "Remove containers"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Lists workspace projects SLD does not detect yet and dockerizes the selected ones. */
+function DockerizeDialog({
+  onClose,
+  onStarted,
+}: {
+  onClose: () => void;
+  onStarted: (job: JobView, count: number) => void;
+}) {
+  const { error: toastError } = useToast();
+  const list = useQuery({ queryKey: ["v2", "candidates"], queryFn: () => v2.candidates() });
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [search, setSearch] = useState("");
+  const [start, setStart] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const all = useMemo(() => list.data ?? [], [list.data]);
+  const visible = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return all.filter((c) => !q || `${c.name} ${c.folder}`.toLowerCase().includes(q));
+  }, [all, search]);
+  const selectable = visible.filter((c) => c.detected);
+  const allSelected = selectable.length > 0 && selectable.every((c) => selected.has(c.path));
+
+  const toggle = (path: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+
+  const toggleAll = () =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const c of selectable) {
+        if (allSelected) next.delete(c.path);
+        else next.add(c.path);
+      }
+      return next;
+    });
+
+  const submit = async () => {
+    setSaving(true);
+    try {
+      const job = await v2.dockerize([...selected], start);
+      onStarted(job, selected.size);
+    } catch (e) {
+      toastError("Could not dockerize", (e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const stack = (c: Candidate) =>
+    c.apps.map((a) => `${a.runtime}${a.version ? ` ${a.version}` : ""}`).join(" · ") || "Unknown stack";
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true">
+      <div className="w-full max-w-2xl rounded-xl border border-[var(--border)] bg-[var(--card)] p-6 space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold text-[var(--foreground)]">Dockerize projects</h2>
+          <p className="mt-1 text-sm text-[var(--muted-foreground)]">
+            These workspace projects have no Docker files yet. For each one you pick, SLD writes a{" "}
+            <code className="text-xs">Dockerfile</code> (development and production targets),{" "}
+            <code className="text-xs">compose.yaml</code>, <code className="text-xs">.dockerignore</code> and a{" "}
+            <code className="text-xs">DOCKER.md</code> explaining every decision. Everything is based on the stack it
+            detects: pinned versions, non-root users, and a database or Redis only when the project uses one. Existing
+            files are never overwritten, and your code and <code className="text-xs">.env</code> are not touched.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <label className="flex items-center gap-2 text-sm text-[var(--foreground)]">
+            <input type="checkbox" checked={allSelected} onChange={toggleAll} disabled={selectable.length === 0} />
+            Select all
+          </label>
+          <div className="relative ml-auto">
+            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Filter"
+              className="h-8 w-48 pl-8 pr-3 rounded-lg border border-[var(--border)] bg-[var(--background)] text-sm text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+            />
+          </div>
+        </div>
+
+        <div className="max-h-80 overflow-y-auto rounded-md border border-[var(--border)] divide-y divide-[var(--border)]">
+          {list.isLoading && <p className="px-3 py-3 text-xs text-[var(--muted-foreground)]">Scanning your workspace…</p>}
+          {list.error && <p className="px-3 py-3 text-xs text-red-400">{(list.error as Error).message}</p>}
+          {!list.isLoading && !list.error && visible.length === 0 && (
+            <p className="px-3 py-3 text-xs text-[var(--muted-foreground)]">
+              {all.length ? "No projects match this filter." : "Every project in your workspace is already dockerized, parked or linked."}
+            </p>
+          )}
+          {visible.map((c) => (
+            <label
+              key={c.path}
+              className={cn(
+                "flex items-start gap-3 px-3 py-2 text-sm",
+                c.detected ? "cursor-pointer hover:bg-[var(--card-hover)]" : "opacity-60",
+              )}
+              title={c.detected ? undefined : "SLD could not detect this project's stack; add .sld/config.yaml to it by hand"}
+            >
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={selected.has(c.path)}
+                disabled={!c.detected}
+                onChange={() => toggle(c.path)}
+              />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="font-medium text-[var(--foreground)] truncate">{c.name}</span>
+                  {c.configured && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full border border-[var(--border)] text-[var(--muted-foreground)]">
+                      has config
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-[var(--muted-foreground)] truncate">{c.folder}</p>
+              </div>
+              <span className={cn("text-xs font-mono whitespace-nowrap", c.detected ? "text-[var(--foreground)]" : "text-[var(--muted-foreground)]")}>
+                {stack(c)}
+              </span>
+            </label>
+          ))}
+        </div>
+
+        <label className="flex items-center gap-2 text-sm text-[var(--foreground)]">
+          <input type="checkbox" checked={start} onChange={(e) => setStart(e.target.checked)} />
+          Build and start them when done (one after another; this also validates the generated files)
+        </label>
+
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button onClick={submit} disabled={selected.size === 0} loading={saving}>
+            <Container size={14} /> Dockerize {selected.size || ""} {selected.size === 1 ? "project" : "projects"}
           </Button>
         </div>
       </div>

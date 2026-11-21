@@ -44,6 +44,19 @@ export interface ProjectView {
   tls: boolean;
 }
 
+/** A workspace project SLD does not detect yet (no Docker files, not parked or linked). */
+export interface Candidate {
+  path: string;
+  folder: string;
+  name: string;
+  apps: Omit<AppView, "url">[];
+  /** SLD recognised the stack and can write the config itself. */
+  detected: boolean;
+  /** Already has a .sld/config.yaml. */
+  configured: boolean;
+  problems?: string[];
+}
+
 export interface AutomationSettings {
   auto_setup: boolean;
   restore_running: boolean;
@@ -174,6 +187,12 @@ export const v2 = {
       method: "POST",
       body: JSON.stringify({ enabled }),
     }),
+
+  /** Workspace projects that are not dockerized, parked or linked yet. */
+  candidates: () => request<Candidate[]>("/candidates"),
+  /** Links the chosen projects, writes their configs and optionally starts them, in one job. */
+  dockerize: (paths: string[], start: boolean) =>
+    request<JobView>("/dockerize", { method: "POST", body: JSON.stringify({ paths, start }) }),
 
   // Parked and linked folders: projects in them are detected even without Docker files.
   parked: () => request<{ path: string; folder: string }[]>("/parked"),

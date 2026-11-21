@@ -85,6 +85,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	s.registerCreate(mux)
 	s.registerProjectFiles(mux)
 	s.registerParking(mux)
+	s.registerDockerize(mux)
 	s.registerHTTPS(mux)
 }
 
