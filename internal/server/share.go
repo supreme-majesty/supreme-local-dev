@@ -18,6 +18,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/pkg/stdcopy"
 
+	"github.com/supreme-majesty/supreme-local-dev/internal/docker"
 	"github.com/supreme-majesty/supreme-local-dev/internal/orchestrate"
 	"github.com/supreme-majesty/supreme-local-dev/internal/reconcile"
 	v2 "github.com/supreme-majesty/supreme-local-dev/internal/v2"
@@ -116,12 +117,21 @@ func (s *Server) handleShareStart(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	name := "sld-share-" + strings.Trim(shareNameRe.ReplaceAllString(strings.ToLower(site), "-"), "-")
+	// Tunnels created before they carried the SLD label are not listed above;
+	// a stopped one still holds the name, so remove it by name.
+	if info, err := s.opts.Engine.InspectContainer(ctx, name); err == nil && info.Config != nil && info.Config.Labels[shareLabel] != "" {
+		_ = s.opts.Engine.RemoveContainer(ctx, info.ID, true)
+	}
+
 	id, err := s.opts.Engine.CreateContainer(ctx, &reconcile.DesiredContainer{
-		Name:     "sld-share-" + strings.Trim(shareNameRe.ReplaceAllString(strings.ToLower(site), "-"), "-"),
+		Name:     name,
 		Image:    cloudflaredImage,
 		Cmd:      []string{"tunnel", "--no-autoupdate", "--url", "http://" + orchestrate.RouterContainer + ":80", "--http-host-header", domain},
 		Networks: []string{orchestrate.GlobalNetwork},
-		Labels:   map[string]string{shareLabel: site, shareDomainLabel: domain},
+		// The SLD label makes the tunnel visible to ListAllContainers, so status,
+		// stop and the cleanup above find it.
+		Labels: map[string]string{docker.LabelSLD: "true", shareLabel: site, shareDomainLabel: domain},
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
