@@ -99,6 +99,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	s.registerDockerize(mux)
 	s.registerSystemLogs(mux)
 	s.registerHTTPS(mux)
+	s.registerDBBranches(mux)
 }
 
 // newRunner creates a runner whose output goes to w. Each job gets its own

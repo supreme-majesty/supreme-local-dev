@@ -36,6 +36,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import { JobConsole } from "@/components/projects/JobConsole";
 import { LogViewer } from "@/components/projects/LogViewer";
 import { TasksPanel } from "@/components/projects/TasksPanel";
+import { DatabaseBranches } from "@/components/projects/DatabaseBranches";
 import { ContainersHealth } from "@/components/projects/ContainersHealth";
 import { CaTrustNotice, HttpsSwitch } from "@/components/projects/HttpsCard";
 import { useSetHttps } from "@/hooks/use-https";
@@ -43,7 +44,7 @@ import { useToast } from "@/hooks/useToast";
 import { useTheme } from "@/hooks/useTheme";
 import { cn } from "@/lib/utils";
 
-type Tab = "overview" | "tasks" | "config" | "files" | "env" | "logs";
+type Tab = "overview" | "tasks" | "database" | "config" | "files" | "env" | "logs";
 
 const actionLabels: Record<ProjectAction, string> = {
   setup: "Setting up",
@@ -148,6 +149,7 @@ export default function ProjectDetail() {
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="tasks">Tasks</TabsTrigger>
+          <TabsTrigger value="database">Database</TabsTrigger>
           <TabsTrigger value="config">Config</TabsTrigger>
           <TabsTrigger value="files">Files</TabsTrigger>
           <TabsTrigger value="env">Environment</TabsTrigger>
@@ -161,6 +163,9 @@ export default function ProjectDetail() {
         </TabsContent>
         <TabsContent value="tasks" className="mt-4">
           <TasksPanel project={project} />
+        </TabsContent>
+        <TabsContent value="database" className="mt-4">
+          <DatabaseBranches project={project} onRestart={isUp ? () => run("restart") : undefined} />
         </TabsContent>
         <TabsContent value="config" className="mt-4">
           <ConfigEditor

@@ -155,6 +155,38 @@ export interface ContainerHealth {
   last_error?: { time?: string; line: string };
 }
 
+export interface DBInfo {
+  name: string;
+  size: number;
+  is_main?: boolean;
+  /** Branch name when the database is <main>__<branch>. */
+  branch?: string;
+  /** The project's .env points at it. */
+  in_use?: boolean;
+}
+
+export interface DBServer {
+  container: string;
+  engine: "mysql" | "mariadb" | "postgres";
+  image: string;
+  state: string;
+  main?: string;
+  databases: DBInfo[];
+  error?: string;
+}
+
+export interface DBCheckpoint {
+  id: string;
+  container: string;
+  engine: string;
+  database: string;
+  label?: string;
+  /** Taken automatically before a restore. */
+  auto?: boolean;
+  created_at: string;
+  size: number;
+}
+
 export interface ProjectUsage {
   cpu_percent: number;
   mem_bytes: number;
@@ -319,6 +351,36 @@ export const v2 = {
     request<{ containers: ContainerHealth[]; total: ProjectUsage }>(`/projects/${encodeURIComponent(id)}/health`),
   /** Resource use per project id ("sld" = SLD's own containers). */
   usage: () => request<{ projects: Record<string, ProjectUsage>; total: ProjectUsage; sampled_at: string }>("/usage"),
+  // Database checkpoints and branches (run inside the project's database container).
+  db: (id: string) =>
+    request<{ servers: DBServer[]; checkpoints: DBCheckpoint[]; env_file?: string; env_database?: string }>(
+      `/projects/${encodeURIComponent(id)}/db`,
+    ),
+  dbCheckpoint: (id: string, body: { container?: string; database?: string; label?: string }) =>
+    request<JobView>(`/projects/${encodeURIComponent(id)}/db/checkpoint`, { method: "POST", body: JSON.stringify(body) }),
+  dbRestore: (id: string, checkpoint: string) =>
+    request<JobView>(`/projects/${encodeURIComponent(id)}/db/restore`, {
+      method: "POST",
+      body: JSON.stringify({ checkpoint }),
+    }),
+  dbBranch: (id: string, body: { container?: string; database?: string; name: string; checkpoint?: string }) =>
+    request<JobView>(`/projects/${encodeURIComponent(id)}/db/branch`, { method: "POST", body: JSON.stringify(body) }),
+  dbDrop: (id: string, container: string, database: string) =>
+    request<{ dropped: string }>(`/projects/${encodeURIComponent(id)}/db/drop`, {
+      method: "POST",
+      body: JSON.stringify({ container, database }),
+    }),
+  dbUse: (id: string, container: string, database: string) =>
+    request<{ env_file: string; database: string }>(`/projects/${encodeURIComponent(id)}/db/use`, {
+      method: "POST",
+      body: JSON.stringify({ container, database }),
+    }),
+  dbDeleteCheckpoint: (id: string, checkpoint: string) =>
+    request<{ deleted: string }>(
+      `/projects/${encodeURIComponent(id)}/db/checkpoints/${encodeURIComponent(checkpoint)}`,
+      { method: "DELETE" },
+    ),
+
   /** Starts, stops or restarts one container of a project. */
   containerAction: (id: string, container: string, action: ContainerAction) =>
     request<{ ok: boolean }>(
