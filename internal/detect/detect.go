@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/supreme-majesty/supreme-local-dev/internal/config"
 	"github.com/supreme-majesty/supreme-local-dev/internal/project"
+	"github.com/supreme-majesty/supreme-local-dev/internal/workspace"
 )
 
 // ErrNothingDetected means no detector recognised the project.
@@ -104,7 +106,7 @@ func Project(root string, opts Options) (*Result, error) {
 // app; a Dockerfile or static files are fallbacks.
 func detectDir(p *proj, cfg *config.Config) []config.App {
 	for _, detector := range []func(*proj, *config.Config) []config.App{
-		detectCompose, detectPHP, detectNode, detectPython, detectRuby, detectGo,
+		detectCompose, detectPHP, detectWorkspace, detectNode, detectPython, detectRuby, detectGo,
 	} {
 		if found := detector(p, cfg); len(found) > 0 {
 			return found
@@ -283,6 +285,8 @@ func detectPHP(p *proj, cfg *config.Config) []config.App {
 // --- Node ---
 
 type packageJSON struct {
+	Name            string            `json:"name"`
+	PackageManager  string            `json:"packageManager"`
 	Scripts         map[string]string `json:"scripts"`
 	Dependencies    map[string]string `json:"dependencies"`
 	DevDependencies map[string]string `json:"devDependencies"`
@@ -337,7 +341,38 @@ func detectNode(p *proj, cfg *config.Config) []config.App {
 	pm := packageManager(p)
 	app := config.App{Name: "web", Runtime: config.RuntimeNode, Version: nodeVersion(p), PackageManager: pm}
 
-	fw := nodeFramework{name: "Node.js", script: "dev", port: 3000}
+	fw, ok := nodeRun(p)
+	if !ok {
+		return nil
+	}
+	app.Port = fw.port
+	app.Command = runScript(pm, fw.script, strings.ReplaceAll(fw.args, "{port}", fmt.Sprint(fw.port)))
+	if pm == "npm" {
+		app.PackageManager = "" // npm is the default; keep the file minimal
+	}
+	noteNodeApp(p, fw, app.Version, pm)
+	detectNodeServices(p, cfg)
+	return []config.App{app}
+}
+
+func noteNodeApp(p *proj, fw nodeFramework, version, pm string) {
+	if fw.args == "" && fw.script != "" {
+		p.note("%s: the server must listen on 0.0.0.0 and read PORT (SLD sets PORT=%d)", fw.name, fw.port)
+	}
+	p.note("%s (node %s, %s) on port %d", fw.name, displayVersion(version), pm, fw.port)
+}
+
+func detectNodeServices(p *proj, cfg *config.Config) {
+	detectServicesFromDeps(p, cfg, p.pkg.Dependencies, map[string]string{
+		"pg": "postgres", "postgres": "postgres", "mysql2": "mysql", "mysql": "mysql",
+		"ioredis": "redis", "redis": "redis", "@prisma/client": "",
+	})
+}
+
+// nodeRun picks the framework, script and port of a package. ok is false for
+// a package inside a monorepo that has nothing to run (a shared library).
+func nodeRun(p *proj) (fw nodeFramework, ok bool) {
+	fw = nodeFramework{name: "Node.js", script: "dev", port: 3000}
 	for _, candidate := range nodeFrameworks {
 		matched := false
 		for _, dep := range candidate.deps {
@@ -360,27 +395,100 @@ func detectNode(p *proj, cfg *config.Config) []config.App {
 		case p.prefix != "":
 			// Inside a monorepo, a package with nothing to run is a shared library.
 			p.note("skipped — package without a dev or start script (shared library?)")
-			return nil
+			return fw, false
 		default:
 			p.note("⚠️  package.json has no dev or start script; set apps.web.command")
 		}
 	}
+	return fw, true
+}
 
-	app.Port = fw.port
-	app.Command = runScript(pm, fw.script, strings.ReplaceAll(fw.args, "{port}", fmt.Sprint(fw.port)))
-	if pm == "npm" {
-		app.PackageManager = "" // npm is the default; keep the file minimal
-	}
-	if fw.args == "" && fw.script != "" {
-		p.note("%s: the server must listen on 0.0.0.0 and read PORT (SLD sets PORT=%d)", fw.name, fw.port)
-	}
-	p.note("%s (node %s, %s) on port %d", fw.name, displayVersion(app.Version), pm, app.Port)
+// --- JavaScript workspaces (pnpm, npm, yarn; Turborepo and Nx use them too) ---
 
-	detectServicesFromDeps(p, cfg, p.pkg.Dependencies, map[string]string{
-		"pg": "postgres", "postgres": "postgres", "mysql2": "mysql", "mysql": "mysql",
-		"ioredis": "redis", "redis": "redis", "@prisma/client": "",
+// detectWorkspace turns each workspace package that runs a dev server into
+// its own app. Every app mounts the whole repository (packages import each
+// other and share the root lockfile) and runs only its package's script
+// through the package manager's workspace filter. Packages without a dev or
+// start script are libraries and are skipped.
+func detectWorkspace(p *proj, cfg *config.Config) []config.App {
+	if p.prefix != "" || p.pkg == nil {
+		return nil // only at the project root
+	}
+	pkgs := workspace.Packages(p.root)
+	if len(pkgs) == 0 {
+		return nil
+	}
+	pm := packageManager(p)
+	version := nodeVersion(p)
+
+	sort.SliceStable(pkgs, func(i, j int) bool {
+		return frontRank(path.Base(pkgs[i])) < frontRank(path.Base(pkgs[j]))
 	})
-	return []config.App{app}
+	var apps []config.App
+	used := map[string]bool{}
+	for _, dir := range pkgs {
+		if skipDirs[strings.ToLower(path.Base(dir))] {
+			continue
+		}
+		sub := &proj{root: filepath.Join(p.root, filepath.FromSlash(dir)), notes: p.notes, prefix: dir + "/: "}
+		sub.pkg = readPackageJSON(sub.root)
+		if sub.pkg == nil {
+			continue
+		}
+		if kind := mobileKind(sub); kind != "" {
+			sub.note("skipped — %s app (not served over HTTP)", kind)
+			continue
+		}
+		fw, ok := nodeRun(sub)
+		if !ok {
+			continue
+		}
+		cmd := workspaceScript(pm, dir, sub.pkg.Name, fw.script, strings.ReplaceAll(fw.args, "{port}", fmt.Sprint(fw.port)))
+		if cmd == "" {
+			sub.note("skipped — yarn workspaces need a package name in package.json")
+			continue
+		}
+		name := appName(path.Base(dir))
+		for i := 2; used[name]; i++ {
+			name = truncateName(fmt.Sprintf("%s%d", appName(path.Base(dir)), i))
+		}
+		used[name] = true
+		app := config.App{Name: name, Runtime: config.RuntimeNode, Version: version, PackageManager: pm, Port: fw.port, Command: cmd}
+		if pm == "npm" {
+			app.PackageManager = ""
+		}
+		noteNodeApp(sub, fw, version, pm)
+		detectNodeServices(sub, cfg)
+		apps = append(apps, app)
+	}
+	if len(apps) == 0 {
+		return nil // e.g. a workspace of libraries with a root dev script: run it as one app
+	}
+	p.note("%s workspace: %d app(s) of %d package(s); each runs from the repository root", pm, len(apps), len(pkgs))
+	return apps
+}
+
+// workspaceScript runs a package's script from the workspace root.
+func workspaceScript(pm, dir, name, script, args string) string {
+	var cmd string
+	switch pm {
+	case "pnpm":
+		cmd = "corepack pnpm --filter ./" + dir + " run " + script
+	case "yarn":
+		if name == "" {
+			return ""
+		}
+		cmd = "corepack yarn workspace " + name + " run " + script
+	default:
+		cmd = "npm run " + script + " -w " + dir
+		if args != "" {
+			cmd += " --"
+		}
+	}
+	if args != "" {
+		cmd += " " + args
+	}
+	return cmd
 }
 
 func packageManager(p *proj) string {
@@ -391,6 +499,18 @@ func packageManager(p *proj) string {
 		return "yarn"
 	case p.exists("bun.lockb") || p.exists("bun.lock"):
 		p.note("⚠️  bun lockfile found; SLD runs bun projects with npm for now")
+		return "npm"
+	}
+	// No lockfile yet: package.json's "packageManager" (Corepack), or a pnpm
+	// workspace file, still names the package manager.
+	if p.pkg != nil {
+		switch name, _, _ := strings.Cut(p.pkg.PackageManager, "@"); name {
+		case "pnpm", "yarn":
+			return name
+		}
+	}
+	if p.exists("pnpm-workspace.yaml") {
+		return "pnpm"
 	}
 	return "npm"
 }

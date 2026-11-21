@@ -280,3 +280,47 @@ func TestEveryRuntimeHasADriver(t *testing.T) {
 		}
 	}
 }
+
+func TestNodeDriver_WorkspacePackagesGetOwnNodeModules(t *testing.T) {
+	yaml := "version: 2\napps:\n  web: {runtime: node, package_manager: pnpm, command: \"corepack pnpm --filter ./apps/web run dev\", port: 3000}\n"
+	files := map[string]string{
+		"package.json":             `{"name":"root"}`,
+		"pnpm-workspace.yaml":      "packages: ['apps/*', 'packages/*']\n",
+		"pnpm-lock.yaml":           "lock",
+		"apps/web/package.json":    `{"name":"web"}`,
+		"packages/ui/package.json": `{"name":"ui"}`,
+	}
+	ctx := testContext(t, yaml, files)
+	p := plan(t, ctx, "web")
+	c := p.Containers[0]
+	if len(p.Volumes) != 3 || len(c.Volumes) != 3 {
+		t.Fatalf("volumes: plan=%v container=%v", p.Volumes, c.Volumes)
+	}
+	for _, target := range []string{":/app/node_modules", ":/app/apps/web/node_modules", ":/app/packages/ui/node_modules"} {
+		found := false
+		for _, v := range c.Volumes {
+			if strings.HasSuffix(v, target) && strings.HasPrefix(v, "sld-shop-1234abcd-web-deps") {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("no volume for %s in %v", target, c.Volumes)
+		}
+	}
+	if c.Environment["SLD_WORKSPACE_DEPS"] != "/app/apps/web/node_modules /app/packages/ui/node_modules" ||
+		!strings.Contains(c.Cmd[2], "SLD_WORKSPACE_DEPS") {
+		t.Errorf("workspace entrypoint/env: cmd=%q env=%q", c.Cmd[2], c.Environment["SLD_WORKSPACE_DEPS"])
+	}
+
+	// A package's dependencies changing triggers a reinstall.
+	files["apps/web/package.json"] = `{"name":"web","dependencies":{"zod":"3"}}`
+	if plan(t, testContext(t, yaml, files), "web").Containers[0].Environment["SLD_DEPS_HASH"] == c.Environment["SLD_DEPS_HASH"] {
+		t.Error("deps hash should follow workspace package.json files")
+	}
+
+	// A plain Node app keeps the original entrypoint (no recreation).
+	plain := plan(t, testContext(t, "version: 2\napps:\n  web: {runtime: node, command: \"npm run dev\", port: 3000}\n", map[string]string{"package.json": "{}"}), "web").Containers[0]
+	if plain.Cmd[2] != entrypoint || len(plain.Volumes) != 1 {
+		t.Errorf("plain node app changed: cmd=%q volumes=%v", plain.Cmd[2], plain.Volumes)
+	}
+}

@@ -4,7 +4,7 @@
 
 - **Any web stack.** PHP (Laravel, Symfony, WordPress), Node (Next.js, Nuxt, Vite, Astro, SvelteKit, NestJS, Express…), Python (Django, FastAPI, Flask), Ruby (Rails), Go, static sites, a Dockerfile, any image — or a process already running on your machine.
 - **Your existing Docker Compose projects, as they are.** SLD runs a project's own `compose.yaml` and gives its web service a domain. It removes clashing host ports and keeps your containers, images and data volumes.
-- **Monorepos.** `backend/` + `frontend/` folders become separate apps of one project; mobile apps (React Native, Expo, Flutter) are skipped.
+- **Monorepos.** `backend/` + `frontend/` folders become separate apps of one project. In a pnpm, npm or yarn workspace (Turborepo, Nx), each package with a dev server becomes its own app with its own domain, run from the repository root with the workspace filter; shared libraries and mobile apps (React Native, Expo, Flutter) are skipped.
 - **Dashboard.** Sign in, see every project with its status and URLs, set up / start / stop / restart, follow output live, read logs, and manage databases.
 
 ## Quick start

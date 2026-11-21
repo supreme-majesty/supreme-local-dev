@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/supreme-majesty/supreme-local-dev/internal/config"
 	"github.com/supreme-majesty/supreme-local-dev/internal/reconcile"
+	"github.com/supreme-majesty/supreme-local-dev/internal/workspace"
 )
 
 // langSpec describes how to run dev servers of one language runtime.
@@ -121,6 +123,20 @@ if [ "$SLD_UID" != "0" ]; then
 fi
 exec sh -c "$SLD_RUN"`
 
+// workspaceEntrypoint is entrypoint plus the per-package node_modules volumes
+// of a JavaScript workspace (SLD_WORKSPACE_DEPS: space-separated paths, which
+// the workspace package validates). Only workspace apps use it, so other
+// containers keep their spec.
+const workspaceEntrypoint = `set -e
+mkdir -p "$SLD_DEPS_DIR" "$HOME"
+for d in $SLD_WORKSPACE_DEPS; do mkdir -p "$d"; done
+if [ "$SLD_UID" != "0" ]; then
+  chown "$SLD_UID:$SLD_GID" "$SLD_DEPS_DIR" "$HOME" 2>/dev/null || true
+  for d in $SLD_WORKSPACE_DEPS; do chown "$SLD_UID:$SLD_GID" "$d" 2>/dev/null || true; done
+  exec setpriv --reuid="$SLD_UID" --regid="$SLD_GID" --clear-groups -- sh -c "$SLD_RUN"
+fi
+exec sh -c "$SLD_RUN"`
+
 // runScript installs dependencies when their fingerprint changed, then execs the app.
 const runScript = `set -e
 cd /app
@@ -179,7 +195,12 @@ func (d langDriver) Plan(ctx *Context, app *config.App) (*AppPlan, error) {
 	// Control variables come last so app environment cannot break the entrypoint.
 	env["SLD_UID"], env["SLD_GID"] = ctx.UID, ctx.GID
 	env["SLD_DEPS_DIR"] = d.spec.depsDir
-	env["SLD_DEPS_HASH"] = depsHash(AppRoot(ctx, app), d.spec.lockfiles, install)
+	lockfiles := d.spec.lockfiles
+	ws := d.workspaceDeps(ctx, app)
+	for _, pkg := range ws.packages {
+		lockfiles = append(lockfiles, pkg+"/package.json") // a package's deps changed: reinstall
+	}
+	env["SLD_DEPS_HASH"] = depsHash(AppRoot(ctx, app), lockfiles, install)
 	env["SLD_PRELUDE"] = d.spec.prelude
 	env["SLD_INSTALL"] = install
 	env["SLD_COMMAND"] = app.Command
@@ -201,6 +222,13 @@ func (d langDriver) Plan(ctx *Context, app *config.App) (*AppPlan, error) {
 		// Dependency installs can take minutes; don't block `sld start` on them.
 		SkipHealthWait: true,
 	}
+	if len(ws.packages) > 0 {
+		c.Cmd = []string{"sh", "-c", workspaceEntrypoint}
+		c.Environment["SLD_WORKSPACE_DEPS"] = strings.Join(ws.targets, " ")
+		for i, vol := range ws.volumes {
+			c.Volumes = append(c.Volumes, vol+":"+ws.targets[i])
+		}
+	}
 	if app.ExposePort > 0 {
 		c.Ports = []string{ctx.Env.PublishPort(app.ExposePort, fmt.Sprint(app.Port))}
 	}
@@ -214,7 +242,34 @@ func (d langDriver) Plan(ctx *Context, app *config.App) (*AppPlan, error) {
 		}
 	}
 
-	return &AppPlan{Containers: []*reconcile.DesiredContainer{c}, Volumes: []string{depsVolume}}, nil
+	return &AppPlan{Containers: []*reconcile.DesiredContainer{c}, Volumes: append([]string{depsVolume}, ws.volumes...)}, nil
+}
+
+// workspaceVolumes are the per-package node_modules volumes of a Node app
+// whose root is a JavaScript workspace.
+type workspaceVolumes struct {
+	packages []string // package folders, relative to the app root
+	targets  []string // /app/<package>/node_modules
+	volumes  []string // named volumes, same order
+}
+
+// workspaceDeps gives each workspace package its own node_modules volume, so
+// every app container of the workspace installs into its own copy: no two
+// containers install into the same folder at once, and nothing is written
+// into the project folder (or mixed with a node_modules installed on the host).
+func (d langDriver) workspaceDeps(ctx *Context, app *config.App) workspaceVolumes {
+	var ws workspaceVolumes
+	if d.runtime != config.RuntimeNode {
+		return ws
+	}
+	base := ctx.Identity.AppDepsVolumeName(app.Name)
+	for _, pkg := range workspace.Packages(AppRoot(ctx, app)) {
+		sum := sha256.Sum256([]byte(pkg))
+		ws.packages = append(ws.packages, pkg)
+		ws.targets = append(ws.targets, "/app/"+pkg+"/node_modules")
+		ws.volumes = append(ws.volumes, base+"-"+hex.EncodeToString(sum[:])[:10])
+	}
+	return ws
 }
 
 // depsHash fingerprints the lockfiles and install command, so dependencies are
