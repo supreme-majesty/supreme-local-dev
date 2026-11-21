@@ -21,6 +21,9 @@ type DatabaseDriver interface {
 	BeginTransaction(database string) (string, error)
 	CommitTransaction(txId string) error
 	RollbackTransaction(txId string) error
+	// ExecArgs runs one statement with bound parameters (inside txId when
+	// given) and returns the affected row count.
+	ExecArgs(database, query string, args []interface{}, txId string) (int64, error)
 	BatchInsert(database, table string, columns []string, data [][]interface{}, txId string) error
 	GetStats(database string) (map[string]interface{}, error)
 	GetForeignValues(database, table, column string) ([]string, error)
@@ -73,6 +76,9 @@ type ConnectionConfig struct {
 	Host     string
 	Port     string
 	Socket   string
+	// Container is the Docker container running the server, when known.
+	// Dumps and restores then run inside it, with the server's own tools.
+	Container string
 }
 
 // Metadata Structs (moved from database.go)

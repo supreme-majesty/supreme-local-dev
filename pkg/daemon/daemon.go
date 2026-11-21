@@ -58,6 +58,12 @@ func Initialize() (*Daemon, error) {
 		DockerDiscovery: services.NewDockerDiscoveryService(),
 	}
 
+	// Dumps, restores and clones of a database running in a container use
+	// that container's own client tools (matching the server's version).
+	if instance.DockerDiscovery != nil {
+		databaseService.ContainerExec = instance.DockerDiscovery.Exec
+	}
+
 	instance.HealerService.Start()
 
 	// Queries on the configured MySQL server, shown on the X-Ray page. The

@@ -7,22 +7,48 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	_ "github.com/lib/pq"
 )
 
 type PostgresDriver struct {
-	db        *sql.DB
-	dsn       string
-	cfg       ConnectionConfig
-	activeTxs map[string]*sql.Tx
+	db  *sql.DB
+	dsn string
+	cfg ConnectionConfig
+
+	mu        sync.Mutex // guards activeTxs
+	activeTxs map[string]*pgTx
+}
+
+// pgTx is an open transaction plus the pool it runs on. PostgreSQL cannot
+// switch databases on a connection, so each transaction gets a pool opened on
+// its own database, closed when the transaction ends.
+type pgTx struct {
+	*sql.Tx
+	pool *sql.DB
 }
 
 func NewPostgresDriver() *PostgresDriver {
 	return &PostgresDriver{
-		activeTxs: make(map[string]*sql.Tx),
+		activeTxs: make(map[string]*pgTx),
 	}
+}
+
+func (d *PostgresDriver) tx(txId string) (*pgTx, bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	tx, ok := d.activeTxs[txId]
+	return tx, ok
+}
+
+func (d *PostgresDriver) takeTx(txId string) (*pgTx, bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	tx, ok := d.activeTxs[txId]
+	delete(d.activeTxs, txId)
+	return tx, ok
 }
 
 // PostgresHost returns the PostgreSQL database host (compose sets SLD_PG_HOST or POSTGRES_HOST).
@@ -184,19 +210,19 @@ func (d *PostgresDriver) TableCounts() (map[string]int, error) {
 }
 
 func (d *PostgresDriver) CreateDatabase(name string) error {
-	_, err := d.db.Exec(fmt.Sprintf("CREATE DATABASE \"%s\"", name))
+	_, err := d.db.Exec("CREATE DATABASE " + quotePG(name))
 	return err
 }
 
 func (d *PostgresDriver) DeleteDatabase(name string) error {
-	_, err := d.db.Exec(fmt.Sprintf("DROP DATABASE \"%s\"", name))
+	_, err := d.db.Exec("DROP DATABASE " + quotePG(name))
 	return err
 }
 
 func (d *PostgresDriver) RenameDatabase(oldName, newName string) error {
 	// Terminate other connections to the database before renaming
-	d.db.Exec(fmt.Sprintf(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '%s' AND pid <> pg_backend_pid()`, oldName))
-	_, err := d.db.Exec(fmt.Sprintf("ALTER DATABASE \"%s\" RENAME TO \"%s\"", oldName, newName))
+	d.db.Exec(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()`, oldName)
+	_, err := d.db.Exec("ALTER DATABASE " + quotePG(oldName) + " RENAME TO " + quotePG(newName))
 	return err
 }
 
@@ -300,15 +326,29 @@ func (d *PostgresDriver) GetTableColumns(database, table string) ([]ColumnInfo, 
 		}
 	}
 
-	// Columns
+	// Columns, in table order, with primary-key membership (Key "PRI", as
+	// MySQL reports it) so callers can address rows.
 	query := `
-		SELECT 
-			column_name, 
-			data_type, 
-			is_nullable, 
-			column_default 
-		FROM information_schema.columns 
-		WHERE table_schema = 'public' AND table_name = $1
+		SELECT
+			c.column_name,
+			c.data_type,
+			c.is_nullable,
+			c.column_default,
+			EXISTS (
+				SELECT 1
+				FROM information_schema.table_constraints tc
+				JOIN information_schema.key_column_usage k
+				  ON k.constraint_name = tc.constraint_name
+				 AND k.table_schema = tc.table_schema
+				 AND k.table_name = tc.table_name
+				WHERE tc.constraint_type = 'PRIMARY KEY'
+				  AND tc.table_schema = c.table_schema
+				  AND tc.table_name = c.table_name
+				  AND k.column_name = c.column_name
+			) AS is_pk
+		FROM information_schema.columns c
+		WHERE c.table_schema = 'public' AND c.table_name = $1
+		ORDER BY c.ordinal_position
 	`
 	rows, err := tempDB.Query(query, table)
 	if err != nil {
@@ -320,7 +360,8 @@ func (d *PostgresDriver) GetTableColumns(database, table string) ([]ColumnInfo, 
 	for rows.Next() {
 		var name, dtype, isoNull string
 		var defVal sql.NullString
-		if err := rows.Scan(&name, &dtype, &isoNull, &defVal); err != nil {
+		var isPK bool
+		if err := rows.Scan(&name, &dtype, &isoNull, &defVal, &isPK); err != nil {
 			continue
 		}
 
@@ -329,6 +370,9 @@ func (d *PostgresDriver) GetTableColumns(database, table string) ([]ColumnInfo, 
 			Type:     dtype,
 			Nullable: isoNull == "YES",
 			Default:  defVal.String,
+		}
+		if isPK {
+			col.Key = "PRI"
 		}
 		if fk, ok := fks[name]; ok {
 			col.ForeignKey = &fk
@@ -352,7 +396,7 @@ func (d *PostgresDriver) GetTableDataEx(database, table string, page, perPage in
 
 	// Count
 	var total int64
-	tempDB.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM \"%s\"", table)).Scan(&total)
+	tempDB.QueryRow("SELECT COUNT(*) FROM " + quotePG(table)).Scan(&total)
 
 	if perPage <= 0 {
 		perPage = 50
@@ -367,9 +411,9 @@ func (d *PostgresDriver) GetTableDataEx(database, table string, page, perPage in
 		sortOrder = "ASC"
 	}
 
-	query := fmt.Sprintf("SELECT * FROM \"%s\"", table)
+	query := "SELECT * FROM " + quotePG(table)
 	if sortCol != "" {
-		query += fmt.Sprintf(" ORDER BY \"%s\" %s", sortCol, sortOrder)
+		query += " ORDER BY " + quotePG(sortCol) + " " + sortOrder
 	}
 	query += fmt.Sprintf(" LIMIT %d OFFSET %d", perPage, offset)
 
@@ -421,12 +465,12 @@ func (d *PostgresDriver) GetTableDataEx(database, table string, page, perPage in
 
 func (d *PostgresDriver) ExecuteQuery(database, query string, txId string) (*QueryResult, error) {
 	var targetDB *sql.DB
-	var tx *sql.Tx
+	var tx *pgTx
 	var err error
 
 	if txId != "" {
 		var ok bool
-		tx, ok = d.activeTxs[txId]
+		tx, ok = d.tx(txId)
 		if !ok {
 			return nil, fmt.Errorf("transaction %s not found", txId)
 		}
@@ -440,8 +484,7 @@ func (d *PostgresDriver) ExecuteQuery(database, query string, txId string) (*Que
 	}
 
 	start := time.Now()
-	trimmed := strings.ToUpper(strings.TrimSpace(query))
-	isSelect := strings.HasPrefix(trimmed, "SELECT") || strings.HasPrefix(trimmed, "SHOW") || strings.HasPrefix(trimmed, "DESC") || strings.HasPrefix(trimmed, "EXPLAIN")
+	isSelect := returnsRows(query)
 
 	if isSelect {
 		var rows *sql.Rows
@@ -507,36 +550,89 @@ func (d *PostgresDriver) BeginTransaction(database string) (string, error) {
 		return "", fmt.Errorf("database not connected")
 	}
 
-	tx, err := d.db.Begin()
+	// The transaction must run on the chosen database, not the server-level
+	// connection (which points at the maintenance database).
+	pool := d.db
+	if database != "" {
+		p, err := sql.Open("postgres", replacePostgresDB(d.dsn, database))
+		if err != nil {
+			return "", err
+		}
+		p.SetMaxOpenConns(1)
+		pool = p
+	}
+	tx, err := pool.Begin()
 	if err != nil {
+		if pool != d.db {
+			pool.Close()
+		}
 		return "", err
+	}
+	t := &pgTx{Tx: tx}
+	if pool != d.db {
+		t.pool = pool
 	}
 
 	txId := fmt.Sprintf("tx_%d", time.Now().UnixNano())
-	d.activeTxs[txId] = tx
+	d.mu.Lock()
+	d.activeTxs[txId] = t
+	d.mu.Unlock()
 	return txId, nil
 }
 
-func (d *PostgresDriver) CommitTransaction(txId string) error {
-	tx, ok := d.activeTxs[txId]
-	if !ok {
-		return fmt.Errorf("transaction %s not found", txId)
+func (t *pgTx) finish(err error) error {
+	if t.pool != nil {
+		t.pool.Close()
 	}
-
-	err := tx.Commit()
-	delete(d.activeTxs, txId)
 	return err
 }
 
-func (d *PostgresDriver) RollbackTransaction(txId string) error {
-	tx, ok := d.activeTxs[txId]
+func (d *PostgresDriver) CommitTransaction(txId string) error {
+	tx, ok := d.takeTx(txId)
 	if !ok {
 		return fmt.Errorf("transaction %s not found", txId)
 	}
+	return tx.finish(tx.Commit())
+}
 
-	err := tx.Rollback()
-	delete(d.activeTxs, txId)
-	return err
+func (d *PostgresDriver) RollbackTransaction(txId string) error {
+	tx, ok := d.takeTx(txId)
+	if !ok {
+		return fmt.Errorf("transaction %s not found", txId)
+	}
+	return tx.finish(tx.Rollback())
+}
+
+// ExecArgs runs one statement with bound parameters ($1, $2, …), inside txId
+// when given.
+func (d *PostgresDriver) ExecArgs(database, query string, args []interface{}, txId string) (int64, error) {
+	var res sql.Result
+	var err error
+	if txId != "" {
+		tx, ok := d.tx(txId)
+		if !ok {
+			return 0, fmt.Errorf("transaction %s not found", txId)
+		}
+		res, err = tx.Exec(query, args...)
+	} else {
+		if d.db == nil {
+			return 0, fmt.Errorf("database not connected")
+		}
+		pool := d.db
+		if database != "" {
+			pool, err = sql.Open("postgres", replacePostgresDB(d.dsn, database))
+			if err != nil {
+				return 0, err
+			}
+			defer pool.Close()
+		}
+		res, err = pool.Exec(query, args...)
+	}
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
 }
 
 func (d *PostgresDriver) BatchInsert(database, table string, columns []string, data [][]interface{}, txId string) error {
@@ -551,15 +647,15 @@ func (d *PostgresDriver) BatchInsert(database, table string, columns []string, d
 	// Prepare column names
 	colNames := make([]string, len(columns))
 	for i, col := range columns {
-		colNames[i] = "\"" + col + "\""
+		colNames[i] = quotePG(col)
 	}
 	colsStr := strings.Join(colNames, ", ")
 
 	// Use transaction if provided
-	var tx *sql.Tx
+	var tx *pgTx
 	if txId != "" {
 		var ok bool
-		tx, ok = d.activeTxs[txId]
+		tx, ok = d.tx(txId)
 		if !ok {
 			return fmt.Errorf("transaction %s not found", txId)
 		}
@@ -586,7 +682,7 @@ func (d *PostgresDriver) BatchInsert(database, table string, columns []string, d
 			values = append(values, row...)
 		}
 
-		query := fmt.Sprintf("INSERT INTO \"%s\" (%s) VALUES %s", table, colsStr, strings.Join(placeholders, ", "))
+		query := fmt.Sprintf("INSERT INTO %s (%s) VALUES %s", quotePG(table), colsStr, strings.Join(placeholders, ", "))
 
 		var err error
 		if tx != nil {
@@ -713,8 +809,7 @@ func (d *PostgresDriver) GetStats(database string) (map[string]interface{}, erro
 	stats := make(map[string]interface{})
 
 	// 1. Get Database Stats
-	query := fmt.Sprintf("SELECT * FROM pg_stat_database WHERE datname = '%s'", database)
-	rows, err := d.db.Query(query)
+	rows, err := d.db.Query("SELECT * FROM pg_stat_database WHERE datname = $1", database)
 	if err != nil {
 		return nil, err
 	}
@@ -777,8 +872,8 @@ func (d *PostgresDriver) GetForeignValues(database, table, column string) ([]str
 	}
 	defer tempDB.Close()
 
-	quotedTable := `"` + strings.ReplaceAll(table, `"`, `""`) + `"`
-	quotedCol := `"` + strings.ReplaceAll(column, `"`, `""`) + `"`
+	quotedTable := quotePG(table)
+	quotedCol := quotePG(column)
 	query := fmt.Sprintf("SELECT DISTINCT %s::text FROM %s WHERE %s IS NOT NULL ORDER BY 1 LIMIT 100", quotedCol, quotedTable, quotedCol)
 
 	rows, err := tempDB.Query(query)
@@ -841,7 +936,9 @@ func (d *PostgresDriver) GetTableRelationships(database string) ([]TableRelation
 }
 
 func (d *PostgresDriver) CreateSnapshot(database, table string, filepath string) error {
-	extra := []string{"-d", database}
+	// --clean: a snapshot restores over the database it came from (like
+	// mysqldump's DROP TABLE IF EXISTS).
+	extra := []string{"--clean", "--if-exists", "-d", database}
 	if table != "" {
 		extra = append(extra, "-t", table)
 	}
@@ -1051,13 +1148,14 @@ func (d *PostgresDriver) GlobalSearch(database string, query string) ([]SearchRe
 
 	var results []SearchResult
 	for table, cols := range tableCols {
+		// The search text is one bound parameter ($1); LIKE wildcards in it match literally.
 		var whereParts []string
 		for _, col := range cols {
-			whereParts = append(whereParts, fmt.Sprintf("%s::text ILIKE '%%%s%%'", col, query))
+			whereParts = append(whereParts, quotePG(col)+"::text ILIKE $1")
 		}
 
-		searchQuery := fmt.Sprintf("SELECT * FROM %s WHERE %s LIMIT 10", table, strings.Join(whereParts, " OR "))
-		rows, err := tempDB.Query(searchQuery)
+		searchQuery := fmt.Sprintf("SELECT * FROM %s WHERE %s LIMIT 10", quotePG(table), strings.Join(whereParts, " OR "))
+		rows, err := tempDB.Query(searchQuery, "%"+escapeLike(query)+"%")
 		if err != nil {
 			continue
 		}

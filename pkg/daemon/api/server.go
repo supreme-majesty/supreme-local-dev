@@ -473,15 +473,21 @@ func (s *Server) handleDBTarget(w http.ResponseWriter, r *http.Request) {
 		User:     req.User,
 		Password: req.Password,
 	}
+	if found != nil {
+		// Dumps and restores then run inside this container, with the
+		// server's own client tools.
+		cfg.Container = found.ContainerName
+	}
 
 	if err := d.DatabaseService.SetTarget(req.ID, req.Driver, cfg); err != nil {
 		// Automatic fallback to MYSQL_USER/MYSQL_PASSWORD if root login was rejected
 		if found != nil && found.AltUser != "" && found.AltUser != cfg.User {
 			altCfg := services.ConnectionConfig{
-				Host:     cfg.Host,
-				Port:     cfg.Port,
-				User:     found.AltUser,
-				Password: found.AltPassword,
+				Host:      cfg.Host,
+				Port:      cfg.Port,
+				User:      found.AltUser,
+				Password:  found.AltPassword,
+				Container: cfg.Container,
 			}
 			if altErr := d.DatabaseService.SetTarget(req.ID, req.Driver, altCfg); altErr == nil {
 				jsonResponse(w, SuccessResponse{Success: true, Message: fmt.Sprintf("Connected to %s", found.Name)}, 200)

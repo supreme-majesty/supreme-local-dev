@@ -2403,9 +2403,8 @@ $mysqli->close();
                       onClick={() =>
                         window.open(
                           `${
-                            import.meta.env.VITE_API_URL ||
-                            "http://localhost:2025"
-                          }/api/db/snapshots/download?id=${snap.filename}`,
+                            import.meta.env.VITE_API_URL || ""
+                          }/api/db/snapshots/download?id=${encodeURIComponent(snap.filename)}`,
                           "_blank",
                         )
                       }

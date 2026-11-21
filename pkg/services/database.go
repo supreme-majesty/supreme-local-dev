@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -150,6 +149,10 @@ type DatabaseService struct {
 	activeConfig  ConnectionConfig
 	activeTarget  string
 	sourceDrivers map[string]DatabaseDriver
+
+	// ContainerExec runs a command in a container. When set and the active
+	// target names its container, dumps and restores run there.
+	ContainerExec ContainerExecFunc
 }
 
 // NewDatabaseService creates a new database service
@@ -565,24 +568,40 @@ func (d *DatabaseService) ImportData(database, table string, mapping map[string]
 		placeholders := []string{}
 
 		for fileCol, dbCol := range mapping {
-			cols = append(cols, fmt.Sprintf("`%s`", dbCol))
+			cols = append(cols, d.quoteIdent(dbCol))
 			vals = append(vals, row[fileCol])
-			placeholders = append(placeholders, "?")
+			placeholders = append(placeholders, d.placeholder(len(vals)))
 		}
 
-		query := fmt.Sprintf("INSERT INTO `%s` (%s) VALUES (%s)",
-			table,
+		query := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
+			d.quoteIdent(table),
 			strings.Join(cols, ", "),
 			strings.Join(placeholders, ", "),
 		)
 
-		_, err := d.ExecuteQuery(database, query, txId)
-		if err != nil {
+		if _, err := d.Driver.ExecArgs(database, query, vals, txId); err != nil {
 			return err
 		}
 	}
 
 	return d.CommitTransaction(txId)
+}
+
+// quoteIdent quotes a table or column name for the connected driver.
+func (d *DatabaseService) quoteIdent(name string) string {
+	if d.DriverName() == "postgres" {
+		return quotePG(name)
+	}
+	return quoteMy(name)
+}
+
+// placeholder returns the n-th (1-based) bound-parameter marker for the
+// connected driver: "?" for MySQL, "$n" for PostgreSQL.
+func (d *DatabaseService) placeholder(n int) string {
+	if d.DriverName() == "postgres" {
+		return fmt.Sprintf("$%d", n)
+	}
+	return "?"
 }
 
 // GetTableData returns paginated data from a table
@@ -843,8 +862,8 @@ func (d *DatabaseService) RunMigration(database, filename string) error {
 	}
 
 	// Record migration
-	recordQuery := fmt.Sprintf("INSERT INTO _sld_migrations (version, name) VALUES ('%s', '%s')", version, name)
-	if _, err := d.ExecuteQuery(database, recordQuery, txId); err != nil {
+	recordQuery := fmt.Sprintf("INSERT INTO _sld_migrations (version, name) VALUES (%s, %s)", d.placeholder(1), d.placeholder(2))
+	if _, err := d.Driver.ExecArgs(database, recordQuery, []interface{}{version, name}, txId); err != nil {
 		d.RollbackTransaction(txId)
 		return err
 	}
@@ -891,7 +910,7 @@ func (d *DatabaseService) CompareSchemas(sourceDB, targetDB string) (*SchemaDiff
 	for _, t := range sourceTables {
 		if !targetTableMap[t.Name] {
 			diff.TablesToDrop = append(diff.TablesToDrop, t.Name)
-			syncSQL.WriteString(fmt.Sprintf("DROP TABLE `%s`;\n", t.Name))
+			syncSQL.WriteString(fmt.Sprintf("DROP TABLE %s;\n", d.quoteIdent(t.Name)))
 		}
 	}
 
@@ -904,13 +923,13 @@ func (d *DatabaseService) CompareSchemas(sourceDB, targetDB string) (*SchemaDiff
 
 				// Generate ALTER SQL
 				for _, col := range tableDiff.ColumnsToAdd {
-					syncSQL.WriteString(fmt.Sprintf("ALTER TABLE `%s` ADD %s;\n", t.Name, col))
+					syncSQL.WriteString(fmt.Sprintf("ALTER TABLE %s ADD %s;\n", d.quoteIdent(t.Name), col))
 				}
 				for _, col := range tableDiff.ColumnsToDrop {
-					syncSQL.WriteString(fmt.Sprintf("ALTER TABLE `%s` DROP COLUMN `%s`;\n", t.Name, col))
+					syncSQL.WriteString(fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s;\n", d.quoteIdent(t.Name), d.quoteIdent(col)))
 				}
 				for _, col := range tableDiff.ColumnsToAlter {
-					syncSQL.WriteString(fmt.Sprintf("ALTER TABLE `%s` MODIFY %s;\n", t.Name, col))
+					syncSQL.WriteString(fmt.Sprintf("ALTER TABLE %s MODIFY %s;\n", d.quoteIdent(t.Name), col))
 				}
 			}
 		}
@@ -946,7 +965,7 @@ func (d *DatabaseService) compareTableStructure(sourceDB, targetDB, table string
 	// Columns to add
 	for _, tc := range targetCols {
 		if _, exists := sourceColMap[tc.Name]; !exists {
-			colDef := fmt.Sprintf("`%s` %s", tc.Name, tc.Type)
+			colDef := d.quoteIdent(tc.Name) + " " + tc.Type
 			if !tc.Nullable {
 				colDef += " NOT NULL"
 			}
@@ -958,7 +977,7 @@ func (d *DatabaseService) compareTableStructure(sourceDB, targetDB, table string
 			// Compare definition
 			sc := sourceColMap[tc.Name]
 			if sc.Type != tc.Type || sc.Nullable != tc.Nullable {
-				colDef := fmt.Sprintf("`%s` %s", tc.Name, tc.Type)
+				colDef := d.quoteIdent(tc.Name) + " " + tc.Type
 				if !tc.Nullable {
 					colDef += " NOT NULL"
 				}
@@ -999,7 +1018,7 @@ func (d *DatabaseService) ScanPII(database, table string) ([]PIIResult, error) {
 	var results []PIIResult
 	for _, col := range cols {
 		// Fetch sample data
-		query := fmt.Sprintf("SELECT `%s` FROM `%s` WHERE `%s` IS NOT NULL LIMIT 50", col.Name, table, col.Name)
+		query := fmt.Sprintf("SELECT %[1]s FROM %[2]s WHERE %[1]s IS NOT NULL LIMIT 50", d.quoteIdent(col.Name), d.quoteIdent(table))
 		rows, err := d.Query(database, query, nil)
 		if err != nil {
 			continue
@@ -1033,9 +1052,27 @@ func (d *DatabaseService) ScanPII(database, table string) ([]PIIResult, error) {
 }
 
 func (d *DatabaseService) AnonymizeTable(config MaskingConfig) error {
-	// For each row in the table, update the values with fakes
-	// In a real app, we'd use a more efficient batch update
-	rows, err := d.Query(config.Database, "SELECT * FROM `"+config.Table+"`", nil)
+	// Rows are addressed by their primary key. Without a single-column key
+	// there is no safe way to update one row at a time, so refuse.
+	if err := d.ensureConnected(); err != nil {
+		return err
+	}
+	cols, err := d.GetTableColumns(config.Database, config.Table)
+	if err != nil {
+		return err
+	}
+	var pks []string
+	for _, c := range cols {
+		if c.Key == "PRI" {
+			pks = append(pks, c.Name)
+		}
+	}
+	if len(pks) != 1 {
+		return fmt.Errorf("table %s needs a single-column primary key to be masked (found %d key columns)", config.Table, len(pks))
+	}
+	pkCol := pks[0]
+
+	rows, err := d.Query(config.Database, "SELECT "+d.quoteIdent(pkCol)+" FROM "+d.quoteIdent(config.Table), nil)
 	if err != nil {
 		return err
 	}
@@ -1046,13 +1083,6 @@ func (d *DatabaseService) AnonymizeTable(config MaskingConfig) error {
 	}
 
 	for _, row := range rows {
-		pkCol := "" // Simple assumption for now: first column is ID
-		// Find PK...
-		for k := range row {
-			pkCol = k
-			break
-		}
-
 		var updates []string
 		var args []interface{}
 		for col, maskType := range config.Columns {
@@ -1067,14 +1097,14 @@ func (d *DatabaseService) AnonymizeTable(config MaskingConfig) error {
 			default:
 				fakeVal = gofakeit.Word()
 			}
-			updates = append(updates, fmt.Sprintf("`%s` = ?", col))
 			args = append(args, fakeVal)
+			updates = append(updates, d.quoteIdent(col)+" = "+d.placeholder(len(args)))
 		}
 
 		if len(updates) > 0 {
-			sql := fmt.Sprintf("UPDATE `%s` SET %s WHERE `%s` = ?", config.Table, strings.Join(updates, ", "), pkCol)
 			args = append(args, row[pkCol])
-			if _, err := d.ExecuteQuery(config.Database, sql, txId); err != nil {
+			sql := fmt.Sprintf("UPDATE %s SET %s WHERE %s = %s", d.quoteIdent(config.Table), strings.Join(updates, ", "), d.quoteIdent(pkCol), d.placeholder(len(args)))
+			if _, err := d.Driver.ExecArgs(config.Database, sql, args, txId); err != nil {
 				d.RollbackTransaction(txId)
 				return err
 			}
@@ -1119,7 +1149,7 @@ func (d *DatabaseService) GetOptimizationSuggestions(database, table string) ([]
 					"type":        "index",
 					"title":       "Missing Index on Foreign Key",
 					"description": fmt.Sprintf("The column `%s` is a foreign key but lacks an index. This can severely degrade JOIN performance.", col.Name),
-					"sql":         fmt.Sprintf("CREATE INDEX idx_%s_%s ON `%s`(`%s`);", table, col.Name, table, col.Name),
+					"sql":         fmt.Sprintf("CREATE INDEX %s ON %s(%s);", d.quoteIdent("idx_"+table+"_"+col.Name), d.quoteIdent(table), d.quoteIdent(col.Name)),
 				})
 			}
 		}
@@ -1132,7 +1162,7 @@ func (d *DatabaseService) GetOptimizationSuggestions(database, table string) ([]
 			"type":        "maintenance",
 			"title":       "High Fragmentation",
 			"description": fmt.Sprintf("Table `%s` has %d bytes of overhead. Running OPTIMIZE will reclaim space and improve performance.", table, info.Overhead),
-			"sql":         fmt.Sprintf("OPTIMIZE TABLE `%s`;", table),
+			"sql":         "OPTIMIZE TABLE " + d.quoteIdent(table) + ";",
 		})
 	}
 
@@ -1168,7 +1198,11 @@ func (d *DatabaseService) CreateSnapshot(database, table string) (*Snapshot, err
 	}
 	snapPath := filepath.Join(d.SnapDir, filename)
 
-	if err := d.Driver.CreateSnapshot(database, table, snapPath); err != nil {
+	if t := d.tool(toolDump, d.snapshotDumpArgs(database, table)...); t.InContainer() {
+		if err := t.dumpToFile(snapPath); err != nil {
+			return nil, err
+		}
+	} else if err := d.Driver.CreateSnapshot(database, table, snapPath); err != nil {
 		return nil, err
 	}
 
@@ -1264,6 +1298,9 @@ func (d *DatabaseService) RestoreSnapshot(filename string) error {
 		return err
 	}
 
+	if t := d.tool(toolClient, d.restoreClientArgs(dbName)...); t.InContainer() {
+		return t.restoreFromFile(snapPath)
+	}
 	return d.Driver.RestoreSnapshot(dbName, snapPath)
 }
 
@@ -1316,6 +1353,9 @@ func (d *DatabaseService) ImportSQL(database, sqlFilePath string) error {
 	}
 	if err := d.ensureConnected(); err != nil {
 		return err
+	}
+	if t := d.tool(toolClient, d.restoreClientArgs(database)...); t.InContainer() {
+		return t.restoreFromFile(sqlFilePath)
 	}
 	return d.Driver.RestoreSnapshot(database, sqlFilePath)
 }
@@ -1373,11 +1413,9 @@ func (d *DatabaseService) CloneDatabase(source, target string, opts CloneOptions
 		}
 	}
 
-	activeCfg := d.ActiveConfig()
-	var dumpCmd, importCmd *exec.Cmd
-
+	// dump | client, inside the server's container when it has one.
+	var dumpExtra []string
 	if d.DriverName() == "postgres" {
-		dumpExtra := []string{}
 		switch mode {
 		case "structure":
 			dumpExtra = append(dumpExtra, "--schema-only")
@@ -1388,14 +1426,8 @@ func (d *DatabaseService) CloneDatabase(source, target string, opts CloneOptions
 			dumpExtra = append(dumpExtra, "--clean", "--if-exists")
 		}
 		dumpExtra = append(dumpExtra, "-d", source)
-		dumpArgs, dumpEnv := buildPostgresCLIArgs(activeCfg, dumpExtra...)
-		importArgs, importEnv := buildPostgresCLIArgs(activeCfg, "-v", "ON_ERROR_STOP=1", "-d", target)
-		dumpCmd = exec.Command("pg_dump", dumpArgs...)
-		dumpCmd.Env = dumpEnv
-		importCmd = exec.Command("psql", importArgs...)
-		importCmd.Env = importEnv
 	} else {
-		dumpExtra := []string{"--single-transaction", "--quick"}
+		dumpExtra = []string{"--single-transaction", "--quick"}
 		switch mode {
 		case "structure":
 			dumpExtra = append(dumpExtra, "--no-data")
@@ -1411,45 +1443,10 @@ func (d *DatabaseService) CloneDatabase(source, target string, opts CloneOptions
 			dumpExtra = append(dumpExtra, "--routines", "--triggers", "--events")
 		}
 		dumpExtra = append(dumpExtra, source)
-
-		dumpArgs, dumpEnv := buildMySQLCLIArgs(activeCfg, dumpExtra...)
-		importArgs, importEnv := buildMySQLCLIArgs(activeCfg, "--default-character-set=utf8mb4", target)
-		dumpCmd = exec.Command("mysqldump", dumpArgs...)
-		dumpCmd.Env = dumpEnv
-		importCmd = exec.Command("mysql", importArgs...)
-		importCmd.Env = importEnv
 	}
 
-	// Create pipe
-	pipe, err := dumpCmd.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("failed to create pipe: %w", err)
-	}
-	importCmd.Stdin = pipe
-
-	// Capture stderr for error reporting
-	var dumpStderr, importStderr strings.Builder
-	dumpCmd.Stderr = &dumpStderr
-	importCmd.Stderr = &importStderr
-
-	// Start both commands
-	if err := dumpCmd.Start(); err != nil {
-		return fmt.Errorf("failed to start mysqldump: %w", err)
-	}
-	if err := importCmd.Start(); err != nil {
-		dumpCmd.Process.Kill()
-		return fmt.Errorf("failed to start mysql import: %w", err)
-	}
-
-	// Wait for dump to complete
-	if err := dumpCmd.Wait(); err != nil {
-		importCmd.Process.Kill()
-		return fmt.Errorf("mysqldump failed: %s", dumpStderr.String())
-	}
-
-	// Wait for import to complete
-	if err := importCmd.Wait(); err != nil {
-		return fmt.Errorf("mysql import failed: %s", importStderr.String())
+	if err := pipeTools(d.tool(toolDump, dumpExtra...), d.tool(toolClient, d.restoreClientArgs(target)...)); err != nil {
+		return err
 	}
 
 	return nil

@@ -6,22 +6,87 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
-	_ "github.com/go-sql-driver/mysql"
+	"github.com/go-sql-driver/mysql"
 )
 
 type MySQLDriver struct {
-	db        *sql.DB
-	dsn       string
-	cfg       ConnectionConfig
+	db  *sql.DB
+	dsn string
+	cfg ConnectionConfig
+
+	mu        sync.Mutex // guards activeTxs and perDB
 	activeTxs map[string]*sql.Tx
+	// perDB holds one small pool per database, opened with that database as
+	// the connection default. Running "USE db" on the shared pool only
+	// changes whichever connection it happens to get, so the next statement
+	// could run against another database.
+	perDB map[string]*sql.DB
 }
 
 func NewMySQLDriver() *MySQLDriver {
 	return &MySQLDriver{
 		activeTxs: make(map[string]*sql.Tx),
+		perDB:     make(map[string]*sql.DB),
 	}
+}
+
+// dbFor returns a pool whose connections all have database selected. An empty
+// name returns the server-level pool.
+func (d *MySQLDriver) dbFor(database string) (*sql.DB, error) {
+	if d.db == nil {
+		return nil, fmt.Errorf("database not connected")
+	}
+	if database == "" {
+		return d.db, nil
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if db, ok := d.perDB[database]; ok {
+		return db, nil
+	}
+	cfg, err := mysql.ParseDSN(d.dsn)
+	if err != nil {
+		return nil, err
+	}
+	cfg.DBName = database
+	db, err := sql.Open("mysql", cfg.FormatDSN())
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(4)
+	db.SetMaxIdleConns(2)
+	db.SetConnMaxLifetime(5 * time.Minute)
+	db.SetConnMaxIdleTime(2 * time.Minute)
+	d.perDB[database] = db
+	return db, nil
+}
+
+// closePerDB closes the per-database pools (on reconnect or close).
+func (d *MySQLDriver) closePerDB() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for name, db := range d.perDB {
+		_ = db.Close()
+		delete(d.perDB, name)
+	}
+}
+
+func (d *MySQLDriver) tx(txId string) (*sql.Tx, bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	tx, ok := d.activeTxs[txId]
+	return tx, ok
+}
+
+func (d *MySQLDriver) takeTx(txId string) (*sql.Tx, bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	tx, ok := d.activeTxs[txId]
+	delete(d.activeTxs, txId)
+	return tx, ok
 }
 
 func envOr(key, fallback string) string {
@@ -141,6 +206,7 @@ func (d *MySQLDriver) Connect(config ConnectionConfig) error {
 		return err
 	}
 
+	d.closePerDB()
 	if d.db != nil {
 		_ = d.db.Close()
 	}
@@ -151,6 +217,7 @@ func (d *MySQLDriver) Connect(config ConnectionConfig) error {
 }
 
 func (d *MySQLDriver) Close() error {
+	d.closePerDB()
 	if d.db != nil {
 		return d.db.Close()
 	}
@@ -207,12 +274,12 @@ func (d *MySQLDriver) TableCounts() (map[string]int, error) {
 }
 
 func (d *MySQLDriver) CreateDatabase(name string) error {
-	_, err := d.db.Exec(fmt.Sprintf("CREATE DATABASE `%s`", name))
+	_, err := d.db.Exec("CREATE DATABASE " + quoteMy(name))
 	return err
 }
 
 func (d *MySQLDriver) DeleteDatabase(name string) error {
-	_, err := d.db.Exec(fmt.Sprintf("DROP DATABASE `%s`", name))
+	_, err := d.db.Exec("DROP DATABASE " + quoteMy(name))
 	return err
 }
 
@@ -229,7 +296,7 @@ func (d *MySQLDriver) RenameDatabase(oldName, newName string) error {
 	}
 
 	for _, t := range tables {
-		query := fmt.Sprintf("RENAME TABLE `%s`.`%s` TO `%s`.`%s`", oldName, t.Name, newName, t.Name)
+		query := "RENAME TABLE " + quoteMy(oldName) + "." + quoteMy(t.Name) + " TO " + quoteMy(newName) + "." + quoteMy(t.Name)
 		if _, err := d.db.Exec(query); err != nil {
 			return fmt.Errorf("failed to move table %s: %w", t.Name, err)
 		}
@@ -243,11 +310,6 @@ func (d *MySQLDriver) RenameDatabase(oldName, newName string) error {
 }
 
 func (d *MySQLDriver) ListTables(database string) ([]TableInfo, error) {
-	// USE db
-	if _, err := d.db.Exec("USE " + database); err != nil {
-		return nil, err
-	}
-
 	query := `
 		SELECT 
 			TABLE_NAME, 
@@ -279,7 +341,8 @@ func (d *MySQLDriver) ListTables(database string) ([]TableInfo, error) {
 }
 
 func (d *MySQLDriver) GetTableColumns(database, table string) ([]ColumnInfo, error) {
-	if _, err := d.db.Exec("USE " + database); err != nil {
+	db, err := d.dbFor(database)
+	if err != nil {
 		return nil, err
 	}
 
@@ -290,7 +353,7 @@ func (d *MySQLDriver) GetTableColumns(database, table string) ([]ColumnInfo, err
 		FROM information_schema.KEY_COLUMN_USAGE 
 		WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND REFERENCED_TABLE_NAME IS NOT NULL
 	`
-	fkRows, err := d.db.Query(fkQuery, database, table)
+	fkRows, err := db.Query(fkQuery, database, table)
 	if err == nil {
 		defer fkRows.Close()
 		for fkRows.Next() {
@@ -302,7 +365,7 @@ func (d *MySQLDriver) GetTableColumns(database, table string) ([]ColumnInfo, err
 	}
 
 	// Columns
-	rows, err := d.db.Query(fmt.Sprintf("DESCRIBE `%s`", table))
+	rows, err := db.Query("DESCRIBE " + quoteMy(table))
 	if err != nil {
 		return nil, err
 	}
@@ -336,14 +399,15 @@ func (d *MySQLDriver) GetTableData(database, table string, page, perPage int) (*
 }
 
 func (d *MySQLDriver) GetTableDataEx(database, table string, page, perPage int, sortCol, sortOrder string, profile bool) (*TableData, error) {
-	if _, err := d.db.Exec("USE " + database); err != nil {
+	db, err := d.dbFor(database)
+	if err != nil {
 		return nil, err
 	}
 
 	// Total count
 	var total int64
-	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM `%s`", table)
-	if err := d.db.QueryRow(countQuery).Scan(&total); err != nil {
+	countQuery := "SELECT COUNT(*) FROM " + quoteMy(table)
+	if err := db.QueryRow(countQuery).Scan(&total); err != nil {
 		return nil, err
 	}
 
@@ -364,27 +428,21 @@ func (d *MySQLDriver) GetTableDataEx(database, table string, page, perPage int, 
 	// Simplistic sort validation (driver should ideally validate against columns)
 
 	// Query
-	dataQuery := fmt.Sprintf("SELECT * FROM `%s`", table)
+	dataQuery := "SELECT * FROM " + quoteMy(table)
 	if sortCol != "" {
-		dataQuery += fmt.Sprintf(" ORDER BY `%s` %s", sortCol, sortOrder)
+		dataQuery += " ORDER BY " + quoteMy(sortCol) + " " + sortOrder
 	}
 	dataQuery += fmt.Sprintf(" LIMIT %d OFFSET %d", perPage, offset)
 
 	var queryTime float64
-	if profile {
-		d.db.Exec("SET profiling = 1")
-	}
-
-	rows, err := d.db.Query(dataQuery)
+	start := time.Now()
+	rows, err := db.Query(dataQuery)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-
 	if profile {
-		// Fetch profile... simplified for driver
-		// Implementation similar to original
-		d.db.Exec("SET profiling = 0")
+		queryTime = float64(time.Since(start).Microseconds()) / 1000
 	}
 
 	colNames, _ := rows.Columns()
@@ -430,69 +488,46 @@ func (d *MySQLDriver) ExecuteQuery(database, query string, txId string) (*QueryR
 		return nil, fmt.Errorf("database not connected")
 	}
 
-	if database != "" {
-		_, err := d.db.Exec("USE `" + database + "`")
+	// A transaction already runs on one connection with its database
+	// selected; otherwise use the pool for this database.
+	type runner interface {
+		Query(query string, args ...interface{}) (*sql.Rows, error)
+		Exec(query string, args ...interface{}) (sql.Result, error)
+	}
+	var run runner
+	if txId != "" {
+		tx, ok := d.tx(txId)
+		if !ok {
+			return nil, fmt.Errorf("transaction %s not found or expired", txId)
+		}
+		run = tx
+	} else {
+		db, err := d.dbFor(database)
 		if err != nil {
 			return nil, err
 		}
+		run = db
 	}
 
 	start := time.Now()
 
 	var rows *sql.Rows
-	var result sql.Result
 	var err error
-
-	// Use transaction if provided
-	if txId != "" {
-		tx, ok := d.activeTxs[txId]
-		if !ok {
-			return nil, fmt.Errorf("transaction %s not found or expired", txId)
-		}
-
-		if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(query)), "SELECT") ||
-			strings.HasPrefix(strings.ToUpper(strings.TrimSpace(query)), "SHOW") ||
-			strings.HasPrefix(strings.ToUpper(strings.TrimSpace(query)), "DESC") ||
-			strings.HasPrefix(strings.ToUpper(strings.TrimSpace(query)), "EXPLAIN") {
-			rows, err = tx.Query(query)
-		} else {
-			result, err = tx.Exec(query)
-		}
+	if returnsRows(query) {
+		rows, err = run.Query(query)
 	} else {
-		if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(query)), "SELECT") ||
-			strings.HasPrefix(strings.ToUpper(strings.TrimSpace(query)), "SHOW") ||
-			strings.HasPrefix(strings.ToUpper(strings.TrimSpace(query)), "DESC") ||
-			strings.HasPrefix(strings.ToUpper(strings.TrimSpace(query)), "EXPLAIN") {
-			rows, err = d.db.Query(query)
-		} else {
-			result, err = d.db.Exec(query)
+		var result sql.Result
+		result, err = run.Exec(query)
+		if err == nil {
+			affected, _ := result.RowsAffected()
+			return &QueryResult{
+				AffectedRows:    affected,
+				ExecutionTimeMs: time.Since(start).Milliseconds(),
+			}, nil
 		}
 	}
-
 	if err != nil {
 		return nil, err
-	}
-
-	elapsed := time.Since(start).Milliseconds()
-
-	if result != nil {
-		affected, _ := result.RowsAffected()
-		return &QueryResult{
-			AffectedRows:    affected,
-			ExecutionTimeMs: elapsed,
-		}, nil
-	}
-
-	if rows == nil {
-		if txId != "" {
-			tx := d.activeTxs[txId]
-			rows, err = tx.Query(query)
-		} else {
-			rows, err = d.db.Query(query)
-		}
-		if err != nil {
-			return nil, err
-		}
 	}
 	defer rows.Close()
 
@@ -532,58 +567,66 @@ func (d *MySQLDriver) BeginTransaction(database string) (string, error) {
 		return "", fmt.Errorf("database not connected")
 	}
 
-	if database != "" {
-		_, err := d.db.Exec("USE `" + database + "`")
-		if err != nil {
-			return "", err
-		}
+	db, err := d.dbFor(database)
+	if err != nil {
+		return "", err
 	}
-
-	tx, err := d.db.Begin()
+	tx, err := db.Begin()
 	if err != nil {
 		return "", err
 	}
 
 	txId := fmt.Sprintf("tx_%d", time.Now().UnixNano())
+	d.mu.Lock()
 	d.activeTxs[txId] = tx
-
-	// Set a timeout to auto-rollback after 5 minutes of inactivity?
-	// For now, keep it simple.
+	d.mu.Unlock()
 	return txId, nil
 }
 
 func (d *MySQLDriver) CommitTransaction(txId string) error {
-	tx, ok := d.activeTxs[txId]
+	tx, ok := d.takeTx(txId)
 	if !ok {
 		return fmt.Errorf("transaction %s not found", txId)
 	}
-
-	err := tx.Commit()
-	delete(d.activeTxs, txId)
-	return err
+	return tx.Commit()
 }
 
 func (d *MySQLDriver) RollbackTransaction(txId string) error {
-	tx, ok := d.activeTxs[txId]
+	tx, ok := d.takeTx(txId)
 	if !ok {
 		return fmt.Errorf("transaction %s not found", txId)
 	}
+	return tx.Rollback()
+}
 
-	err := tx.Rollback()
-	delete(d.activeTxs, txId)
-	return err
+// ExecArgs runs one statement with bound parameters, inside txId when given.
+func (d *MySQLDriver) ExecArgs(database, query string, args []interface{}, txId string) (int64, error) {
+	var res sql.Result
+	var err error
+	if txId != "" {
+		tx, ok := d.tx(txId)
+		if !ok {
+			return 0, fmt.Errorf("transaction %s not found", txId)
+		}
+		res, err = tx.Exec(query, args...)
+	} else {
+		db, dbErr := d.dbFor(database)
+		if dbErr != nil {
+			return 0, dbErr
+		}
+		res, err = db.Exec(query, args...)
+	}
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
 }
 
 func (d *MySQLDriver) BatchInsert(database, table string, columns []string, data [][]interface{}, txId string) error {
-	if d.db == nil {
-		return fmt.Errorf("database not connected")
-	}
-
-	if database != "" {
-		_, err := d.db.Exec("USE `" + database + "`")
-		if err != nil {
-			return err
-		}
+	db, err := d.dbFor(database)
+	if err != nil {
+		return err
 	}
 
 	if len(data) == 0 {
@@ -593,7 +636,7 @@ func (d *MySQLDriver) BatchInsert(database, table string, columns []string, data
 	// Prepare column names
 	colNames := make([]string, len(columns))
 	for i, col := range columns {
-		colNames[i] = "`" + col + "`"
+		colNames[i] = quoteMy(col)
 	}
 	colsStr := strings.Join(colNames, ", ")
 
@@ -601,7 +644,7 @@ func (d *MySQLDriver) BatchInsert(database, table string, columns []string, data
 	var tx *sql.Tx
 	if txId != "" {
 		var ok bool
-		tx, ok = d.activeTxs[txId]
+		tx, ok = d.tx(txId)
 		if !ok {
 			return fmt.Errorf("transaction %s not found", txId)
 		}
@@ -627,13 +670,13 @@ func (d *MySQLDriver) BatchInsert(database, table string, columns []string, data
 			values = append(values, row...)
 		}
 
-		query := fmt.Sprintf("INSERT INTO `%s` (%s) VALUES %s", table, colsStr, strings.Join(placeholders, ", "))
+		query := fmt.Sprintf("INSERT INTO %s (%s) VALUES %s", quoteMy(table), colsStr, strings.Join(placeholders, ", "))
 
 		var err error
 		if tx != nil {
 			_, err = tx.Exec(query, values...)
 		} else {
-			_, err = d.db.Exec(query, values...)
+			_, err = db.Exec(query, values...)
 		}
 
 		if err != nil {
@@ -645,17 +688,12 @@ func (d *MySQLDriver) BatchInsert(database, table string, columns []string, data
 }
 
 func (d *MySQLDriver) Query(database, query string, args []interface{}) ([]map[string]interface{}, error) {
-	if d.db == nil {
-		return nil, fmt.Errorf("database not connected")
+	db, err := d.dbFor(database)
+	if err != nil {
+		return nil, err
 	}
 
-	if database != "" {
-		if _, err := d.db.Exec("USE `" + database + "`"); err != nil {
-			return nil, err
-		}
-	}
-
-	rows, err := d.db.Query(query, args...)
+	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -791,9 +829,9 @@ func (d *MySQLDriver) GetForeignValues(database, table, column string) ([]string
 	if d.db == nil || table == "" || column == "" {
 		return []string{}, nil
 	}
-	quotedDB := "`" + strings.ReplaceAll(database, "`", "``") + "`"
-	quotedTable := "`" + strings.ReplaceAll(table, "`", "``") + "`"
-	quotedCol := "`" + strings.ReplaceAll(column, "`", "``") + "`"
+	quotedDB := quoteMy(database)
+	quotedTable := quoteMy(table)
+	quotedCol := quoteMy(column)
 
 	var query string
 	if database != "" {
@@ -920,46 +958,51 @@ func (d *MySQLDriver) RestoreSnapshot(database string, filepath string) error {
 	if d.db == nil {
 		return fmt.Errorf("database not connected and mysql CLI not found in PATH")
 	}
-	if _, err := d.db.Exec("USE `" + strings.ReplaceAll(database, "`", "``") + "`"); err != nil {
+	db, err := d.dbFor(database)
+	if err != nil {
 		return fmt.Errorf("failed to select database %s: %w", database, err)
 	}
-	return execSQLFileFallback(d.db, filepath)
+	return execSQLFileFallback(db, filepath)
 }
 func (d *MySQLDriver) GetTableIndexes(database, table string) ([]IndexInfo, error) {
-	if _, err := d.db.Exec("USE " + database); err != nil {
-		return nil, err
+	if d.db == nil {
+		return nil, fmt.Errorf("database not connected")
 	}
-
-	rows, err := d.db.Query(fmt.Sprintf("SHOW INDEX FROM `%s`", table))
+	// information_schema has the same columns on MySQL 5.7/8 and MariaDB,
+	// unlike SHOW INDEX (13, 14 or 15 columns, several of them NULL).
+	rows, err := d.db.Query(`
+		SELECT INDEX_NAME, NON_UNIQUE, COALESCE(COLUMN_NAME, ''), COALESCE(INDEX_TYPE, '')
+		FROM information_schema.STATISTICS
+		WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+		ORDER BY INDEX_NAME = 'PRIMARY' DESC, INDEX_NAME, SEQ_IN_INDEX`, database, table)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	indexMap := make(map[string]*IndexInfo)
+	var indexes []IndexInfo
+	pos := make(map[string]int)
 	for rows.Next() {
-		var table, nonUnique, keyName, seq, column, collation, cardinality, subPart, packed, null, indexType, comment, indexComment string
-		if err := rows.Scan(&table, &nonUnique, &keyName, &seq, &column, &collation, &cardinality, &subPart, &packed, &null, &indexType, &comment, &indexComment); err != nil {
-			continue
+		var keyName, column, indexType string
+		var nonUnique int
+		if err := rows.Scan(&keyName, &nonUnique, &column, &indexType); err != nil {
+			return nil, err
 		}
-
-		if _, ok := indexMap[keyName]; !ok {
-			indexMap[keyName] = &IndexInfo{
+		i, ok := pos[keyName]
+		if !ok {
+			i = len(indexes)
+			pos[keyName] = i
+			indexes = append(indexes, IndexInfo{
 				Name:    keyName,
 				Columns: []string{},
-				Unique:  nonUnique == "0",
+				Unique:  nonUnique == 0,
 				Primary: keyName == "PRIMARY",
 				Type:    indexType,
-			}
+			})
 		}
-		indexMap[keyName].Columns = append(indexMap[keyName].Columns, column)
+		indexes[i].Columns = append(indexes[i].Columns, column)
 	}
-
-	var indexes []IndexInfo
-	for _, idx := range indexMap {
-		indexes = append(indexes, *idx)
-	}
-	return indexes, nil
+	return indexes, rows.Err()
 }
 
 func (m *MySQLDriver) Maintenance(database string, tables []string, operation string) ([]MaintenanceResult, error) {
@@ -985,7 +1028,7 @@ func (m *MySQLDriver) Maintenance(database string, tables []string, operation st
 	// Prepare table list with backticks
 	quotedTables := make([]string, len(tables))
 	for i, t := range tables {
-		quotedTables[i] = fmt.Sprintf("`%s`.`%s`", database, t)
+		quotedTables[i] = quoteMy(database) + "." + quoteMy(t)
 	}
 
 	query := fmt.Sprintf("%s TABLE %s", op, strings.Join(quotedTables, ", "))
@@ -1044,14 +1087,18 @@ func (m *MySQLDriver) GlobalSearch(database string, query string) ([]SearchResul
 		}
 
 		// 2. Build search query for this table
+		// The search text is a bound parameter; LIKE wildcards in it match literally.
 		var conditions []string
+		var args []interface{}
+		pattern := "%" + escapeLike(query) + "%"
 		for _, col := range searchableCols {
-			conditions = append(conditions, fmt.Sprintf("`%s` LIKE '%%%s%%'", col, query))
+			conditions = append(conditions, quoteMy(col)+" LIKE ?") // backslash is MySQL's default LIKE escape
+			args = append(args, pattern)
 		}
 
-		searchSQL := fmt.Sprintf("SELECT * FROM `%s`.`%s` WHERE %s LIMIT 10", database, table.Name, strings.Join(conditions, " OR "))
+		searchSQL := fmt.Sprintf("SELECT * FROM %s.%s WHERE %s LIMIT 10", quoteMy(database), quoteMy(table.Name), strings.Join(conditions, " OR "))
 
-		rows, err := m.db.Query(searchSQL)
+		rows, err := m.db.Query(searchSQL, args...)
 		if err != nil {
 			continue
 		}
@@ -1127,9 +1174,9 @@ func (m *MySQLDriver) GetDatabaseSettings(database string) (*DatabaseSettings, e
 		return nil, fmt.Errorf("not connected")
 	}
 
-	query := fmt.Sprintf("SELECT DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '%s'", database)
+	query := "SELECT DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?"
 	var settings DatabaseSettings
-	err := m.db.QueryRow(query).Scan(&settings.Charset, &settings.Collation)
+	err := m.db.QueryRow(query, database).Scan(&settings.Charset, &settings.Collation)
 	if err != nil {
 		return nil, err
 	}
@@ -1138,12 +1185,13 @@ func (m *MySQLDriver) GetDatabaseSettings(database string) (*DatabaseSettings, e
 }
 
 func (m *MySQLDriver) ExplainQuery(database, query string) (*QueryExplanation, error) {
-	if _, err := m.db.Exec("USE " + database); err != nil {
+	db, err := m.dbFor(database)
+	if err != nil {
 		return nil, err
 	}
 
 	explainQuery := "EXPLAIN " + query
-	rows, err := m.db.Query(explainQuery)
+	rows, err := db.Query(explainQuery)
 	if err != nil {
 		return nil, err
 	}
