@@ -60,6 +60,10 @@ type DesiredContainer struct {
 	// SkipHealthWait starts the container without blocking on its healthcheck
 	// (dev servers may spend minutes installing dependencies first).
 	SkipHealthWait bool
+	// RestartPolicy is Docker's restart policy. Empty means "no": project
+	// containers start only when asked to, never on their own when Docker
+	// starts. SLD's own router uses "unless-stopped".
+	RestartPolicy string
 }
 
 // ActualContainer represents the current state of a container in Docker.

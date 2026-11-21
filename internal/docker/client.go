@@ -260,14 +260,16 @@ func (e *DockerEngine) CreateContainer(ctx context.Context, desired *reconcile.D
 
 	containerConfig.User = desired.User
 
+	restart := container.RestartPolicyMode(desired.RestartPolicy)
+	if restart == "" {
+		restart = container.RestartPolicyDisabled // start only when asked to
+	}
 	hostConfig := &container.HostConfig{
-		Binds:        desired.Volumes,
-		Mounts:       toDockerMounts(desired.Mounts),
-		PortBindings: portBindings,
-		ExtraHosts:   desired.ExtraHosts,
-		RestartPolicy: container.RestartPolicy{
-			Name: "unless-stopped",
-		},
+		Binds:         desired.Volumes,
+		Mounts:        toDockerMounts(desired.Mounts),
+		PortBindings:  portBindings,
+		ExtraHosts:    desired.ExtraHosts,
+		RestartPolicy: container.RestartPolicy{Name: restart},
 	}
 
 	// 4. Primary Network Configuration

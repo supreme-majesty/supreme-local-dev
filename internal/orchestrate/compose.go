@@ -202,8 +202,9 @@ func (c *composeConfig) serviceNames() []string {
 	return names
 }
 
-// buildComposeOverride labels every service as part of the SLD project, drops
-// published host ports (unless keep_ports), and connects routed services to
+// buildComposeOverride labels every service as part of the SLD project, turns
+// off Docker's automatic restarts, drops published host ports (unless
+// keep_ports), and connects routed services to
 // the router network with Traefik labels.
 func buildComposeOverride(spec *ProjectSpec, stack *appruntime.ComposeStack, resolved *composeConfig) ([]byte, error) {
 	id := spec.Identity
@@ -258,6 +259,11 @@ func buildComposeOverride(spec *ProjectSpec, stack *appruntime.ComposeStack, res
 			add(labels, k, str(base[k]))
 		}
 		add(svc, "labels", labels)
+
+		// Start only when asked to (from SLD), never on its own when Docker
+		// starts, whatever restart policy the project's compose file sets.
+		// Quoted: a bare `no` is the boolean false in YAML 1.1 parsers.
+		add(svc, "restart", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "no", Style: yaml.DoubleQuotedStyle})
 
 		if !stack.KeepPorts {
 			add(svc, "ports", &yaml.Node{Kind: yaml.SequenceNode, Tag: "!reset", Style: yaml.FlowStyle})

@@ -177,6 +177,8 @@ func (o *Orchestrator) EnsureGlobalInfra(ctx context.Context) error {
 		// The Docker socket path is resolved on the Docker host, which is what Traefik needs.
 		Volumes: []string{"/var/run/docker.sock:/var/run/docker.sock:ro"},
 		Mounts:  []reconcile.Mount{certMount, dynMount},
+		// SLD infrastructure, not a project: keep it up across Docker restarts.
+		RestartPolicy: "unless-stopped",
 	}
 	// The router has no project config file, so hash its spec: a changed bind
 	// address or mount (e.g. after upgrading SLD) recreates the router.

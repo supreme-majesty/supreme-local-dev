@@ -419,8 +419,8 @@ func TestSettingsStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := st.Get(); !got.RestoreRunning || got.AutoSetup || got.AutostartAll {
-		t.Errorf("defaults = %+v, want only restore_running on", got)
+	if got := st.Get(); got.RestoreRunning || got.AutoSetup || got.AutostartAll {
+		t.Errorf("defaults = %+v, want everything off (projects start by hand)", got)
 	}
 	if _, err := st.Update(func(s *Settings) {
 		s.AutoSetup = true
@@ -463,14 +463,18 @@ func TestStartupTargets(t *testing.T) {
 	s := defaultSettings()
 	s.Running["z-run"] = true
 	s.Running["m-up"] = true
+	if got := ids(startupTargets(projects, s)); got != "" {
+		t.Errorf("defaults must start nothing, got %s", got)
+	}
 	s.Autostart["a-pin"] = true
+	if got := ids(startupTargets(projects, s)); got != "a-pin" {
+		t.Errorf("without restore = %s", got)
+	}
+	s.RestoreRunning = true
 	if got := ids(startupTargets(projects, s)); got != "a-pin,z-run" {
 		t.Errorf("restore + pinned = %s, want a-pin,z-run (sorted, running ones skipped)", got)
 	}
 	s.RestoreRunning = false
-	if got := ids(startupTargets(projects, s)); got != "a-pin" {
-		t.Errorf("without restore = %s", got)
-	}
 	s.AutostartAll = true
 	if got := ids(startupTargets(projects, s)); got != "a-pin,b-other,z-run" {
 		t.Errorf("autostart all = %s (must skip not set up and already running)", got)
@@ -505,7 +509,7 @@ func TestAutomationAPI(t *testing.T) {
 		return rec
 	}
 
-	if rec := call("GET", "/api/v2/settings", ""); !strings.Contains(rec.Body.String(), `"restore_running":true`) {
+	if rec := call("GET", "/api/v2/settings", ""); !strings.Contains(rec.Body.String(), `"restore_running":false`) || !strings.Contains(rec.Body.String(), `"autostart_all":false`) {
 		t.Errorf("default settings: %s", rec.Body)
 	}
 	// Turning auto setup on writes the config of the new project on the next listing.
@@ -549,5 +553,18 @@ func TestAutomationAPI(t *testing.T) {
 	srv.recordRunning(shop.ID, "stop")
 	if srv.settings.Get().Running[shop.ID] {
 		t.Error("stop should be remembered")
+	}
+}
+
+func TestAuthStatusShowsTokenCommand(t *testing.T) {
+	a, _ := newAuth(t)
+	a.SetContainerName("sld-app-1")
+	rec := do(http.HandlerFunc(a.handleStatus), "GET", "/api/v2/auth/status", "localhost:2025", nil)
+	if !strings.Contains(rec.Body.String(), `"token_command":"docker exec sld-app-1 sld token"`) {
+		t.Errorf("status should name the container: %s", rec.Body.String())
+	}
+	a.SetContainerName("")
+	if got := a.TokenCommand(); got != "sld token" {
+		t.Errorf("on the host the command is plain 'sld token', got %q", got)
 	}
 }

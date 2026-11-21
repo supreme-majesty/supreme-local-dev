@@ -38,9 +38,9 @@ type SiteMeta struct {
 	Category string   `json:"category,omitempty"`
 }
 
-// defaultSettings: bring back what was running, change nothing else.
+// defaultSettings: start nothing on its own; projects are started by hand.
 func defaultSettings() Settings {
-	return Settings{RestoreRunning: true, Autostart: map[string]bool{}, Running: map[string]bool{}}
+	return Settings{Autostart: map[string]bool{}, Running: map[string]bool{}}
 }
 
 // settingsStore persists Settings as JSON.

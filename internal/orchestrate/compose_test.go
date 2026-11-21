@@ -42,6 +42,10 @@ func TestBuildComposeOverride(t *testing.T) {
 	if strings.Count(text, "ports: !reset []") != 3 {
 		t.Errorf("expected 3 port resets:\n%s", text)
 	}
+	// Docker must not start project services on its own; only SLD starts them.
+	if strings.Count(text, "restart: \"no\"") != 3 {
+		t.Errorf("expected restart: \"no\" on all 3 services:\n%s", text)
+	}
 	var doc struct {
 		Services map[string]struct {
 			Labels   map[string]string         `yaml:"labels"`
