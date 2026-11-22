@@ -25,10 +25,22 @@ import (
 	"github.com/supreme-majesty/supreme-local-dev/internal/tls"
 )
 
-const (
-	// Image Registry
-	ImageRegistry = "ghcr.io/supreme-majesty"
+// DefaultImageRegistry is where SLD's own images (sld, sld-router, sld-nginx,
+// sld-php) are published: Docker Hub, namespace insightifytech.
+const DefaultImageRegistry = "insightifytech"
 
+// ImageRegistry prefixes SLD's own images. SLD_IMAGE_REGISTRY overrides it,
+// e.g. "ghcr.io/supreme-majesty" or a local mirror ("localhost:5000/sld").
+var ImageRegistry = imageRegistry()
+
+func imageRegistry() string {
+	if v := strings.TrimRight(strings.TrimSpace(os.Getenv("SLD_IMAGE_REGISTRY")), "/"); v != "" {
+		return v
+	}
+	return DefaultImageRegistry
+}
+
+const (
 	// Default image tags
 	RouterImageTag = "2"
 	NginxImageTag  = "1"

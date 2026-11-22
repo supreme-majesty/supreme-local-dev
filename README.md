@@ -18,7 +18,7 @@ docker run -d --name sld --restart unless-stopped \
   --group-add 0 \
   -v sld-data:/home/sld/.sld \
   -v "$HOME/Projects:/workspace" \
-  ghcr.io/supreme-majesty/sld:latest
+  insightifytech/sld:latest
 
 docker logs sld        # copy the admin token printed on first start
 ```

@@ -24,12 +24,12 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Build router image
-        run: docker build -t ghcr.io/supreme-majesty/sld-router:2 docker/router
+        run: docker build -t insightifytech/sld-router:2 docker/router
 
       - name: Build PHP runtime images (8.3)
         run: |
-          docker build -t ghcr.io/supreme-majesty/sld-nginx:1 docker/nginx
-          docker build --build-arg PHP_VERSION=8.3 -t ghcr.io/supreme-majesty/sld-php:8.3 docker/php
+          docker build -t insightifytech/sld-nginx:1 docker/nginx
+          docker build --build-arg PHP_VERSION=8.3 -t insightifytech/sld-php:8.3 docker/php
 
       - name: Build SLD image
         uses: docker/build-push-action@v5

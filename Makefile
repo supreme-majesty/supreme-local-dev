@@ -1,10 +1,16 @@
 .PHONY: build build-fast frontend install clean test e2e serve \
         start stop status scan doctor \
         docker-config docker-up docker-up-pg docker-app docker-stop docker-down docker-logs docker-build docker-ps docker-shell docker-clean \
-        docker-images docker-image-app docker-image-router docker-image-nginx docker-image-php token
+        docker-images docker-image-app docker-image-router docker-image-nginx docker-image-php docker-publish token
 
 BINARY_NAME=sld
 MAIN_PATH=./cmd/sld
+
+# Where SLD's images are published (Docker Hub namespace). SLD itself uses the
+# same default; override both with SLD_IMAGE_REGISTRY / IMAGE_REGISTRY.
+IMAGE_REGISTRY ?= insightifytech
+VERSION ?= dev
+PLATFORMS ?= linux/amd64,linux/arm64
 
 # ─────────────────────────────────────────────
 #  Build
@@ -123,17 +129,29 @@ token:
 docker-images: docker-image-app docker-image-router docker-image-nginx docker-image-php
 
 docker-image-app:
-	docker build -t ghcr.io/supreme-majesty/sld:latest .
+	docker build -t $(IMAGE_REGISTRY)/sld:latest .
 
 docker-image-router:
-	docker build -t ghcr.io/supreme-majesty/sld-router:2 -t ghcr.io/supreme-majesty/sld-router:latest docker/router
+	docker build -t $(IMAGE_REGISTRY)/sld-router:2 -t $(IMAGE_REGISTRY)/sld-router:latest docker/router
 
 docker-image-nginx:
-	docker build -t ghcr.io/supreme-majesty/sld-nginx:1 -t ghcr.io/supreme-majesty/sld-nginx:latest docker/nginx
+	docker build -t $(IMAGE_REGISTRY)/sld-nginx:1 -t $(IMAGE_REGISTRY)/sld-nginx:latest docker/nginx
 
 docker-image-php:
-	docker build --build-arg PHP_VERSION=8.1 -t ghcr.io/supreme-majesty/sld-php:8.1 docker/php
-	docker build --build-arg PHP_VERSION=8.2 -t ghcr.io/supreme-majesty/sld-php:8.2 docker/php
-	docker build --build-arg PHP_VERSION=8.3 -t ghcr.io/supreme-majesty/sld-php:8.3 docker/php
-	docker build --build-arg PHP_VERSION=8.4 -t ghcr.io/supreme-majesty/sld-php:8.4 docker/php
+	docker build --build-arg PHP_VERSION=8.1 -t $(IMAGE_REGISTRY)/sld-php:8.1 docker/php
+	docker build --build-arg PHP_VERSION=8.2 -t $(IMAGE_REGISTRY)/sld-php:8.2 docker/php
+	docker build --build-arg PHP_VERSION=8.3 -t $(IMAGE_REGISTRY)/sld-php:8.3 docker/php
+	docker build --build-arg PHP_VERSION=8.4 -t $(IMAGE_REGISTRY)/sld-php:8.4 docker/php
 
+
+# Build all images for amd64 + arm64 and push them (needs `docker login` and a
+# buildx builder that can build both platforms, e.g. Docker Desktop's).
+#   make docker-publish VERSION=v3.0.0
+docker-publish:
+	docker buildx build --platform $(PLATFORMS) --build-arg VERSION=$(VERSION) \
+		-t $(IMAGE_REGISTRY)/sld:latest $(if $(filter-out dev,$(VERSION)),-t $(IMAGE_REGISTRY)/sld:$(VERSION)) --push .
+	docker buildx build --platform $(PLATFORMS) -t $(IMAGE_REGISTRY)/sld-router:2 -t $(IMAGE_REGISTRY)/sld-router:latest --push docker/router
+	docker buildx build --platform $(PLATFORMS) -t $(IMAGE_REGISTRY)/sld-nginx:1 -t $(IMAGE_REGISTRY)/sld-nginx:latest --push docker/nginx
+	for v in 8.1 8.2 8.3 8.4; do \
+		docker buildx build --platform $(PLATFORMS) --build-arg PHP_VERSION=$$v -t $(IMAGE_REGISTRY)/sld-php:$$v --push docker/php || exit 1; \
+	done
