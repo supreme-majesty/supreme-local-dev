@@ -204,7 +204,7 @@ apps:
 		t.Errorf("python: image=%s install=%q path=%q", py.Image, py.Environment["SLD_INSTALL"], py.Environment["PATH"])
 	}
 	rb := plan(t, ctx, "admin").Containers[0]
-	if rb.Image != "ruby:3.4-slim" || rb.Environment["SLD_INSTALL"] != "bundle install" || !slices.Contains(rb.Volumes, "sld-shop-1234abcd-admin-deps:/usr/local/bundle") {
+	if rb.Image != "ruby:3.4" || rb.Environment["SLD_INSTALL"] != "bundle install" || !slices.Contains(rb.Volumes, "sld-shop-1234abcd-admin-deps:/usr/local/bundle") {
 		t.Errorf("ruby: image=%s install=%q volumes=%v", rb.Image, rb.Environment["SLD_INSTALL"], rb.Volumes)
 	}
 	gosvc := plan(t, ctx, "svc").Containers[0]

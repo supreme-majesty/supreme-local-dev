@@ -629,9 +629,6 @@ func detectRuby(p *proj, cfg *config.Config) []config.App {
 		app.Command, app.Port = "bundle exec rackup -o 0.0.0.0 -p 9292", 9292
 		p.note("Rack app on port 9292")
 	}
-	if strings.Contains(p.read("Gemfile.lock"), "nokogiri") || strings.Contains(gemfile, "pg") || strings.Contains(gemfile, "mysql2") {
-		p.note("⚠️  gems with native extensions may need build tools; if install fails, use runtime: dockerfile")
-	}
 	detectServicesFromText(p, cfg, gemfile, map[string]string{"'pg'": "postgres", `"pg"`: "postgres", "mysql2": "mysql", "redis": "redis"})
 	return []config.App{app}
 }

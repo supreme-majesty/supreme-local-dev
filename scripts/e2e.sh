@@ -53,6 +53,7 @@ cleanup() {
   docker network rm "$NETWORK" >/dev/null 2>&1 || true
   docker volume rm -f "$DATA" >/dev/null 2>&1 || true
   docker volume rm -f e2e-compose-backend_default >/dev/null 2>&1 || true
+  docker network rm zz-e2e-alias-a e2e-alias-b_default >/dev/null 2>&1 || true
   [ -n "${WORKSPACE:-}" ] && rm -rf "$WORKSPACE"
 }
 trap cleanup EXIT
@@ -81,13 +82,14 @@ wait_job() {
   fi
 }
 
-# fetch DOMAIN MARKER → waits up to 60s for the router to serve MARKER.
+# fetch DOMAIN MARKER [SECONDS] → waits (default 60s) for the router to serve
+# MARKER. Apps that install dependencies or compile on start need longer.
 fetch() {
-  local domain=$1 marker=$2 body=""
-  for _ in $(seq 1 30); do
+  local domain=$1 marker=$2 wait=${3:-60} body=""
+  for _ in $(seq 1 $((wait / 2))); do
     body=$(curl -sS --max-time 5 --resolve "$domain:$HTTP_PORT:127.0.0.1" "http://$domain:$HTTP_PORT/" 2>/dev/null || true)
     if echo "$body" | grep -q "$marker"; then
-      echo "$body" | head -1
+      echo "$body" | grep -o "$marker[^<]*" | head -1 # just the marker line, not a whole HTML page
       return 0
     fi
     sleep 2
@@ -102,17 +104,33 @@ log "Preparing workspace"
 WORKSPACE="$(mktemp -d)"
 cp -r "$ROOT/test/e2e/fixtures/." "$WORKSPACE/"
 for dir in "$WORKSPACE"/*/; do mkdir -p "$dir.git" && echo "ref: refs/heads/main" >"$dir.git/HEAD"; done
+# name|domain|marker|seconds to wait for the first response (default 60)
 CASES=(
   "e2e-static|e2e-static.localhost|E2E-STATIC-OK"
   "e2e-node|e2e-node.localhost|E2E-NODE-OK"
   "e2e-python|e2e-python.localhost|E2E-PYTHON-OK"
   "e2e-dockerfile|e2e-dockerfile.localhost|E2E-DOCKERFILE-OK"
   "e2e-compose|e2e-compose.localhost|E2E-COMPOSE-OK"
+  "e2e-go|e2e-go.localhost|E2E-GO-OK|180"
+  "e2e-django|e2e-django.localhost|E2E-DJANGO-OK|180"
+  "e2e-nextjs|e2e-nextjs.localhost|E2E-NEXTJS-OK|300"
+  "e2e-rails|e2e-rails.localhost|E2E-RAILS-OK|420"
 )
 if [ "${E2E_PHP:-}" = "1" ]; then
   CASES+=("e2e-php|e2e-php.localhost|E2E-PHP-OK")
 else
   rm -rf "$WORKSPACE/e2e-php"
+fi
+# E2E_ONLY="e2e-go e2e-rails" runs only those fixtures.
+if [ -n "${E2E_ONLY:-}" ]; then
+  selected=()
+  for case in "${CASES[@]}"; do
+    name=${case%%|*}
+    if [[ " $E2E_ONLY " == *" $name "* ]]; then selected+=("$case"); else rm -rf "$WORKSPACE/$name" "$WORKSPACE/${name}-apps"; fi
+  done
+  CASES=("${selected[@]}")
+  # The e2e-alias-a/-b pair is one check; select it as "e2e-alias".
+  [[ " $E2E_ONLY " == *" e2e-alias "* ]] || rm -rf "$WORKSPACE/e2e-alias-a" "$WORKSPACE/e2e-alias-b"
 fi
 echo "  $(ls "$WORKSPACE" | tr '\n' ' ')"
 
@@ -149,16 +167,21 @@ code=$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: attacker.example' "http:
 [ "$code" = "403" ] && ok "foreign Host header refused (DNS rebinding)" || bad "foreign Host returned $code"
 
 log "Project discovery"
+# SLD lists only projects in parked folders (or already dockerized ones), so
+# park the workspace first, as a user does from the dashboard.
+parked=$(curl -sS --max-time 30 -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -H 'X-SLD-Request: 1' --data '{"path":"/workspace"}' "http://127.0.0.1:$API_PORT/api/park")
+echo "$parked" | grep -q '"success":true' && ok "workspace parked" || bad "parking /workspace failed: $parked"
 projects=$(api GET "/projects?refresh=1")
 for case in "${CASES[@]}"; do
-  IFS='|' read -r name domain marker <<<"$case"
+  IFS='|' read -r name domain marker wait <<<"$case"
   if echo "$projects" | grep -q "\"name\":\"$name\""; then ok "found $name"; else bad "$name not discovered"; fi
 done
 
 for case in "${CASES[@]}"; do
-  IFS='|' read -r name domain marker <<<"$case"
+  IFS='|' read -r name domain marker wait <<<"$case"
   log "$name"
-  id=$(echo "$projects" | grep -o "\"id\":\"[^\"]*\",\"name\":\"$name\"" | cut -d'"' -f4)
+  id=$(echo "$projects" | grep -o "\"id\":\"[^\"]*\",\"name\":\"$name\"" | cut -d'"' -f4 || true)
   if [ -z "$id" ]; then bad "$name: no project id"; continue; fi
   PROJECT_IDS+=("$id")
 
@@ -168,7 +191,14 @@ for case in "${CASES[@]}"; do
   job=$(api POST "/projects/$id/start" | json_field id)
   if wait_job "$job"; then ok "started"; else bad "$name: start failed"; continue; fi
 
-  if line=$(fetch "$domain" "$marker"); then ok "http://$domain → $line"; else bad "$name: $domain did not serve $marker"; fi
+  line=""
+  if line=$(fetch "$domain" "$marker" "${wait:-60}"); then ok "http://$domain → $line"; else
+    bad "$name: $domain did not serve $marker"
+    for c in $(docker ps -aq --filter "label=com.supreme.sld.project=$id"); do
+      echo "    --- $(docker inspect -f '{{.Name}}' "$c") (log tail) ---"
+      docker logs --tail 25 "$c" 2>&1 | sed 's/^/    | /'
+    done
+  fi
 
   if [ "$name" = "e2e-compose" ]; then
     published=$(docker port e2e-compose-backend-web-1 2>/dev/null || true)
@@ -178,10 +208,12 @@ for case in "${CASES[@]}"; do
     leak=$(curl -sS --max-time 5 --resolve "$domain:$HTTP_PORT:127.0.0.1" "http://$domain:$HTTP_PORT/.git/HEAD" || true)
     echo "$leak" | grep -q "ref:" && bad "static site exposes .git" || ok "hidden files (.git) are not served"
   fi
-  if [ "$name" = "e2e-node" ] || [ "$name" = "e2e-python" ]; then
-    body=$(fetch "$domain" "$marker" || true)
-    echo "$body" | grep -q "uid=0" && bad "$name runs as root" || ok "runs as an unprivileged user"
-  fi
+  case "$name" in e2e-node | e2e-python | e2e-go | e2e-django | e2e-nextjs | e2e-rails)
+    if [ -z "$line" ]; then :; # already reported as not served
+    elif echo "$line" | grep -q "uid=0[^0-9]\|uid=0$"; then bad "$name runs as root"
+    elif echo "$line" | grep -q "uid=[0-9]"; then ok "runs as an unprivileged user"
+    else bad "$name: response has no uid: $line"; fi
+  esac
 
   job=$(api POST "/projects/$id/destroy" '{"remove_volumes":true}' | json_field id)
   if wait_job "$job"; then ok "destroyed"; else bad "$name: destroy failed"; continue; fi
@@ -189,9 +221,44 @@ for case in "${CASES[@]}"; do
   [ "$left" = "0" ] && ok "no containers left" || bad "$name: $left container(s) left after destroy"
 done
 
+# Two compose projects running at once, both with a service called "app".
+# e2e-alias-a's front proxies to its own "app"; it must never reach e2e-alias-b's.
+if [ -d "$WORKSPACE/e2e-alias-a" ]; then
+  log "compose service names stay inside their project"
+  alias_ids=()
+  for name in e2e-alias-b e2e-alias-a; do
+    id=$(echo "$projects" | grep -o "\"id\":\"[^\"]*\",\"name\":\"$name\"" | cut -d'"' -f4 || true)
+    if [ -z "$id" ]; then bad "$name not discovered"; continue; fi
+    PROJECT_IDS+=("$id")
+    alias_ids+=("$id")
+    job=$(api POST "/projects/$id/setup" | json_field id)
+    wait_job "$job" || { bad "$name: setup failed"; continue; }
+    job=$(api POST "/projects/$id/start" | json_field id)
+    if wait_job "$job"; then ok "$name started"; else bad "$name: start failed"; fi
+  done
+  if line=$(fetch e2e-alias-a.localhost E2E-ALIAS-A-OK); then ok "e2e-alias-a reaches its own app → $line"; else
+    bad "e2e-alias-a did not reach its own app (wrong project's service, or none)"
+  fi
+  leaked=""
+  for id in "${alias_ids[@]}"; do
+    for c in $(docker ps -q --filter "label=com.supreme.sld.project=$id"); do
+      aliases=$(docker inspect -f "{{with index .NetworkSettings.Networks \"$NETWORK\"}}{{.Aliases}}{{end}}" "$c")
+      service=$(docker inspect -f '{{index .Config.Labels "com.docker.compose.service"}}' "$c")
+      [[ " ${aliases//[\[\]]/} " == *" $service "* ]] && leaked+=" $service($id)"
+    done
+  done
+  [ -z "$leaked" ] && ok "no service-name aliases on $NETWORK" || bad "service names leaked onto $NETWORK:$leaked"
+  for id in "${alias_ids[@]}"; do
+    job=$(api POST "/projects/$id/destroy" '{"remove_volumes":true}' | json_field id)
+    wait_job "$job" || bad "destroy of $id failed"
+  done
+fi
+
 log "Dashboard pages (Docker-backed)"
 classic() { curl -sS --max-time 30 -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:$API_PORT/api$1"; }
-classic /sites | grep -q '"name":"e2e-static"' && ok "sites list" || bad "sites list misses e2e-static"
+if [ -d "$WORKSPACE/e2e-static" ]; then
+  classic /sites | grep -q '"name":"e2e-static"' && ok "sites list" || bad "sites list misses e2e-static"
+fi
 classic /services | grep -q '"kind":"router"' && ok "services list shows the router" || bad "services list: $(classic /services | head -c 200)"
 classic /plugins | grep -q '"id":"postgres"' && ok "plugins list" || bad "plugins list: $(classic /plugins | head -c 200)"
 classic /system/doctor | grep -q '"name":"Docker","status":"pass"' && ok "doctor" || bad "doctor: $(classic /system/doctor | head -c 200)"

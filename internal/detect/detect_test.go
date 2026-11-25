@@ -126,7 +126,7 @@ func TestProject(t *testing.T) {
 		{
 			name:  "rails",
 			files: map[string]string{"Gemfile": "source 'https://rubygems.org'\ngem 'rails', '~> 7.2'\ngem 'pg'\n", ".ruby-version": "ruby-3.3.5\n"},
-			want:  want{apps: "web (ruby 3.3)", command: "bin/rails server -b 0.0.0.0 -p 3000", port: 3000, db: "postgres", noteLike: "native extensions"},
+			want:  want{apps: "web (ruby 3.3)", command: "bin/rails server -b 0.0.0.0 -p 3000", port: 3000, db: "postgres", noteLike: "Rails on port 3000"},
 		},
 		{
 			name:  "go with air",
