@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -109,7 +110,18 @@ func (o *Orchestrator) upComposeStack(ctx context.Context, spec *ProjectSpec, st
 
 	errOut.Reset()
 	if err := o.runCompose(ctx, spec, stack, name, []string{"up", "-d"}, out, io.MultiWriter(out, &errOut)); err != nil {
-		return fmt.Errorf("docker compose up failed for %s: %w\n%s", stack.Dir, err, tail(errOut.String()))
+		if !isMissingNetwork(errors.New(errOut.String())) {
+			return fmt.Errorf("docker compose up failed for %s: %w\n%s", stack.Dir, err, tail(errOut.String()))
+		}
+		// Containers that still point at a removed network (e.g. after
+		// `docker network prune` while the stack was stopped) cannot start,
+		// and compose does not recreate them on its own. Recreating keeps
+		// named and anonymous volumes.
+		fmt.Fprintln(out, "[SLD] Some containers point at a network that no longer exists; recreating them...")
+		errOut.Reset()
+		if err := o.runCompose(ctx, spec, stack, name, []string{"up", "-d", "--force-recreate"}, out, io.MultiWriter(out, &errOut)); err != nil {
+			return fmt.Errorf("docker compose up failed for %s: %w\n%s", stack.Dir, err, tail(errOut.String()))
+		}
 	}
 	return o.connectComposeRoutes(ctx, spec, stack, resolved.Name)
 }

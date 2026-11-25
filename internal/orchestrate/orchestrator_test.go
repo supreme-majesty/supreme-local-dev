@@ -33,6 +33,7 @@ type mockEngine struct {
 	inspectFn       func(containerID string) types.ContainerJSON
 	logsText        string
 	failCreate      bool
+	startErrs       map[string]error // StartContainer fails for these container IDs
 }
 
 func newMockEngine() *mockEngine {
@@ -117,6 +118,9 @@ func (m *mockEngine) CreateContainer(ctx context.Context, desired *reconcile.Des
 }
 
 func (m *mockEngine) StartContainer(ctx context.Context, containerID string) error {
+	if err := m.startErrs[containerID]; err != nil {
+		return err
+	}
 	m.startedIDs = append(m.startedIDs, containerID)
 	for _, c := range m.containers {
 		if c.ID == containerID {
