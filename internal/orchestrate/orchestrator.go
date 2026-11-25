@@ -773,6 +773,17 @@ func (o *Orchestrator) ensureVolumes(ctx context.Context, spec *ProjectSpec, ext
 	return nil
 }
 
+// isMissingNetwork reports whether Docker refused to start a container because
+// a network it was attached to no longer exists ("failed to set up container
+// networking: network 9f41... not found").
+func isMissingNetwork(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "network") && strings.Contains(msg, "not found")
+}
+
 // applyPlan executes a single reconciliation plan entry and returns the resulting container ID (if started/created).
 func (o *Orchestrator) applyPlan(ctx context.Context, plan reconcile.DesiredResourcePlan) (string, error) {
 	switch plan.Action {
@@ -790,10 +801,25 @@ func (o *Orchestrator) applyPlan(ctx context.Context, plan reconcile.DesiredReso
 		return id, nil
 
 	case reconcile.ActionStart:
-		if err := o.engine.StartContainer(ctx, plan.Actual.ID); err != nil {
+		err := o.engine.StartContainer(ctx, plan.Actual.ID)
+		if err == nil {
+			return plan.Actual.ID, nil
+		}
+		if !isMissingNetwork(err) || plan.Desired == nil {
 			return "", err
 		}
-		return plan.Actual.ID, nil
+		// The container still points at a network that was removed (e.g. by
+		// `docker network prune` while it was stopped); Docker cannot start
+		// it. Recreate it from the same spec: its named volumes are kept.
+		_ = o.engine.RemoveContainer(ctx, plan.Actual.ID, true)
+		id, err := o.engine.CreateContainer(ctx, plan.Desired)
+		if err != nil {
+			return "", err
+		}
+		if err := o.engine.StartContainer(ctx, id); err != nil {
+			return "", err
+		}
+		return id, nil
 
 	case reconcile.ActionRecreate:
 		if plan.Actual != nil {
