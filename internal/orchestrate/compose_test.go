@@ -24,15 +24,13 @@ func TestBuildComposeOverride(t *testing.T) {
 			{App: "api", Service: "api", Port: 8000, RouterName: "tailorly-1234abcd-api", Hosts: []string{"api.tailorly.localhost"}},
 		},
 	}
-	resolved := &composeConfig{Services: map[string]struct {
-		Networks map[string]any `json:"networks"`
-	}{
+	resolved := &composeConfig{Services: map[string]composeService{
 		"web":   {Networks: map[string]any{"default": nil}},
 		"api":   {Networks: map[string]any{"backend": nil, "default": nil}},
 		"mysql": {Networks: map[string]any{"backend": nil}},
 	}}
 
-	out, err := buildComposeOverride(spec, stack, resolved)
+	out, err := buildComposeOverride(spec, stack, resolved, map[string]map[string]string{"api": {"APP_URL": "http://api.tailorly.localhost"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,8 +46,9 @@ func TestBuildComposeOverride(t *testing.T) {
 	}
 	var doc struct {
 		Services map[string]struct {
-			Labels   map[string]string         `yaml:"labels"`
-			Networks map[string]map[string]any `yaml:"networks"`
+			Labels      map[string]string         `yaml:"labels"`
+			Networks    map[string]map[string]any `yaml:"networks"`
+			Environment map[string]string         `yaml:"environment"`
 		} `yaml:"services"`
 		Networks map[string]struct {
 			Name     string `yaml:"name"`
@@ -84,10 +83,17 @@ func TestBuildComposeOverride(t *testing.T) {
 	if mysql.Labels["com.supreme.sld.project"] != "tailorly-1234abcd" || mysql.Labels["traefik.enable"] != "" {
 		t.Errorf("mysql should be labeled but not routed: %+v", mysql)
 	}
+	// Public URL corrections land only on the services they were computed for.
+	if got := doc.Services["api"].Environment; got["APP_URL"] != "http://api.tailorly.localhost" || len(got) != 1 {
+		t.Errorf("api environment: %v", got)
+	}
+	if web.Environment != nil || mysql.Environment != nil {
+		t.Errorf("only api gets an environment: web=%v mysql=%v", web.Environment, mysql.Environment)
+	}
 
 	// keep_ports leaves published ports alone.
 	stack.KeepPorts = true
-	out, _ = buildComposeOverride(spec, stack, resolved)
+	out, _ = buildComposeOverride(spec, stack, resolved, nil)
 	if strings.Contains(string(out), "!reset") {
 		t.Error("keep_ports should not reset ports")
 	}
@@ -116,6 +122,47 @@ func TestConnectComposeRoutes(t *testing.T) {
 	}
 	if !slices.Equal(engine.connectedNets, []string{GlobalNetwork}) {
 		t.Errorf("expected exactly the nginx container on %s, got %v", GlobalNetwork, engine.connectedNets)
+	}
+}
+
+func TestPublicURLOverrides(t *testing.T) {
+	str := func(s string) *string { return &s }
+	siteURL := func(host string, tls bool) string { return "http://" + host + ":8888" }
+
+	// The sunport case: one app, nginx routed, php-fpm and the queue read the
+	// same .env through env_file, with APP_URL left at the old published port.
+	sunport := &appruntime.ComposeStack{Routes: []appruntime.ComposeRoute{{App: "backend", Service: "nginx", Hosts: []string{"sunport.localhost"}}}}
+	resolved := &composeConfig{Services: map[string]composeService{
+		"nginx": {Environment: map[string]*string{"APP_URL": str("http://localhost:8080")}},
+		"app":   {Environment: map[string]*string{"APP_URL": str("http://localhost:8080"), "DB_HOST": str("mysql")}},
+		"queue": {Environment: map[string]*string{"APP_URL": str("http://localhost:8080/"), "UNSET": nil}},
+		"mysql": {Environment: map[string]*string{"MYSQL_DATABASE": str("sunport")}},
+	}}
+	got := publicURLOverrides(sunport, resolved, siteURL)
+	for _, svc := range []string{"nginx", "app", "queue"} {
+		if got[svc]["APP_URL"] != "http://sunport.localhost:8888" || len(got[svc]) != 1 {
+			t.Errorf("%s: %v", svc, got[svc])
+		}
+	}
+	if _, ok := got["mysql"]; ok {
+		t.Errorf("mysql has nothing to correct: %v", got["mysql"])
+	}
+
+	// The lgs case: web and api apps. The compose file already gives web
+	// API_URL=http://api:4000 (a service URL, never touched); web's NEXTAUTH_URL
+	// still says localhost:3000. The unrouted worker could mean either app.
+	lgs := &appruntime.ComposeStack{Routes: []appruntime.ComposeRoute{
+		{App: "web", Service: "web", Hosts: []string{"lgs.localhost"}},
+		{App: "api", Service: "api", Hosts: []string{"api.lgs.localhost"}},
+	}}
+	resolved = &composeConfig{Services: map[string]composeService{
+		"web":    {Environment: map[string]*string{"API_URL": str("http://api:4000"), "NEXTAUTH_URL": str("http://localhost:3000")}},
+		"api":    {Environment: map[string]*string{"API_URL": str("http://localhost:4000"), "APP_URL": str("http://api.lgs.localhost:8888")}},
+		"worker": {Environment: map[string]*string{"APP_URL": str("http://localhost:4000")}},
+	}}
+	got = publicURLOverrides(lgs, resolved, siteURL)
+	if len(got) != 1 || got["web"]["NEXTAUTH_URL"] != "http://lgs.localhost:8888" || len(got["web"]) != 1 {
+		t.Errorf("lgs: want only web NEXTAUTH_URL corrected, got %v", got)
 	}
 }
 

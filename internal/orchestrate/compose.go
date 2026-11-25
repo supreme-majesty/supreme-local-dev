@@ -75,7 +75,26 @@ func (o *Orchestrator) upComposeStack(ctx context.Context, spec *ProjectSpec, st
 		}
 	}
 
-	override, err := buildComposeOverride(spec, stack, &resolved)
+	out := o.buildLog
+	if out == nil {
+		out = io.Discard
+	}
+
+	envOverrides := publicURLOverrides(stack, &resolved, o.env.SiteURL)
+	for _, service := range resolved.serviceNames() {
+		fixes := envOverrides[service]
+		keys := make([]string, 0, len(fixes))
+		for k := range fixes {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			fmt.Fprintf(out, "[SLD] %s: %s=%s (the project's env files have %s; they are left as they are)\n",
+				service, k, fixes[k], *resolved.Services[service].Environment[k])
+		}
+	}
+
+	override, err := buildComposeOverride(spec, stack, &resolved, envOverrides)
 	if err != nil {
 		return err
 	}
@@ -88,10 +107,6 @@ func (o *Orchestrator) upComposeStack(ctx context.Context, spec *ProjectSpec, st
 		return fmt.Errorf("failed to write compose override: %w", err)
 	}
 
-	out := o.buildLog
-	if out == nil {
-		out = io.Discard
-	}
 	errOut.Reset()
 	if err := o.runCompose(ctx, spec, stack, name, []string{"up", "-d"}, out, io.MultiWriter(out, &errOut)); err != nil {
 		return fmt.Errorf("docker compose up failed for %s: %w\n%s", stack.Dir, err, tail(errOut.String()))
@@ -217,10 +232,65 @@ func (o *Orchestrator) runCompose(ctx context.Context, spec *ProjectSpec, stack 
 
 // composeConfig is the subset of `docker compose config --format json` SLD reads.
 type composeConfig struct {
-	Name     string `json:"name"`
-	Services map[string]struct {
-		Networks map[string]any `json:"networks"`
-	} `json:"services"`
+	Name     string                    `json:"name"`
+	Services map[string]composeService `json:"services"`
+}
+
+type composeService struct {
+	Networks map[string]any `json:"networks"`
+	// Environment is what the container gets: env_file and environment
+	// merged by compose. A nil value is a variable passed through unset.
+	Environment map[string]*string `json:"environment"`
+}
+
+// publicURLOverrides finds, per service, settings that hold an app's own
+// public URL but still point where the stack was served before SLD (e.g.
+// APP_URL=http://localhost:8080 for a stack that published 8080). The
+// corrected values go into the override's `environment:`, which compose
+// prefers over env_file, so the project's files are not edited.
+//
+// A routed service gets its own app's URL. Other services (php-fpm, queue
+// workers, schedulers, ...) get it only when the stack serves a single app;
+// with several, which one they mean is unknown, so they are left alone.
+func publicURLOverrides(stack *appruntime.ComposeStack, resolved *composeConfig, siteURL func(host string, tls bool) string) map[string]map[string]string {
+	if len(stack.Routes) == 0 {
+		return nil
+	}
+	var hosts []string
+	apps := map[string]appruntime.ComposeRoute{}
+	byService := map[string]appruntime.ComposeRoute{}
+	for _, r := range stack.Routes {
+		hosts = append(hosts, r.Hosts...)
+		if _, ok := apps[r.App]; !ok {
+			apps[r.App] = r
+		}
+		if _, ok := byService[r.Service]; !ok {
+			byService[r.Service] = r
+		}
+	}
+	out := map[string]map[string]string{}
+	for _, name := range resolved.serviceNames() {
+		route, ok := byService[name]
+		if !ok {
+			if len(apps) != 1 {
+				continue
+			}
+			route = stack.Routes[0]
+		}
+		if len(route.Hosts) == 0 {
+			continue
+		}
+		env := map[string]string{}
+		for k, v := range resolved.Services[name].Environment {
+			if v != nil {
+				env[k] = *v
+			}
+		}
+		if fixes := appruntime.PublicURLOverrides(env, siteURL(route.Hosts[0], route.TLS), hosts); len(fixes) > 0 {
+			out[name] = fixes
+		}
+	}
+	return out
 }
 
 func (c *composeConfig) serviceNames() []string {
@@ -236,7 +306,7 @@ func (c *composeConfig) serviceNames() []string {
 // off Docker's automatic restarts, drops published host ports (unless
 // keep_ports), and connects routed services to
 // the router network with Traefik labels.
-func buildComposeOverride(spec *ProjectSpec, stack *appruntime.ComposeStack, resolved *composeConfig) ([]byte, error) {
+func buildComposeOverride(spec *ProjectSpec, stack *appruntime.ComposeStack, resolved *composeConfig, envOverrides map[string]map[string]string) ([]byte, error) {
 	id := spec.Identity
 	routes := map[string][]appruntime.ComposeRoute{}
 	for _, r := range stack.Routes {
@@ -297,6 +367,19 @@ func buildComposeOverride(spec *ProjectSpec, stack *appruntime.ComposeStack, res
 
 		if !stack.KeepPorts {
 			add(svc, "ports", &yaml.Node{Kind: yaml.SequenceNode, Tag: "!reset", Style: yaml.FlowStyle})
+		}
+
+		if fixes := envOverrides[name]; len(fixes) > 0 {
+			env := mapping()
+			fixKeys := make([]string, 0, len(fixes))
+			for k := range fixes {
+				fixKeys = append(fixKeys, k)
+			}
+			sort.Strings(fixKeys)
+			for _, k := range fixKeys {
+				add(env, k, str(fixes[k]))
+			}
+			add(svc, "environment", env)
 		}
 
 		// Routed services are connected to the router network after `up`

@@ -180,10 +180,33 @@ func addRouteLabels(ctx *Context, app *config.App, labels map[string]string, por
 func appEnv(ctx *Context, app *config.App, extra map[string]string) map[string]string {
 	env := map[string]string{}
 	maps.Copy(env, ctx.ServiceEnv)
+	maps.Copy(env, publicURLEnv(ctx, app)) // anything set in the SLD config below wins
 	maps.Copy(env, ctx.Config.Environment)
 	maps.Copy(env, extra)
 	maps.Copy(env, app.Environment)
 	return env
+}
+
+// publicURLEnv corrects settings in the app's env files that hold its own
+// public URL but still point where it was served before SLD (e.g. Laravel's
+// APP_URL=http://localhost:8080). The values are passed as environment
+// variables, which frameworks prefer over .env files, so the files stay as
+// they are for running the app outside SLD. Only runtimes that mount the
+// app's code read those files.
+func publicURLEnv(ctx *Context, app *config.App) map[string]string {
+	switch app.Runtime {
+	case config.RuntimePHP, config.RuntimeNode, config.RuntimePython, config.RuntimeRuby, config.RuntimeGo:
+	default:
+		return nil
+	}
+	if ctx.Env == nil || ctx.Config == nil || app.Domain == "" {
+		return nil
+	}
+	var hosts []string
+	for _, a := range ctx.Config.Apps {
+		hosts = append(hosts, a.Domain)
+	}
+	return PublicURLOverrides(ReadEnvFiles(AppRoot(ctx, app)), ctx.Env.SiteURL(app.Domain, ctx.Config.Domain.TLS), hosts)
 }
 
 // AppRoot is the local directory of an app: the project root joined with app.Path.
