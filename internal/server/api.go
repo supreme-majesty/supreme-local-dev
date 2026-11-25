@@ -189,6 +189,12 @@ func (s *Server) view(ctx context.Context, r v2.ScanResult) ProjectView {
 	for _, a := range r.AppList {
 		v.Apps = append(v.Apps, AppView{AppInfo: a, URL: s.opts.Env.SiteURL(a.Domain, r.TLS)})
 	}
+	// Env files that still point where the project used to be served (e.g.
+	// APP_URL=http://localhost:8080 after SLD moved it to a domain). Checked
+	// on every view, so a fixed .env clears the warning without a rescan.
+	if urlProblems := v2.EnvURLProblems(r.Root, r.AppList, func(d string) string { return s.opts.Env.SiteURL(d, r.TLS) }); len(urlProblems) > 0 {
+		v.Problems = append(append([]string(nil), r.Problems...), urlProblems...)
+	}
 
 	switch r.Status {
 	case "configured", "written":

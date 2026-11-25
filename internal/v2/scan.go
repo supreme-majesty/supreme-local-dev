@@ -128,7 +128,10 @@ func (r *ScanResult) fill(cfg *config.Config) {
 	r.TLS = cfg.Domain.TLS
 	for _, app := range cfg.Apps {
 		r.Domains = append(r.Domains, app.Domain)
-		r.AppList = append(r.AppList, AppInfo{Name: app.Name, Runtime: app.Runtime, Version: app.Version, Domain: app.Domain, Path: app.Path, Service: app.Service})
+		r.AppList = append(r.AppList, AppInfo{
+			Name: app.Name, Runtime: app.Runtime, Version: app.Version, Domain: app.Domain, Path: app.Path, Service: app.Service,
+			Port: app.Port, ComposeFiles: app.ComposeFiles,
+		})
 	}
 }
 
@@ -140,6 +143,10 @@ type AppInfo struct {
 	Domain  string `json:"domain"`
 	Path    string `json:"path,omitempty"`
 	Service string `json:"service,omitempty"`
+	// Port the app listens on inside its container (compose: the service's
+	// container port). Used to recognise old localhost URLs; not sent to the dashboard.
+	Port         int      `json:"-"`
+	ComposeFiles []string `json:"-"`
 }
 
 // PrintScan prints scan results as a table.
