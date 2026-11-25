@@ -190,7 +190,7 @@ jobs:
           path: all-artifacts
 
       # Host installers (.deb/.pkg/.msi with a system daemon) are no longer built:
-      # SLD ships as a Docker image (ghcr.io/<owner>/sld). The plain CLI binaries
+      # SLD ships as a Docker image (docker.io/insightifytech/sld). The plain CLI binaries
       # remain for people who run SLD without the image.
       - name: Checksums
         run: |

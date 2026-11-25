@@ -233,7 +233,7 @@ func TestBuildDesiredContainers_MinimalConfig(t *testing.T) {
 	if want := identity.AppContainerName("web", "php"); php.Name != want {
 		t.Errorf("expected PHP name %s, got %s", want, php.Name)
 	}
-	if php.Image != "ghcr.io/supreme-majesty/sld-php:8.3" {
+	if php.Image != "insightifytech/sld-php:8.3" {
 		t.Errorf("unexpected PHP image: %s", php.Image)
 	}
 
@@ -564,5 +564,16 @@ func TestSpecHashCoversWhatDefinesAContainer(t *testing.T) {
 		if specHash(d) == h {
 			t.Errorf("changing the %s does not change the hash", name)
 		}
+	}
+}
+
+func TestImageRegistryOverride(t *testing.T) {
+	t.Setenv("SLD_IMAGE_REGISTRY", "")
+	if got := imageRegistry(); got != DefaultImageRegistry {
+		t.Errorf("default = %q", got)
+	}
+	t.Setenv("SLD_IMAGE_REGISTRY", " ghcr.io/supreme-majesty/ ")
+	if got := imageRegistry(); got != "ghcr.io/supreme-majesty" {
+		t.Errorf("override = %q", got)
 	}
 }

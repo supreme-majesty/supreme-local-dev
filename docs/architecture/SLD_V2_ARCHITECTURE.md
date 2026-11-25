@@ -131,7 +131,7 @@ graph TD
 
 ## 7. Distribution
 
-- **Image:** `ghcr.io/supreme-majesty/sld`, multi-arch, built by `.github/workflows/docker-images.yml` together with `sld-router`, `sld-nginx` and `sld-php:8.1–8.4`.
+- **Image:** `insightifytech/sld` on Docker Hub, multi-arch, published with `sld-router`, `sld-nginx` and `sld-php:8.1–8.4`. Built by `.github/workflows/docker-images.yml` or by hand with `make docker-publish VERSION=…`. `SLD_IMAGE_REGISTRY` changes the registry SLD pulls its images from.
 - **Compose:** `compose.yaml` in the repository runs SLD plus MariaDB, Redis, Mailpit and phpMyAdmin (PostgreSQL with `--profile postgres`).
 - **CLI binaries:** Linux, macOS and Windows binaries are attached to each GitHub release.
 - **Tests:** `go test ./...` for the engine and server. `scripts/e2e.sh` runs the image against sample projects of every runtime in an isolated router and network.

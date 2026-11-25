@@ -17,13 +17,13 @@ docker run -d --name sld --restart unless-stopped \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v sld-data:/data \
   -v ~/Projects:/workspace \
-  ghcr.io/supreme-majesty/sld:2
+  insightifytech/sld:latest
 # then open http://sld.localhost  (or http://127.0.0.1:2025)
 ```
 
 At the end of Phase 15:
 
-- **The product is the image** `ghcr.io/supreme-majesty/sld` (amd64 + arm64). It runs anywhere Docker runs: Linux, macOS (Docker Desktop/OrbStack) and Windows (Docker Desktop/WSL2). OS support comes from Docker, not from per-OS adapters.
+- **The product is the image** `insightifytech/sld` on Docker Hub (amd64 + arm64). It runs anywhere Docker runs: Linux, macOS (Docker Desktop/OrbStack) and Windows (Docker Desktop/WSL2). OS support comes from Docker, not from per-OS adapters.
 - **The SLD container is a control plane.** Through the Docker socket it creates and manages sibling containers: the Traefik router, each project's runtime containers, and databases, caches and mail catchers.
 - **Any web stack:** PHP, Node, Python, Ruby, Go, static sites, a custom Dockerfile or image, or a process already running on the host.
 - **Database management** for project databases and shared database servers covers browsing, SQL, import/export, snapshots, clone and seeding. It reuses the existing DB manager.
@@ -121,7 +121,7 @@ Docker labels only describe projects that have been started. The registry lists 
 
 ### D5. Distribution → image first; host binary only for migration
 
-- Primary: `ghcr.io/supreme-majesty/sld:<semver>` (`:2`, `:2.x`, `:latest`), signed, SBOM attached. A minimal `compose.yaml` with only `sld` and optionally the socket proxy serves as the documented install.
+- Primary: `insightifytech/sld:<version>` and `:latest` on Docker Hub, signed, SBOM attached. *(Amended 2026-11-22: GitHub Packages is disabled for the `supreme-majesty` account, so the images moved from GHCR to Docker Hub. `SLD_IMAGE_REGISTRY` points SLD at another registry, e.g. `ghcr.io/supreme-majesty`.)* A minimal `compose.yaml` with only `sld` and optionally the socket proxy serves as the documented install.
 - The `sld` binary stays in the image for `docker exec sld sld …` and scripting.
 - A host binary is released **one last time** (2.2.x) to run `sld legacy migrate`, because the host's systemd unit and native MySQL can only be handled from the host. After that, releases are image-only.
 - Optional later: a thin host `sld` client that calls the API with a token, for terminal users.
@@ -431,7 +431,7 @@ Original scope:
 - Remove the Plugins page and PHP-only wording.
 - Tauri: keep it as an optional shell that just points at the container URL (no sidecar).
 
-### M7 — Image, compose, release *(2–3 days)* — local part done 2026-11-20; publishing blocked
+### M7 — Image, compose, release *(2–3 days)* — local part done 2026-11-20; published to Docker Hub by hand 2026-11-22
 
 What landed:
 - **Image and compose:**
@@ -443,7 +443,9 @@ What landed:
 - **Makefile** gains `test`, `serve`, `docker-token` and `docker-image-app`. Host-mode targets are kept.
 - **Formatting:** three pre-existing files are now gofmt'd, so CI's format check passes.
 
-**Blocked: publishing.** `docker-images.yml` already builds and pushes `sld`, `sld-router`, `sld-nginx` and `sld-php:8.1–8.4` to GHCR on pushes to `main`. Every run fails before starting because *"your account is locked due to a billing issue"* (GitHub). Once billing is fixed and Phase 15 is pushed, the images are published automatically.
+**Publishing: Docker Hub, by hand for now.** GitHub Packages is disabled for the `supreme-majesty` account, so the images live on Docker Hub under `insightifytech` (SLD's default `SLD_IMAGE_REGISTRY`). `make docker-publish VERSION=…` builds and pushes every image for amd64 + arm64. `docker-images.yml` pushes to Docker Hub with the `DOCKERHUB_USERNAME`/`DOCKERHUB_TOKEN` secrets, but every workflow still fails before starting because *"your account is locked due to a billing issue"* (GitHub).
+
+Published as of 2026-11-25: `sld:latest`, `sld:v3.0.0`, `sld-router:2`/`latest`, `sld-nginx:1`/`latest`, `sld-php:8.1`. **Missing: `sld-php:8.2`, `8.3` and `8.4`.** PHP projects default to 8.4, so they cannot pull their runtime image until these are pushed.
 
 Original scope:
 - Root `Dockerfile`: `CMD ["serve"]`, `VOLUME /data`, `SLD_STATE_DIR=/data`, healthcheck on `/api/health`. Multi-arch build, cosign signing, SBOM, Trivy (the pipeline already exists in `docker-images.yml`).
@@ -456,7 +458,7 @@ Original scope:
 What landed:
 - **`scripts/e2e.sh`** (`make e2e`) runs an SLD image with `serve` against `test/e2e/fixtures` (static, node, python, dockerfile, compose-in-a-subfolder, plus php with `E2E_PHP=1`). It drives everything through `/api/v2`: discovery → setup → start → request the domain through the router → destroy → no containers left. It also checks the auth gates, unprivileged app users, compose host-port removal and that static sites do not serve `.git`.
 - **Isolation:** the test runs beside a real SLD installation without touching it. The router and shared network names are configurable (`SLD_ROUTER_CONTAINER`, `SLD_GLOBAL_NETWORK`), and the test uses its own data volume.
-- **CI:** `.github/workflows/e2e.yml` builds the router, nginx, PHP 8.3 and SLD images and runs the suite with PHP on pushes and PRs. It is blocked, like every workflow, by the GitHub billing lock.
+- **CI:** `.github/workflows/e2e.yml` builds the router, nginx, PHP 8.3 and SLD images and runs the suite with PHP on pushes and PRs. It is blocked, like every workflow, by the GitHub billing lock (still in place on 2026-11-25).
 
 Fixes found by the tests:
 - **Unused networks:** compose-only projects created an unused SLD project network. Docker Desktop's network address pool is small (~31), and this machine ran out ("all predefined address pools have been fully subnetted"). Project networks are now created only when SLD runs containers of its own, and leftovers are removed on start.
@@ -535,7 +537,7 @@ Estimate: about 5–7 weeks for one person. M5 (control plane) and M3 (drivers) 
 
 Status 2026-11-20 (after M10). Nothing is ticked that has not been verified.
 
-- [ ] `docker run … ghcr.io/supreme-majesty/sld:2` on a clean Linux, macOS and Windows machine opens a working dashboard, with nothing else installed. *Verified on Windows + Docker Desktop with a locally built image. The image is not published yet: the GitHub account's billing lock blocks every workflow.*
+- [ ] `docker run … insightifytech/sld:latest` on a clean Linux, macOS and Windows machine opens a working dashboard, with nothing else installed. *Verified on Windows + Docker Desktop with a locally built image. The image is on Docker Hub (2026-11-22) but has not been tried on a clean machine yet, and `sld-php:8.2–8.4` are not published.*
 - [ ] A Laravel, Next.js, Django, Rails, Go, static and Dockerfile project each start from the dashboard and are reachable at `<name>.localhost`. *The end-to-end suite covers static, Node, Python, Dockerfile and compose, plus PHP in CI; real Laravel/compose projects were verified by hand (swiftsms, credora). Next.js, Django, Rails and Go fixtures are still to add.*
 - [ ] Project and shared databases can be created, browsed, queried, imported, snapshotted and cloned from the dashboard. *The database manager is in daily use against the bundled MariaDB. Project database containers and the PostgreSQL plugin are found by the same Docker discovery but were not tested end to end. `services.database.shared` (SLD-managed shared servers per project) is not implemented.*
 - [x] Every API route requires auth (except health, login and auth status); the router and API bind to loopback by default.
