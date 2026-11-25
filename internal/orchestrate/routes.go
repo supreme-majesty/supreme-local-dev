@@ -21,10 +21,11 @@ func (o *Orchestrator) RouterURL() string {
 	return fmt.Sprintf("http://127.0.0.1:%d", o.env.HTTPPort())
 }
 
-// WaitForRoutes waits until the router serves each host, i.e. answers with
-// anything other than its own "no route" 404. Traefik picks up new containers
-// a moment after they start; waiting here means "started" also means
-// "reachable". Hosts still unrouted after timeout are returned.
+// WaitForRoutes waits until each host is served: the router has a route and
+// the app behind it answers. Traefik picks up new containers a moment after
+// they start, and a proxy in front of the app (nginx before PHP-FPM, ...)
+// answers 502 until the app is up; waiting here means "started" also means
+// "reachable". Hosts still not served after timeout are returned.
 func (o *Orchestrator) WaitForRoutes(ctx context.Context, hosts []string, timeout time.Duration) []string {
 	client := &http.Client{
 		Timeout: 3 * time.Second,
@@ -67,11 +68,23 @@ func (o *Orchestrator) routed(ctx context.Context, client *http.Client, host str
 		return false
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusNotFound {
-		return true
-	}
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64))
-	return string(body) != "404 page not found\n"
+	return served(resp.StatusCode, string(body))
+}
+
+// served reports whether a response through the router comes from the app.
+// Not yet: Traefik's own 404 (no route; an app's 404 page has another body),
+// and 502/503/504, which a proxy in front of the app (or Traefik itself)
+// returns while the app behind it is still starting. Anything else, including
+// redirects and the app's own errors, means the app answered.
+func served(status int, body string) bool {
+	switch status {
+	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return false
+	case http.StatusNotFound:
+		return body != "404 page not found\n"
+	}
+	return true
 }
 
 // staticSiteConf is served by static apps instead of nginx's default
