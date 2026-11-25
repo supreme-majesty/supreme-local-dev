@@ -85,7 +85,9 @@ var langSpecs = map[string]langSpec{
 		},
 	},
 	config.RuntimeRuby: {
-		image:     func(v string) string { return fmt.Sprintf("ruby:%s-slim", v) },
+		// The full image, not -slim: most Ruby apps (every Rails app) need gems
+		// with native extensions, which need a compiler and -dev libraries.
+		image:     func(v string) string { return fmt.Sprintf("ruby:%s", v) },
 		depsDir:   "/usr/local/bundle",
 		env:       map[string]string{"BUNDLE_PATH": "/usr/local/bundle"},
 		lockfiles: []string{"Gemfile", "Gemfile.lock"},
