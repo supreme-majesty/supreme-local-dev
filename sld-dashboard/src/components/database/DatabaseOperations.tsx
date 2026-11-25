@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useEffect } from "react";
+import { useSqlDriver, quoteIdent } from "@/lib/sql";
 import {
   Plus,
   RefreshCw,
@@ -54,6 +55,8 @@ export function DatabaseOperations({
   onOpenSnapshots,
   onOpenSchemaMap,
 }: DatabaseOperationsProps) {
+  const driver = useSqlDriver();
+  const qi = (name: string) => quoteIdent(driver, name);
   const [newName, setNewName] = useState(database);
   const [copyName, setCopyName] = useState(`${database}_copy`);
   const [copyOption, setCopyOption] = useState<"structure" | "both" | "data">(
@@ -156,6 +159,15 @@ export function DatabaseOperations({
       allTablesOverride !== undefined ? allTablesOverride : changeAllTables;
 
     if (!targetCollation) return;
+    if (driver === "postgres") {
+      // PostgreSQL fixes a database's encoding and collation when it is created.
+      addToast({
+        type: "info",
+        title: "Not available on PostgreSQL",
+        description: "A PostgreSQL database's collation is set when it is created.",
+      });
+      return;
+    }
 
     const collationObj = collations?.find((c) => c.name === targetCollation);
     if (!collationObj) return;
@@ -164,7 +176,7 @@ export function DatabaseOperations({
       // 1. Alter Database
       await executeMutation.mutateAsync({
         database,
-        query: `ALTER DATABASE \`${database}\` CHARACTER SET ${collationObj.charset} COLLATE ${targetCollation}`,
+        query: `ALTER DATABASE ${qi(database)} CHARACTER SET ${collationObj.charset} COLLATE ${targetCollation}`,
       });
 
       // 2. Alter All Tables if checked
@@ -178,7 +190,7 @@ export function DatabaseOperations({
         for (const table of tables) {
           await executeMutation.mutateAsync({
             database,
-            query: `ALTER TABLE \`${table.name}\` CONVERT TO CHARACTER SET ${collationObj.charset} COLLATE ${targetCollation}`,
+            query: `ALTER TABLE ${qi(table.name)} CONVERT TO CHARACTER SET ${collationObj.charset} COLLATE ${targetCollation}`,
           });
         }
       }

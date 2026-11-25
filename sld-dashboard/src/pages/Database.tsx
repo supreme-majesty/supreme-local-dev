@@ -43,6 +43,8 @@ import {
 } from "@/components/ui/Card";
 import { Label } from "@/components/ui/Label";
 import { convertToCSV, convertToSQL } from "@/lib/utils";
+import { SqlDriverContext, quoteIdent, quoteIdents, quoteLiteral } from "@/lib/sql";
+import { useAppStore } from "@/stores/useAppStore";
 import { Input } from "@/components/ui/Input";
 import { Badge } from "@/components/ui/Badge";
 import { SQLConsole } from "@/components/database/SQLConsole";
@@ -227,6 +229,16 @@ export default function Database() {
     [sources],
   );
   const activeSourceId = dbStatus?.active_target || activeSource?.id || "default";
+  // SQL dialect of the connected server, for statements this page builds.
+  const activeDriver: "mysql" | "postgres" =
+    activeSource?.driver === "postgres" || (!activeSource?.driver && dbDriver === "postgres")
+      ? "postgres"
+      : "mysql";
+  const addToast = useAppStore((s) => s.addToast);
+  const qi = useCallback(
+    (name: string | null | undefined) => quoteIdent(activeDriver, name ?? ""),
+    [activeDriver],
+  );
   const runningSources = useMemo(
     () => sources.filter((s) => s.type === "default" || s.status === "running"),
     [sources],
@@ -368,7 +380,7 @@ export default function Database() {
   const escapeValue = (val: unknown) => {
     if (val === null) return "NULL";
     if (typeof val === "number") return val;
-    return `'${String(val).replace(/'/g, "\\'")}'`;
+    return `'${String(val).replace(/'/g, "''")}'`;
   };
 
   // Helper to safely get value from row (handles case mismatch)
@@ -401,7 +413,7 @@ export default function Database() {
 
     executeQueryMutation.mutate({
       database: selectedDB,
-      query: `TRUNCATE TABLE \`${selectedTable}\``,
+      query: `TRUNCATE TABLE ${quoteIdent(activeDriver, selectedTable)}`,
     });
   };
 
@@ -417,7 +429,7 @@ export default function Database() {
     executeQueryMutation.mutate(
       {
         database: selectedDB,
-        query: `DROP TABLE \`${selectedTable}\``,
+        query: `DROP TABLE ${quoteIdent(activeDriver, selectedTable)}`,
       },
       {
         onSuccess: () => {
@@ -436,7 +448,7 @@ export default function Database() {
     )
       return;
 
-    const query = `DROP TABLE ${tables.map((t) => `\`${t}\``).join(", ")}`;
+    const query = `DROP TABLE ${quoteIdents(activeDriver, tables)}`;
 
     executeQueryMutation.mutate({ database: selectedDB, query });
   };
@@ -454,7 +466,7 @@ export default function Database() {
       try {
         await executeQueryMutation.mutateAsync({
           database: selectedDB,
-          query: `TRUNCATE TABLE \`${t}\``,
+          query: `TRUNCATE TABLE ${quoteIdent(activeDriver, t)}`,
         });
       } catch (e) {
         console.error(`Failed to truncate ${t}`, e);
@@ -499,12 +511,28 @@ export default function Database() {
   const handleBulkTableAction = async (tables: string[], action: string) => {
     if (!selectedDB || tables.length === 0) return;
 
-    const tableList = tables.map((t) => `\`${t}\``).join(", ");
+    const pg = activeDriver === "postgres";
+    const q = (name: string) => quoteIdent(activeDriver, name);
+    const tableList = quoteIdents(activeDriver, tables);
     let query = "";
+
+    // These are MySQL statements with no PostgreSQL counterpart here.
+    const mysqlOnly = ["check", "checksum", "repair", "engine", "move", "show_create", "export"];
+    if (pg && mysqlOnly.includes(action)) {
+      addToast({
+        type: "info",
+        title: "Not available on PostgreSQL",
+        description:
+          action === "show_create" || action === "export"
+            ? "Export tables with Snapshots (pg_dump) instead."
+            : `${action.toUpperCase()} is a MySQL operation.`,
+      });
+      return;
+    }
 
     switch (action) {
       case "analyze":
-        query = `ANALYZE TABLE ${tableList}`;
+        query = pg ? `ANALYZE ${tableList}` : `ANALYZE TABLE ${tableList}`;
         break;
       case "check":
         query = `CHECK TABLE ${tableList}`;
@@ -513,7 +541,7 @@ export default function Database() {
         query = `CHECKSUM TABLE ${tableList}`;
         break;
       case "optimize":
-        query = `OPTIMIZE TABLE ${tableList}`;
+        query = pg ? `VACUUM (ANALYZE) ${tableList}` : `OPTIMIZE TABLE ${tableList}`;
         break;
       case "repair":
         query = `REPAIR TABLE ${tableList}`;
@@ -525,7 +553,7 @@ export default function Database() {
           try {
             const result = await executeQueryMutation.mutateAsync({
               database: selectedDB,
-              query: `SHOW CREATE TABLE \`${t}\``,
+              query: `SHOW CREATE TABLE ${q(t)}`,
             });
             const createStmt = (result.rows?.[0] as any)?.["Create Table"] || "N/A";
             results.push(`-- Table: ${t}\n${createStmt};\n`);
@@ -549,10 +577,10 @@ export default function Database() {
           try {
             const createResult = await executeQueryMutation.mutateAsync({
               database: selectedDB,
-              query: `SHOW CREATE TABLE \`${t}\``,
+              query: `SHOW CREATE TABLE ${q(t)}`,
             });
             results.push(`-- Table: ${t}`);
-            results.push(`DROP TABLE IF EXISTS \`${t}\`;`);
+            results.push(`DROP TABLE IF EXISTS ${quoteIdent(activeDriver, t)};`);
             results.push((createResult.rows?.[0] as any)?.["Create Table"] + ";");
             results.push("");
           } catch {
@@ -573,7 +601,9 @@ export default function Database() {
           try {
             await executeQueryMutation.mutateAsync({
               database: selectedDB,
-              query: `RENAME TABLE \`${t}\` TO \`${prefix}${t}\``,
+              query: pg
+                ? `ALTER TABLE ${q(t)} RENAME TO ${q(prefix + t)}`
+                : `RENAME TABLE ${q(t)} TO ${q(prefix + t)}`,
             });
           } catch (e) {
             console.error(`Failed to rename ${t}`, e);
@@ -592,7 +622,9 @@ export default function Database() {
             try {
               await executeQueryMutation.mutateAsync({
                 database: selectedDB,
-                query: `RENAME TABLE \`${t}\` TO \`${newName}\``,
+                query: pg
+                  ? `ALTER TABLE ${q(t)} RENAME TO ${q(newName)}`
+                  : `RENAME TABLE ${q(t)} TO ${q(newName)}`,
               });
             } catch (e) {
               console.error(`Failed to rename ${t}`, e);
@@ -608,11 +640,13 @@ export default function Database() {
           try {
             await executeQueryMutation.mutateAsync({
               database: selectedDB,
-              query: `CREATE TABLE \`${prefix}${t}\` LIKE \`${t}\``,
+              query: pg
+                ? `CREATE TABLE ${q(prefix + t)} (LIKE ${q(t)} INCLUDING ALL)`
+                : `CREATE TABLE ${q(prefix + t)} LIKE ${q(t)}`,
             });
             await executeQueryMutation.mutateAsync({
               database: selectedDB,
-              query: `INSERT INTO \`${prefix}${t}\` SELECT * FROM \`${t}\``,
+              query: `INSERT INTO ${q(prefix + t)} SELECT * FROM ${q(t)}`,
             });
           } catch (e) {
             console.error(`Failed to copy ${t}`, e);
@@ -627,7 +661,7 @@ export default function Database() {
           try {
             await executeQueryMutation.mutateAsync({
               database: selectedDB,
-              query: `RENAME TABLE \`${selectedDB}\`.\`${t}\` TO \`${targetDB}\`.\`${t}\``,
+              query: `RENAME TABLE ${q(selectedDB)}.${q(t)} TO ${q(targetDB)}.${q(t)}`,
             });
           } catch (e) {
             console.error(`Failed to move ${t}`, e);
@@ -643,7 +677,7 @@ export default function Database() {
           try {
             await executeQueryMutation.mutateAsync({
               database: selectedDB,
-              query: `ALTER TABLE \`${t}\` ENGINE = ${engine}`,
+              query: `ALTER TABLE ${q(t)} ENGINE = ${engine}`,
             });
           } catch (e) {
             console.error(`Failed to change engine for ${t}`, e);
@@ -660,7 +694,9 @@ export default function Database() {
           try {
             await executeQueryMutation.mutateAsync({
               database: selectedDB,
-              query: `CREATE TABLE \`${newName}\` LIKE \`${t}\``,
+              query: pg
+                ? `CREATE TABLE ${q(newName)} (LIKE ${q(t)} INCLUDING ALL)`
+                : `CREATE TABLE ${q(newName)} LIKE ${q(t)}`,
             });
           } catch (e) {
             console.error(`Failed to copy ${t}`, e);
@@ -749,7 +785,7 @@ export default function Database() {
       // UPDATE
       const updates = Object.entries(data)
         .filter(([k, v]) => v !== editingRow[k]) // Only changed fields
-        .map(([k, v]) => `\`${k}\` = ${escapeValue(v)}`)
+        .map(([k, v]) => `${qi(k)} = ${escapeValue(v)}`)
         .join(", ");
 
       if (!updates) {
@@ -757,18 +793,18 @@ export default function Database() {
         return;
       }
 
-      query = `UPDATE \`${selectedTable}\` SET ${updates} WHERE \`${pkCol}\` = ${escapeValue(
+      query = `UPDATE ${qi(selectedTable)} SET ${updates} WHERE ${qi(pkCol)} = ${escapeValue(
         editingRow[pkCol],
-      )} LIMIT 1`;
+      )}${activeDriver === "postgres" ? "" : " LIMIT 1"}`;
     } else {
       // INSERT
       const cols = Object.keys(data)
-        .map((k) => `\`${k}\``)
+        .map((k) => `${qi(k)}`)
         .join(", ");
       const vals = Object.values(data)
         .map((v) => escapeValue(v))
         .join(", ");
-      query = `INSERT INTO \`${selectedTable}\` (${cols}) VALUES (${vals})`;
+      query = `INSERT INTO ${qi(selectedTable)} (${cols}) VALUES (${vals})`;
     }
 
     executeQueryMutation.mutate(
@@ -797,7 +833,7 @@ export default function Database() {
       )
         return;
 
-      let clause = `\`${col}\` `;
+      let clause = `${qi(col)} `;
       const val = escapeValue(criteria.value);
 
       switch (criteria.operator) {
@@ -813,7 +849,7 @@ export default function Database() {
           clause += `LIKE ${val}`;
           break;
         case "LIKE %...%":
-          clause += `LIKE '%${String(criteria.value).replace(/'/g, "\\'")}%'`;
+          clause += `LIKE '%${String(criteria.value).replace(/'/g, "''")}%'`;
           break;
         case "IS NULL":
           clause += `IS NULL`;
@@ -831,7 +867,7 @@ export default function Database() {
       return;
     }
 
-    const query = `SELECT * FROM \`${selectedTable}\` WHERE ${clauses.join(
+    const query = `SELECT * FROM ${qi(selectedTable)} WHERE ${clauses.join(
       " AND ",
     )} LIMIT 1000`;
 
@@ -934,9 +970,16 @@ export default function Database() {
     setLoadingTriggers(true);
     try {
       // If table is selected, filter by table, otherwise show all for DB
-      const query = selectedTable
-        ? `SHOW TRIGGERS FROM \`${selectedDB}\` WHERE \`Table\` = '${selectedTable}'`
-        : `SHOW TRIGGERS FROM \`${selectedDB}\``;
+      // PostgreSQL has no SHOW TRIGGERS; read information_schema with the
+      // same column names so the list renders the same way.
+      const query =
+        activeDriver === "postgres"
+          ? `SELECT trigger_name AS "Trigger", event_manipulation AS "Event", event_object_table AS "Table", action_timing AS "Timing", action_statement AS "Statement" FROM information_schema.triggers WHERE trigger_schema = 'public'${
+              selectedTable ? ` AND event_object_table = ${quoteLiteral(selectedTable)}` : ""
+            }`
+          : selectedTable
+            ? `SHOW TRIGGERS FROM ${qi(selectedDB)} WHERE \`Table\` = ${quoteLiteral(selectedTable)}`
+            : `SHOW TRIGGERS FROM ${qi(selectedDB)}`;
 
       const result = await executeQueryMutation.mutateAsync({
         database: selectedDB,
@@ -950,7 +993,7 @@ export default function Database() {
     } finally {
       setLoadingTriggers(false);
     }
-  }, [selectedDB, selectedTable, executeQueryMutation]);
+  }, [selectedDB, selectedTable, executeQueryMutation, activeDriver, qi]);
 
   // Drop a trigger
   const handleDropTrigger = async (triggerName: string) => {
@@ -965,7 +1008,13 @@ export default function Database() {
     executeQueryMutation.mutate(
       {
         database: selectedDB,
-        query: `DROP TRIGGER \`${triggerName}\``,
+        // PostgreSQL triggers belong to a table: DROP TRIGGER name ON table.
+        query:
+          activeDriver === "postgres"
+            ? `DROP TRIGGER ${qi(triggerName)} ON ${qi(
+                String(triggers.find((t) => t.Trigger === triggerName)?.Table ?? selectedTable ?? ""),
+              )}`
+            : `DROP TRIGGER ${qi(triggerName)}`,
       },
       {
         onSuccess: () => {
@@ -1003,17 +1052,17 @@ export default function Database() {
   // Build current query for display
   const currentQuery = useMemo(() => {
     if (!selectedDB || !selectedTable) return "";
-    let q = `SELECT * FROM \`${selectedTable}\``;
-    if (sortCol) q += ` ORDER BY \`${sortCol}\` ${sortOrder}`;
+    let q = `SELECT * FROM ${qi(selectedTable)}`;
+    if (sortCol) q += ` ORDER BY ${qi(sortCol)} ${sortOrder}`;
     q += ` LIMIT ${showAll ? "ALL" : perPage}`;
     return q;
-  }, [selectedDB, selectedTable, sortCol, sortOrder, perPage, showAll]);
+  }, [selectedDB, selectedTable, sortCol, sortOrder, perPage, showAll, qi]);
 
   // Handle Explain SQL
   const handleExplainSQL = async () => {
     if (!selectedDB || !selectedTable) return;
-    const query = `EXPLAIN SELECT * FROM \`${selectedTable}\`${
-      sortCol ? ` ORDER BY \`${sortCol}\` ${sortOrder}` : ""
+    const query = `EXPLAIN SELECT * FROM ${qi(selectedTable)}${
+      sortCol ? ` ORDER BY ${qi(sortCol)} ${sortOrder}` : ""
     }`;
     const result = await executeQueryMutation.mutateAsync({
       database: selectedDB,
@@ -1026,8 +1075,8 @@ export default function Database() {
   // Generate PHP code
   const generatePhpCode = () => {
     if (!selectedDB || !selectedTable) return "";
-    const query = `SELECT * FROM \`${selectedTable}\`${
-      sortCol ? ` ORDER BY \`${sortCol}\` ${sortOrder}` : ""
+    const query = `SELECT * FROM ${qi(selectedTable)}${
+      sortCol ? ` ORDER BY ${qi(sortCol)} ${sortOrder}` : ""
     } LIMIT ${showAll ? 10000 : perPage}`;
     return `<?php
 // Database connection
@@ -1115,9 +1164,9 @@ $mysqli->close();
     const newValue =
       editingCell.value === ""
         ? "NULL"
-        : `'${editingCell.value.replace(/'/g, "\\'")}'`;
+        : `'${editingCell.value.replace(/'/g, "''")}'`;
 
-    const query = `UPDATE \`${selectedTable}\` SET \`${editingCell.colName}\` = ${newValue} WHERE \`${pkCol}\` = '${pkValue}'`;
+    const query = `UPDATE ${qi(selectedTable)} SET ${qi(editingCell.colName)} = ${newValue} WHERE ${qi(pkCol)} = '${pkValue}'`;
 
     try {
       await executeQueryMutation.mutateAsync({
@@ -1177,9 +1226,9 @@ $mysqli->close();
       return;
 
     const ids = Array.from(selectedRows)
-      .map((id) => `'${id.replace(/'/g, "\\'")}'`)
+      .map((id) => `'${id.replace(/'/g, "''")}'`)
       .join(", ");
-    const query = `DELETE FROM \`${selectedTable}\` WHERE \`${pkCol}\` IN (${ids})`;
+    const query = `DELETE FROM ${qi(selectedTable)} WHERE ${qi(pkCol)} IN (${ids})`;
 
     executeQueryMutation.mutate(
       { database: selectedDB, query },
@@ -1193,6 +1242,7 @@ $mysqli->close();
   };
 
   return (
+    <SqlDriverContext.Provider value={activeDriver}>
     <div className="flex h-[calc(100vh-6rem)] -m-6 bg-[var(--background)] animate-fade-in relative">
       {/* Sidebar - Database Tree */}
       <div className="w-64 border-r border-[var(--border)] bg-[var(--card)] flex flex-col shrink-0">
@@ -1599,11 +1649,12 @@ $mysqli->close();
                                 const val = getValue(row, col);
                                 if (val === null) return "NULL";
                                 if (typeof val === "number") return val;
-                                return `'${String(val).replace(/'/g, "\\'")}'`;
+                                return `'${String(val).replace(/'/g, "''")}'`;
                               });
-                              return `INSERT INTO \`${selectedTable}\` (\`${colNames.join(
-                                "`, `",
-                              )}\`) VALUES (${values.join(", ")});`;
+                              return `INSERT INTO ${qi(selectedTable!)} (${quoteIdents(
+                                activeDriver,
+                                colNames,
+                              )}) VALUES (${values.join(", ")});`;
                             });
 
                             setResultModal({
@@ -1780,7 +1831,7 @@ $mysqli->close();
                         a.download = `${selectedTable}_export.json`;
                         a.click();
                       } else if (format === "sql") {
-                        const sql = convertToSQL(selectedTable!, colNames, filteredRows as any[]);
+                        const sql = convertToSQL(selectedTable!, colNames, filteredRows as any[], activeDriver);
                         setResultModal({
                           isOpen: true,
                           title: `SQL Export: ${selectedTable}`,
@@ -1944,7 +1995,7 @@ $mysqli->close();
                                         setSortCol("");
                                         setFilterText("");
                                         
-                                        const query = `SELECT * FROM \`${fkTable}\` WHERE \`${fkColumn}\` = ${escapeValue(fkValue)}`;
+                                        const query = `SELECT * FROM ${qi(fkTable)} WHERE ${qi(fkColumn)} = ${escapeValue(fkValue)}`;
                                         setIsSearching(true);
                                         executeQueryMutation.mutate(
                                           { database: selectedDB!, query },
@@ -2455,7 +2506,7 @@ $mysqli->close();
                 ) {
                   executeQueryMutation.mutate({
                     database: selectedDB,
-                    query: `DROP TABLE \`${table}\``,
+                    query: `DROP TABLE ${quoteIdent(activeDriver, table)}`,
                   });
                 }
               }}
@@ -2467,7 +2518,7 @@ $mysqli->close();
                 ) {
                   executeQueryMutation.mutate({
                     database: selectedDB,
-                    query: `TRUNCATE TABLE \`${table}\``,
+                    query: `TRUNCATE TABLE ${quoteIdent(activeDriver, table)}`,
                   });
                 }
               }}
@@ -2610,7 +2661,10 @@ $mysqli->close();
                             executeQueryMutation.mutate(
                               {
                                 database: selectedDB!,
-                                query: `RENAME TABLE \`${selectedTable}\` TO \`${newName}\``,
+                                query:
+                                  activeDriver === "postgres"
+                                    ? `ALTER TABLE ${qi(selectedTable!)} RENAME TO ${qi(newName)}`
+                                    : `RENAME TABLE ${qi(selectedTable!)} TO ${qi(newName)}`,
                               },
                               {
                                 onSuccess: () => {
@@ -2645,7 +2699,10 @@ $mysqli->close();
                             executeQueryMutation.mutate(
                               {
                                 database: selectedDB!,
-                                query: `CREATE TABLE \`${newName}\` LIKE \`${selectedTable}\`; INSERT INTO \`${newName}\` SELECT * FROM \`${selectedTable}\`;`,
+                                query:
+                                  activeDriver === "postgres"
+                                    ? `CREATE TABLE ${qi(newName)} (LIKE ${qi(selectedTable!)} INCLUDING ALL); INSERT INTO ${qi(newName)} SELECT * FROM ${qi(selectedTable!)};`
+                                    : `CREATE TABLE ${qi(newName)} LIKE ${qi(selectedTable!)}; INSERT INTO ${qi(newName)} SELECT * FROM ${qi(selectedTable!)};`,
                               },
                               {
                                 onSuccess: () => alert("Table copied!"),
@@ -3610,5 +3667,6 @@ $mysqli->close();
         onClose={() => setIsCreateModalOpen(false)}
       />
     </div>
+    </SqlDriverContext.Provider>
   );
 }

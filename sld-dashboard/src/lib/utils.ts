@@ -1,4 +1,5 @@
 import { clsx, type ClassValue } from "clsx";
+import { quoteIdent, quoteIdents, type SqlDriver } from "./sql";
 import { twMerge } from "tailwind-merge";
 
 /**
@@ -98,7 +99,12 @@ export function convertToCSV(columns: string[], rows: Record<string, unknown>[])
 /**
  * Convert rows to SQL INSERT statements
  */
-export function convertToSQL(tableName: string, columns: string[], rows: Record<string, unknown>[]): string {
+export function convertToSQL(
+  tableName: string,
+  columns: string[],
+  rows: Record<string, unknown>[],
+  driver: SqlDriver = "mysql",
+): string {
   if (rows.length === 0) return "";
   
   const escape = (val: unknown) => {
@@ -109,7 +115,7 @@ export function convertToSQL(tableName: string, columns: string[], rows: Record<
 
   const chunks = rows.map(row => {
     const vals = columns.map(col => escape(row[col])).join(", ");
-    return `INSERT INTO \`${tableName}\` (\`${columns.join("`, `")}\`) VALUES (${vals});`;
+    return `INSERT INTO ${quoteIdent(driver, tableName)} (${quoteIdents(driver, columns)}) VALUES (${vals});`;
   });
   
   return chunks.join("\n");
