@@ -7,7 +7,7 @@ Accepted (2026-11, Phase 15 M5–M9). Amends ADR 0001 and ADR 0002.
 ADR 0002 removed the V1 daemon: a root service with an unauthenticated API on port 2025 that changed the host (nginx, PHP-FPM, dnsmasq, hosts file). V2 then worked from the CLI only. Users, however, want what the daemon gave them, a dashboard that shows and manages every project and its databases, without installing anything but Docker, on Windows, macOS and Linux alike.
 
 ## Decision
-SLD ships as **one image** (`ghcr.io/supreme-majesty/sld`) whose default command is `sld serve`: the dashboard, the database manager and the project API in one long-running container.
+SLD ships as **one image** (`insightifytech/sld` on Docker Hub; first planned as `ghcr.io/supreme-majesty/sld`, moved because GitHub Packages is disabled for the account) whose default command is `sld serve`: the dashboard, the database manager and the project API in one long-running container.
 
 - **The host is not changed.** SLD reaches Docker through the mounted socket and creates sibling containers: router, project apps, helpers. It installs no packages and edits neither the hosts file nor `/etc/resolver`. `*.localhost` resolves without DNS setup; for other TLDs SLD prints the hosts line to add.
 - **Projects come from a workspace.** The user mounts a projects folder (`/workspace`). SLD finds the projects in it; there is no "park" or "link" step (ADR 0009).
