@@ -1,0 +1,9 @@
+# The other half of e2e-alias-a: a routed service named "app".
+name: e2e-alias-b
+services:
+  app:
+    image: nginx:1.27-alpine
+    ports:
+      - "18098:80"
+    volumes:
+      - ./html:/usr/share/nginx/html:ro

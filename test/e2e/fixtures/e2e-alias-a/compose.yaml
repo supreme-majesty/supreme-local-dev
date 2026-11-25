@@ -1,0 +1,21 @@
+# Proves that compose service names do not leak between projects. Only "front"
+# is routed; it proxies to this stack's own "app". e2e-alias-b routes a service
+# that is also called "app": if SLD put service-name aliases on the shared
+# router network, "app" here could resolve to e2e-alias-b's container.
+name: e2e-alias-a
+services:
+  front:
+    image: nginx:1.27-alpine
+    ports:
+      - "18097:80"
+    volumes:
+      - ./front.conf:/etc/nginx/conf.d/default.conf:ro
+  app:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./html:/usr/share/nginx/html:ro
+# Named to sort after the shared router network: Docker's DNS then answers
+# "app" from the shared network first if the name leaked there.
+networks:
+  default:
+    name: zz-e2e-alias-a
