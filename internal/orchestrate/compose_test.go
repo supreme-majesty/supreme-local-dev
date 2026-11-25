@@ -66,22 +66,23 @@ func TestBuildComposeOverride(t *testing.T) {
 		web.Labels["traefik.http.routers.tailorly-1234abcd-secure.tls"] != "true" {
 		t.Errorf("web traefik labels: %v", web.Labels)
 	}
-	if _, ok := web.Networks["default"]; !ok || web.Networks["sld-global"] == nil && len(web.Networks) != 2 {
-		t.Errorf("web must keep its networks and join sld-global: %v", web.Networks)
+	// The override leaves networks alone: Compose would register the service
+	// name as an alias on sld-global, where names collide between projects.
+	// Routed containers are connected after `up` instead (connectComposeRoutes).
+	for name, svc := range doc.Services {
+		if svc.Networks != nil {
+			t.Errorf("%s: override must not set networks: %v", name, svc.Networks)
+		}
 	}
-	api := doc.Services["api"]
-	if _, ok := api.Networks["backend"]; !ok {
-		t.Errorf("api lost its backend network: %v", api.Networks)
+	if len(doc.Networks) != 0 {
+		t.Errorf("override must not declare networks: %v", doc.Networks)
 	}
-	if _, ok := api.Networks["sld-global"]; !ok {
-		t.Errorf("api not on sld-global: %v", api.Networks)
+	if web.Labels["traefik.docker.network"] != "sld-global" {
+		t.Errorf("web must tell traefik to use sld-global: %v", web.Labels)
 	}
 	mysql := doc.Services["mysql"]
-	if mysql.Labels["com.supreme.sld.project"] != "tailorly-1234abcd" || mysql.Labels["traefik.enable"] != "" || mysql.Networks != nil {
+	if mysql.Labels["com.supreme.sld.project"] != "tailorly-1234abcd" || mysql.Labels["traefik.enable"] != "" {
 		t.Errorf("mysql should be labeled but not routed: %+v", mysql)
-	}
-	if n := doc.Networks["sld-global"]; !n.External || n.Name != "sld-global" {
-		t.Errorf("sld-global must be declared external: %+v", n)
 	}
 
 	// keep_ports leaves published ports alone.
@@ -89,6 +90,32 @@ func TestBuildComposeOverride(t *testing.T) {
 	out, _ = buildComposeOverride(spec, stack, resolved)
 	if strings.Contains(string(out), "!reset") {
 		t.Error("keep_ports should not reset ports")
+	}
+}
+
+// TestConnectComposeRoutes: only the routed services of this stack join the
+// router network, through the API (so without their service-name alias).
+func TestConnectComposeRoutes(t *testing.T) {
+	engine := newMockEngine()
+	orch := NewOrchestrator(engine)
+	spec := &ProjectSpec{Identity: &project.Identity{ID: "sunport-1234abcd"}}
+	stack := &appruntime.ComposeStack{Routes: []appruntime.ComposeRoute{{App: "backend", Service: "nginx"}}}
+	ctr := func(id, composeProject, service string) *reconcile.ActualContainer {
+		return &reconcile.ActualContainer{ID: id, Name: id, Labels: map[string]string{
+			"com.supreme.sld.project": "sunport-1234abcd", "com.docker.compose.project": composeProject, "com.supreme.sld.service": service,
+		}}
+	}
+	engine.containers = map[string]*reconcile.ActualContainer{
+		"nginx": ctr("nginx", "sunport", "nginx"),
+		"app":   ctr("app", "sunport", "app"),
+		"other": ctr("other", "sunport-tools", "nginx"), // same service name, other stack
+	}
+
+	if err := orch.connectComposeRoutes(context.Background(), spec, stack, "sunport"); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(engine.connectedNets, []string{GlobalNetwork}) {
+		t.Errorf("expected exactly the nginx container on %s, got %v", GlobalNetwork, engine.connectedNets)
 	}
 }
 
