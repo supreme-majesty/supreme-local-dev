@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useEffect } from "react";
+import { useSqlDriver, quoteIdent, columnType } from "@/lib/sql";
 import { Plus, Trash2, Save, Code2, X } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -43,6 +44,8 @@ export function AlterTableDesigner({
   onSave,
   isLoading,
 }: AlterTableDesignerProps) {
+  const driver = useSqlDriver();
+  const qi = (name: string) => quoteIdent(driver, name);
   const { data: originalColumns = [], isLoading: loadingCols } = useTableColumns(
     database,
     table
@@ -130,16 +133,41 @@ export function AlterTableDesigner({
         }
       }
 
-      const extraStr = col.extra ? col.extra : "";
+      // MySQL's "extra" (auto_increment, on update ...) has no PostgreSQL spelling here.
+      const extraStr = col.extra && driver !== "postgres" ? col.extra : "";
+      const pgType = columnType(driver, typeStr);
 
       if (col._dropped) {
         if (!col._isNew) {
-          lines.push(`ALTER TABLE \`${table}\` DROP COLUMN \`${col._originalName}\`;`);
+          lines.push(`ALTER TABLE ${qi(table)} DROP COLUMN ${qi(col._originalName)};`);
         }
       } else if (col._isNew) {
         lines.push(
-          `ALTER TABLE \`${table}\` ADD COLUMN \`${col.name}\` ${typeStr} ${nullStr} ${defaultStr} ${extraStr};`
+          `ALTER TABLE ${qi(table)} ADD COLUMN ${qi(col.name)} ${pgType} ${nullStr} ${defaultStr} ${extraStr};`
         );
+      } else if (driver === "postgres") {
+        // PostgreSQL has no CHANGE COLUMN: one statement per changed property.
+        const orig = originalColumns.find((c: any) => c.name === col._originalName);
+        if (orig) {
+          const t = qi(table);
+          if (col.name !== col._originalName) {
+            lines.push(`ALTER TABLE ${t} RENAME COLUMN ${qi(col._originalName)} TO ${qi(col.name)};`);
+          }
+          const c = qi(col.name);
+          if (typeStr.toLowerCase() !== orig.type.toLowerCase()) {
+            lines.push(`ALTER TABLE ${t} ALTER COLUMN ${c} TYPE ${pgType} USING ${c}::${pgType};`);
+          }
+          if (col.nullable !== orig.nullable) {
+            lines.push(`ALTER TABLE ${t} ALTER COLUMN ${c} ${col.nullable ? "DROP" : "SET"} NOT NULL;`);
+          }
+          if (col.default !== orig.default) {
+            lines.push(
+              defaultStr
+                ? `ALTER TABLE ${t} ALTER COLUMN ${c} SET ${defaultStr};`
+                : `ALTER TABLE ${t} ALTER COLUMN ${c} DROP DEFAULT;`
+            );
+          }
+        }
       } else {
         // Compare with original to see if changed
         const orig = originalColumns.find((c: any) => c.name === col._originalName);
@@ -153,7 +181,7 @@ export function AlterTableDesigner({
 
           if (changed) {
             lines.push(
-              `ALTER TABLE \`${table}\` CHANGE COLUMN \`${col._originalName}\` \`${col.name}\` ${typeStr} ${nullStr} ${defaultStr} ${extraStr};`
+              `ALTER TABLE ${qi(table)} CHANGE COLUMN ${qi(col._originalName)} ${qi(col.name)} ${typeStr} ${nullStr} ${defaultStr} ${extraStr};`
             );
           }
         }

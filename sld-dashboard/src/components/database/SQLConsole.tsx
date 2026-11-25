@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useSqlDriver, quoteIdent } from "@/lib/sql";
 import { useMutation } from "@tanstack/react-query";
 import { useTables, useSnippets, useSaveSnippetMutation } from "@/hooks/use-database";
 import Editor from "@monaco-editor/react";
@@ -201,6 +202,8 @@ function convertToCSV(columns: string[], rows: any[]): string {
 }
 
 export function SQLConsole({ database }: SQLConsoleProps) {
+  const driver = useSqlDriver();
+  const qi = (name: string) => quoteIdent(driver, name);
   const [tabs, setTabs] = useState<QueryTab[]>(() => {
     const saved = localStorage.getItem(`sld_sql_tabs_${database}`);
     if (saved) return JSON.parse(saved);
@@ -465,7 +468,7 @@ export function SQLConsole({ database }: SQLConsoleProps) {
             suggestions.push({
               label: t.name,
               kind: monaco.languages.CompletionItemKind.Struct,
-              insertText: `\`${t.name}\``,
+              insertText: `${qi(t.name)}`,
               detail: `Table (${t.engine})`,
               range: {
                 startLineNumber: position.lineNumber,
@@ -569,7 +572,7 @@ export function SQLConsole({ database }: SQLConsoleProps) {
       return `'${val.replace(/'/g, "''")}'`;
     };
 
-    const updateQuery = `UPDATE \`${tableName}\` SET \`${col}\` = ${escapeValue(value)} WHERE \`${pkCol}\` = '${pkValue}' LIMIT 1`;
+    const updateQuery = `UPDATE ${qi(tableName)} SET ${qi(col)} = ${escapeValue(value)} WHERE ${qi(pkCol)} = '${String(pkValue).replace(/'/g, "''")}'${driver === "postgres" ? "" : " LIMIT 1"}`;
 
     try {
       await executeQuery(database, updateQuery);

@@ -17,6 +17,7 @@ import { Table as TableIcon, Key, Link as LinkIcon, Database, Edit2, Plus } from
 import { useTables, useExecuteQueryMutation } from "@/hooks/use-database";
 import { api } from "@/api/daemon";
 import { useEffect, useState } from "react";
+import { useSqlDriver, quoteIdent } from "@/lib/sql";
 import { AlterTableDesigner } from "./AlterTableDesigner";
 
 type TableNodeData = {
@@ -97,6 +98,8 @@ interface SchemaCanvasProps {
 }
 
 export function SchemaCanvas({ database }: SchemaCanvasProps) {
+  const driver = useSqlDriver();
+  const qi = (name: string) => quoteIdent(driver, name);
   const { data: tables = [], isLoading: loadingTables, refetch } = useTables(database);
   const [nodes, setNodes, onNodesChange] = useNodesState<CustomNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -223,7 +226,7 @@ export function SchemaCanvas({ database }: SchemaCanvasProps) {
           if (source && sourceHandle && target && targetHandle) {
              const confirmMsg = `Create Foreign Key relationship from ${source}.${sourceHandle} to ${target}.${targetHandle}?`;
              if (window.confirm(confirmMsg)) {
-                const sql = `ALTER TABLE \`${source}\` ADD CONSTRAINT fk_${source}_${sourceHandle} FOREIGN KEY (\`${sourceHandle}\`) REFERENCES \`${target}\`(\`${targetHandle}\`)`;
+                const sql = `ALTER TABLE ${qi(source)} ADD CONSTRAINT fk_${source}_${sourceHandle} FOREIGN KEY (${qi(sourceHandle)}) REFERENCES ${qi(target)}(${qi(targetHandle)})`;
                 handleSaveAlter(sql);
              }
           }

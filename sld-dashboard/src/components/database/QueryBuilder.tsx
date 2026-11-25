@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useEffect } from "react";
+import { useSqlDriver, quoteIdent } from "@/lib/sql";
 import { useTables, useTableColumns } from "@/hooks/use-database";
 import { Button } from "@/components/ui/Button";
 import { 
@@ -50,6 +51,8 @@ interface OrderBy {
 }
 
 export function QueryBuilder({ database, onGenerate, onClose }: QueryBuilderProps) {
+  const driver = useSqlDriver();
+  const qi = (name: string) => quoteIdent(driver, name);
   const { data: allTables = [] } = useTables(database);
   
   const [selectedTables, setSelectedTables] = useState<TableSelection[]>([]);
@@ -119,7 +122,7 @@ export function QueryBuilder({ database, onGenerate, onClose }: QueryBuilderProp
       sql += "*";
     } else {
       sql += selectedColumns.map(c => {
-        const colRef = `${c.tableAlias}.\`${c.columnName}\``;
+        const colRef = `${c.tableAlias}.${qi(c.columnName)}`;
         if (c.aggregate) {
           return `${c.aggregate}(${colRef}) AS ${c.aggregate.toLowerCase()}_${c.columnName}`;
         }
@@ -129,13 +132,13 @@ export function QueryBuilder({ database, onGenerate, onClose }: QueryBuilderProp
     
     // FROM and JOINs
     const first = selectedTables[0];
-    sql += `\nFROM \`${first.name}\` AS ${first.alias}`;
+    sql += `\nFROM ${qi(first.name)} AS ${first.alias}`;
     
     for (let i = 1; i < selectedTables.length; i++) {
       const t = selectedTables[i];
-      sql += `\n${t.joinType} \`${t.name}\` AS ${t.alias}`;
+      sql += `\n${t.joinType} ${qi(t.name)} AS ${t.alias}`;
       if (t.leftTableAlias && t.leftColumn && t.rightColumn) {
-        sql += ` ON ${t.alias}.\`${t.rightColumn}\` = ${t.leftTableAlias}.\`${t.leftColumn}\``;
+        sql += ` ON ${t.alias}.${qi(t.rightColumn)} = ${t.leftTableAlias}.${qi(t.leftColumn)}`;
       }
     }
     
@@ -143,7 +146,7 @@ export function QueryBuilder({ database, onGenerate, onClose }: QueryBuilderProp
       const validConditions = conditions.filter(c => c.operator.includes("NULL") || c.value.trim() !== "");
       if (validConditions.length > 0) {
         sql += "\nWHERE " + validConditions.map(c => {
-          const colRef = `${c.tableAlias}.\`${c.column}\``;
+          const colRef = `${c.tableAlias}.${qi(c.column)}`;
           const trimmedValue = c.value.trim();
           const isNumeric = !isNaN(Number(trimmedValue)) && trimmedValue !== "";
           const needsQuotes = !isNumeric && !c.operator.includes("NULL");
@@ -160,11 +163,11 @@ export function QueryBuilder({ database, onGenerate, onClose }: QueryBuilderProp
     const nonAggregates = selectedColumns.filter(c => !c.aggregate);
     
     if (aggregates.length > 0 && nonAggregates.length > 0) {
-      sql += "\nGROUP BY " + nonAggregates.map(c => `${c.tableAlias}.\`${c.columnName}\``).join(", ");
+      sql += "\nGROUP BY " + nonAggregates.map(c => `${c.tableAlias}.${qi(c.columnName)}`).join(", ");
     }
     
     if (orderBy && orderBy.column) {
-      sql += `\nORDER BY ${orderBy.tableAlias}.\`${orderBy.column}\` ${orderBy.direction}`;
+      sql += `\nORDER BY ${orderBy.tableAlias}.${qi(orderBy.column)} ${orderBy.direction}`;
     }
     
     if (limit && !isNaN(Number(limit))) {
