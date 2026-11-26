@@ -229,9 +229,15 @@ export default function Database() {
     [sources],
   );
   const activeSourceId = dbStatus?.active_target || activeSource?.id || "default";
-  // SQL dialect of the connected server, for statements this page builds.
+  // SQL dialect of the server that runs this page's statements. Selecting a
+  // database in the tree switches the backend's active target, and the
+  // sources list's is_active flag can lag behind that, so look the source up
+  // by the active target's id, then fall back to the backend's own driver.
   const activeDriver: "mysql" | "postgres" =
-    activeSource?.driver === "postgres" || (!activeSource?.driver && dbDriver === "postgres")
+    (sources.find((s) => s.id === activeSourceId)?.driver ??
+      catalogDatabases.find((c) => c.source_id === activeSourceId)?.driver ??
+      dbStatus?.driver ??
+      dbDriver) === "postgres"
       ? "postgres"
       : "mysql";
   const addToast = useAppStore((s) => s.addToast);
